@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider } from './research/provider';
 import { runAgent } from './agent-runner';
-import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema } from './agent-schemas';
+import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
   enqueueWorkflow,
@@ -1185,6 +1185,146 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         skipped_count: skipped,
         alert_count: alerts,
       }, 'quote_extraction');
+
+      return { execution: running, outcome: 'completed' };
+    }
+
+    if (stage === 'comparison') {
+      const { data: requirements, error: requirementsError } = await supabase
+        .from('requirements')
+        .select('id,type,value,status,source,admin_edited')
+        .eq('inquiry_id', inquiryId)
+        .eq('status', 'confirmed')
+        .order('created_at', { ascending: true });
+
+      if (requirementsError) throw new ToolError('TRANSIENT', requirementsError.message);
+
+      const { data: responses, error: responsesError } = await supabase
+        .from('supplier_responses')
+        .select('id,supplier_id,inquiry_id,status,raw_extraction,attachments')
+        .eq('inquiry_id', inquiryId)
+        .eq('status', 'processed')
+        .order('created_at', { ascending: true });
+
+      if (responsesError) throw new ToolError('TRANSIENT', responsesError.message);
+
+      let compared = 0;
+      let findingCount = 0;
+      let alertCount = 0;
+
+      for (const response of responses ?? []) {
+        const { data: quotes } = await supabase
+          .from('supplier_quotes')
+          .select('id,product_id,match_status,currency,quantity,moq,list_price,discount,net_price,vat,gross_price,validity_from,valid_until,availability,lead_time_text,payment_terms,incoterm,delivery_method,additional_conditions,original_data')
+          .eq('supplier_response_id', response.id)
+          .order('created_at', { ascending: true });
+
+        if (!quotes?.length) continue;
+
+        const { data: supplier } = await supabase
+          .from('suppliers')
+          .select('id,legal_name,primary_country,verification_status')
+          .eq('id', response.supplier_id)
+          .maybeSingle();
+
+        const ai = await runAgent(
+          { agentId: 'comparison', executionId: running.id, inquiryId },
+          {
+            supplier_response_id: response.id,
+            supplier: supplier ?? { id: response.supplier_id },
+            requirements: requirements ?? [],
+            supplier_quotes: quotes,
+            instructions: [
+              'Compare only confirmed inquiry requirements against the supplied supplier quote data.',
+              'Produce one factual finding per requirement for this supplier response when evidence exists; use unknown when the quote does not provide enough evidence.',
+              'Use match when the supplier quote explicitly satisfies the requirement, partial_match when only part is supported, mismatch when the supplier data explicitly conflicts with it, and unknown when there is insufficient evidence.',
+              'Evidence must quote or precisely summarize only data present in the supplied input. Do not invent technical specifications or commercial terms.',
+              'Do not convert currencies, calculate margins, normalize prices, rank suppliers, score suppliers, or select a supplier.',
+              'Do not change requirements, even if the supplier quote appears to contradict them.',
+              'If multiple quotes or price tiers exist, report the factual differences rather than choosing one.',
+            ],
+          },
+          comparisonOutputSchema,
+        );
+
+        const comparison = ai.output.comparisons.find((item) => item.supplierResponseId === response.id);
+        if (!comparison) {
+          await createAlert(
+            inquiryId,
+            'comparison',
+            'COMPARISON_MISSING_RESPONSE',
+            `Comparison Agent returned no comparison for supplier response ${response.id}.`,
+            'normal',
+          );
+          alertCount++;
+          continue;
+        }
+
+        const validRequirementIds = new Set((requirements ?? []).map((item) => item.id));
+        const findings = comparison.findings.filter((finding) => validRequirementIds.has(finding.requirementId));
+
+        if (findings.length !== comparison.findings.length) {
+          throw new ToolError('AI_PROCESSING', 'Comparison Agent returned a requirement outside the confirmed inquiry requirements');
+        }
+
+        for (const finding of findings) {
+          const quote = quotes.find((item) => item.product_id);
+          const { error: upsertError } = await supabase
+            .from('supplier_comparison_findings')
+            .upsert({
+              inquiry_id: inquiryId,
+              supplier_response_id: response.id,
+              supplier_quote_id: quote?.id ?? null,
+              requirement_id: finding.requirementId,
+              status: finding.status,
+              evidence: finding.evidence,
+              source_data: {
+                supplier_response_id: response.id,
+                quote_ids: quotes.map((item) => item.id),
+                provider: ai.provider,
+                model: ai.model,
+              },
+              ai_execution_id: running.id,
+            }, { onConflict: 'supplier_response_id,requirement_id' });
+
+          if (upsertError) throw new ToolError('CONFLICT', upsertError.message);
+
+          findingCount++;
+
+          if (finding.status === 'mismatch' || finding.status === 'unknown') {
+            await createAlert(
+              inquiryId,
+              'comparison',
+              finding.status === 'mismatch' ? 'SUPPLIER_REQUIREMENT_MISMATCH' : 'SUPPLIER_REQUIREMENT_UNKNOWN',
+              `Supplier response ${response.id}: requirement ${finding.requirementId} is ${finding.status}. Evidence: ${finding.evidence}`,
+              'normal',
+            );
+            alertCount++;
+          }
+        }
+
+        compared++;
+        await timeline(inquiryId, 'supplier_comparison_completed', {
+          supplier_response_id: response.id,
+          finding_count: findings.length,
+          provider: ai.provider,
+          model: ai.model,
+        }, 'comparison');
+      }
+
+      await markExecutionSuccess(running.id, {
+        response_count: responses?.length ?? 0,
+        compared_count: compared,
+        finding_count: findingCount,
+        alert_count: alertCount,
+        status: 'completed',
+      });
+
+      await timeline(inquiryId, 'comparison_completed', {
+        compared_count: compared,
+        finding_count: findingCount,
+        alert_count: alertCount,
+      }, 'comparison');
 
       return { execution: running, outcome: 'completed' };
     }
