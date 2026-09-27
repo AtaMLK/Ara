@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+export const documentOutputSchema = z.object({
+  extractedText: z.string().default(''),
+  extractedData: z.record(z.string(), z.unknown()).default({}),
+  qualityFlags: z.array(z.string()).default([]),
+  requirements: z.array(z.object({
+    type: z.enum(['product','model_part_number','quantity','specification','delivery','other']),
+    value: z.string().min(1),
+    sourceRef: z.string().optional(),
+  })).default([]),
+});
+
 export const intakeOutputSchema = z.object({
   title: z.string().min(1),
   description: z.string().min(1),
