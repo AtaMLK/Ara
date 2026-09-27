@@ -87,6 +87,7 @@ export async function createCustomerInquiryAction(input: {
 }
 
 const INQUIRY_FILE_LIMIT = 10 * 1024 * 1024;
+const INQUIRY_TOTAL_FILE_LIMIT = 25 * 1024 * 1024;
 const ALLOWED_INQUIRY_FILES = new Map([
   ['application/pdf', 'pdf'],
   ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'excel'],
@@ -115,6 +116,9 @@ export async function uploadInquiryFilesAction(input: {
       .single();
 
     if (!inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
+
+    const totalSize = parsed.files.reduce((sum, file) => sum + file.size, 0);
+    if (totalSize > INQUIRY_TOTAL_FILE_LIMIT) throw new ToolError('VALIDATION', 'Total attachment size must not exceed 25 MB');
 
     const uploaded: Array<{ id: string; name: string }> = [];
 
