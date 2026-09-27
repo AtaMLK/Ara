@@ -989,6 +989,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             subject: communication.subject,
             email_body: body,
             attachments: response.attachments ?? [],
+            attachment_text: (Array.isArray(response.attachments) ? response.attachments : [])
+              .map((attachment) => {
+                const item = (attachment ?? {}) as Record<string, unknown>;
+                return {
+                  fileName: typeof item.fileName === 'string' ? item.fileName : 'attachment',
+                  mimeType: typeof item.mimeType === 'string' ? item.mimeType : 'application/octet-stream',
+                  extractedText: typeof item.extractedText === 'string' ? item.extractedText : '',
+                  qualityFlags: Array.isArray(item.qualityFlags) ? item.qualityFlags : [],
+                  storagePath: typeof item.storagePath === 'string' ? item.storagePath : null,
+                };
+              })
+              .filter((attachment) => attachment.extractedText.length > 0),
             inquiry_requirements: (requirements ?? []).map((item) => ({
               id: item.id,
               type: item.type,
