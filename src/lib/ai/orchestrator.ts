@@ -3,8 +3,8 @@ import {createSupabaseAdminClient} from '@/lib/supabase/admin';
 import type {AgentId} from './context';
 import {ToolError} from '@/lib/errors';
 
-export type WorkflowStage='intake'|'clarification'|'research'|'supplier_discovery'|'verification'|'rfq'|'quote_extraction'|'comparison'|'customer_quote'|'customer_response'|'reporting'|'completed';
-const stageAgent:Record<WorkflowStage,AgentId>={intake:'intake',clarification:'clarification',research:'product_research',supplier_discovery:'supplier_discovery',verification:'supplier_verification',rfq:'rfq',quote_extraction:'quote_extraction',comparison:'comparison',customer_quote:'orchestrator',customer_response:'orchestrator',reporting:'reporting',completed:'orchestrator'};
+export type WorkflowStage='document'|'intake'|'clarification'|'research'|'supplier_discovery'|'verification'|'rfq'|'quote_extraction'|'comparison'|'customer_quote'|'customer_response'|'reporting'|'completed';
+const stageAgent:Record<WorkflowStage,AgentId>={document:'document',intake:'intake',clarification:'clarification',research:'product_research',supplier_discovery:'supplier_discovery',verification:'supplier_verification',rfq:'rfq',quote_extraction:'quote_extraction',comparison:'comparison',customer_quote:'orchestrator',customer_response:'orchestrator',reporting:'reporting',completed:'orchestrator'};
 
 export async function enqueueWorkflow(inquiryId:string,stage:WorkflowStage){
  const supabase=createSupabaseAdminClient(); const taskKey=`inquiry:${inquiryId}:stage:${stage}`;
