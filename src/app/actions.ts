@@ -1212,8 +1212,8 @@ export async function requestCustomerQuoteRevisionAction(input: {
       metadata: { quote_id: quote.id, request_id: request.id, reference: quote.reference, reason: parsed.reason },
     });
 
-    revalidatePath(\`/customer/inquiries/\${quote.inquiry_id}\`);
-    revalidatePath(\`/customer/quotes/\${quote.inquiry_id}\`);
+    revalidatePath(`/customer/inquiries/${quote.inquiry_id}`);
+    revalidatePath(`/customer/quotes/${quote.inquiry_id}`);
     revalidatePath('/customer');
     return { ok: true, requestId: request.id };
   } catch (error) {
