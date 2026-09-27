@@ -720,3 +720,23 @@ create trigger touch_supplier_candidates before update on public.supplier_candid
 create trigger touch_supplier_responses before update on public.supplier_responses for each row execute function public.touch_updated_at();
 create trigger touch_supplier_quotes before update on public.supplier_quotes for each row execute function public.touch_updated_at();
 create trigger touch_customer_quotes before update on public.customer_quotes for each row execute function public.touch_updated_at();
+
+
+-- NOTE: supplier primary_* foreign keys are intentionally added after dependent tables exist.
+-- AI service roles must use controlled server-side repositories; no general-agent SQL access.
+
+-- Additional integrity constraints
+create unique index if not exists supplier_primary_contact_unique on public.supplier_contacts(supplier_id) where is_primary=true;
+create unique index if not exists supplier_primary_website_unique on public.supplier_websites(supplier_id) where is_primary=true;
+create unique index if not exists supplier_primary_email_unique on public.supplier_emails(supplier_id) where is_primary=true;
+create unique index if not exists supplier_primary_phone_unique on public.supplier_phones(supplier_id) where is_primary=true;
+create unique index if not exists supplier_primary_address_unique on public.supplier_addresses(supplier_id) where is_primary=true;
+
+-- Inquiry references are immutable identifiers; history records preserve changes instead of hard deletion.
+create unique index if not exists supplier_product_pn_identity_idx
+  on public.supplier_products(supplier_id, lower(regexp_replace(coalesce(model_part_number,''),'[-_[:space:]]','','g')))
+  where model_part_number is not null and model_part_number <> '';
+
+-- Quote revisions are ordered within an original quote family.
+create unique index if not exists customer_quote_revision_idx
+  on public.customer_quotes(inquiry_id, reference, revision_number);
