@@ -1,12 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/cron/workflow",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/email-inbox",
-      "schedule": "*/5 * * * *"
+      "path": "/api/cron/email/poll",
+      "schedule": "* * * * *"
     }
   ]
 }
