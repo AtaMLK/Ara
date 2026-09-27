@@ -42,11 +42,28 @@ async function timeline(
 
 async function setInquiryStatus(inquiryId: string, status: string) {
   const supabase = createSupabaseAdminClient();
+  const { data: current, error: readError } = await supabase
+    .from('inquiries')
+    .select('status')
+    .eq('id', inquiryId)
+    .single();
+  if (readError || !current) throw new ToolError('NOT_FOUND', 'Inquiry not found');
+
+  if (current.status === status) return;
+
   const { error } = await supabase
     .from('inquiries')
     .update({ status })
     .eq('id', inquiryId);
   if (error) throw new ToolError('TRANSIENT', error.message);
+
+  await supabase.from('timeline_events').insert({
+    inquiry_id: inquiryId,
+    event_type: 'customer_status_changed',
+    visibility: 'customer',
+    actor_type: 'system',
+    metadata: { status },
+  });
 }
 
 async function createClarificationDrafts(
