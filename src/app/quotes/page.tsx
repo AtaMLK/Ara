@@ -1,4 +1,5 @@
 import { listCustomerQuotes } from '@/lib/data/admin';
+import { QuoteActions } from './quote-actions';
 
 type Props = { searchParams: Promise<{ q?: string; status?: string }> };
 
@@ -32,7 +33,7 @@ export default async function QuotesPage({ searchParams }: Props) {
               <div><strong>{item.reference}</strong></div>
               <div>{item.customers?.company_name || item.customers?.name || '—'}</div>
               <div><span className="badge">{label(item.status)}</span></div>
-              <div>{item.currency} · {item.valid_until ? new Date(item.valid_until).toLocaleDateString('en-GB') : 'No expiry'}</div>
+              <div className="action-cell">{item.currency} · {item.valid_until ? new Date(item.valid_until).toLocaleDateString('en-GB') : 'No expiry'}<QuoteActions id={item.id} status={item.status} /></div>
             </div>
           ))}
         </div>
