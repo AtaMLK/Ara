@@ -494,6 +494,7 @@ export async function sendClarificationAction(input: { inquiryId: string; clarif
     <div style="padding:16px;border:1px solid #e5e7eb;border-radius:8px;margin:20px 0">
       <strong>${safeQuestion}</strong>
     </div>
+    <p><strong>You can reply directly to this email with your answer, or use the button below.</strong></p>
     <p><a href="${inquiryUrl}" style="display:inline-block;padding:10px 16px;background:#111827;color:white;text-decoration:none;border-radius:6px">Open request and answer</a></p>
     <p style="color:#6b7280;font-size:13px">Request reference: ${inquiry.reference}</p>
   </body>
@@ -506,7 +507,7 @@ We need one clarification before we can continue processing your procurement req
 Question:
 ${clarification.question}
 
-Open your request and answer:
+You can reply directly to this email with your answer, or open your request here:
 ${inquiryUrl}
 
 Request reference: ${inquiry.reference}`;
