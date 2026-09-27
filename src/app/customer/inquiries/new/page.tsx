@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { createCustomerInquiryAction, uploadInquiryFilesAction } from '@/app/actions';
+import { createCustomerInquiryAction } from '@/app/actions';
 
 export default function NewCustomerInquiryPage() {
   return (
@@ -21,12 +21,9 @@ export default function NewCustomerInquiryPage() {
             description: String(formData.get('description') ?? ''),
             originalCustomerText: String(formData.get('originalCustomerText') ?? ''),
             priority: formData.get('priority') === 'urgent' ? 'urgent' : 'normal',
+            files: formData.getAll('files').filter((value): value is File => value instanceof File && value.size > 0),
           });
-          if (result?.ok) {
-            const files = formData.getAll('files').filter((value): value is File => value instanceof File && value.size > 0);
-            if (files.length) await uploadInquiryFilesAction({ inquiryId: result.inquiryId, files });
-            redirect(`/customer/inquiries/${result.inquiryId}`);
-          }
+          if (result?.ok) redirect(`/customer/inquiries/${result.inquiryId}`);
         }}>
           <label className="form-field"><span>Request title <small>Optional</small></span><input name="title" placeholder="e.g. Hydraulic cylinder spare parts" maxLength={200} /></label>
           <label className="form-field"><span>What do you need? <small>Required</small></span><textarea name="originalCustomerText" required maxLength={20000} rows={9} placeholder="Describe the products, models, part numbers, quantities, specifications, delivery requirements, or anything else you know." /></label>
