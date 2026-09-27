@@ -99,6 +99,17 @@ export const comparisonOutputSchema = z.object({
   })),
 });
 
+export const customerQuoteOutputSchema = z.object({
+  lines: z.array(z.object({
+    supplierQuoteId: z.string().uuid(),
+    productId: z.string().uuid().optional(),
+    quantity: z.number().positive(),
+    requirementIds: z.array(z.string().uuid()).default([]),
+    reason: z.string().min(1),
+  })).default([]),
+  warnings: z.array(z.string()).default([]),
+});
+
 export const reportingOutputSchema = z.object({
   summary: z.string().min(1),
   facts: z.array(z.string()).default([]),
