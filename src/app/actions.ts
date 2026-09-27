@@ -881,6 +881,16 @@ export async function approveCustomerQuoteAction(quoteId: string) {
   try {
     const parsed = idSchema.parse(quoteId);
     const { supabase, user } = await requireAdmin();
+    const { data: pendingItems, error: itemError } = await supabase
+      .from('customer_quote_items')
+      .select('id,price_status')
+      .eq('customer_quote_id', parsed);
+
+    if (itemError) throw new ToolError('TRANSIENT', itemError.message);
+    if (!pendingItems?.length || pendingItems.some((item) => item.price_status !== 'admin_confirmed')) {
+      throw new ToolError('APPROVAL_REQUIRED', 'Every customer quote item price must be confirmed by Admin');
+    }
+
     const { data, error } = await supabase.from('customer_quotes')
       .update({ status: 'sent', approved_by: user.id, approved_at: new Date().toISOString() })
       .eq('id', parsed)
