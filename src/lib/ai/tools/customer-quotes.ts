@@ -14,6 +14,8 @@ export async function createCustomerQuoteDraft(ctx:AIContext,input:unknown){
 }
 export async function addCustomerQuoteItem(ctx:AIContext,input:unknown){
  const value=itemSchema.parse(input); const {supabase}=await requireAdmin();
+ if(value.supplierCost!==undefined && !value.supplierCurrency) throw new ToolError('VALIDATION','Supplier cost requires supplier currency');
+ if(value.exchangeRateId && (!value.supplierCost || !value.supplierCurrency)) throw new ToolError('VALIDATION','Exchange rate requires supplier cost and supplier currency');
  const {data:quote,error:qerr}=await supabase.from('customer_quotes').select('status').eq('id',value.customerQuoteId).single();
  if(qerr||!quote) throw new ToolError('NOT_FOUND','Customer Quote not found');
  if(quote.status!=='draft'&&quote.status!=='pending_approval') throw new ToolError('CONFLICT','Quote is not editable');
