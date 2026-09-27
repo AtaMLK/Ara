@@ -291,6 +291,88 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       return { execution: running, outcome };
     }
 
+    if (stage === 'quote_extraction') {
+      const { data: communications, error } = await supabase
+        .from('communications')
+        .select('id,inquiry_id,supplier_id,rfq_id,subject,body,metadata')
+        .eq('inquiry_id', inquiryId)
+        .eq('direction', 'incoming')
+        .not('rfq_id', 'is', null)
+        .order('created_at', { ascending: true });
+
+      if (error) throw new ToolError('TRANSIENT', error.message);
+
+      let extracted = 0;
+      let skipped = 0;
+
+      for (const communication of communications ?? []) {
+        const { data: existing } = await supabase
+          .from('supplier_responses')
+          .select('id')
+          .eq('communication_id', communication.id)
+          .maybeSingle();
+
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
+        if (!communication.supplier_id || !communication.rfq_id) {
+          skipped++;
+          continue;
+        }
+
+        const body = communication.body ?? '';
+        const metadata = (communication.metadata ?? {}) as Record<string, unknown>;
+
+        const { data: response, error: responseError } = await supabase
+          .from('supplier_responses')
+          .insert({
+            communication_id: communication.id,
+            supplier_id: communication.supplier_id,
+            inquiry_id: inquiryId,
+            status: 'processing',
+            raw_extraction: {
+              source: 'supplier_email',
+              subject: communication.subject,
+              body,
+              metadata,
+              extraction_policy: 'explicit_values_only',
+            },
+          })
+          .select('id')
+          .single();
+
+        if (responseError || !response) throw new ToolError('CONFLICT', responseError?.message ?? 'Supplier response creation failed');
+
+        // The workflow stores the raw response first. Actual semantic extraction is performed by the Quote Extraction agent/model.
+        // No price/currency/quantity/lead-time value is inferred from free text at this stage.
+        await supabase
+          .from('supplier_responses')
+          .update({ status: 'received' })
+          .eq('id', response.id);
+
+        extracted++;
+        await timeline(inquiryId, 'supplier_response_ready_for_extraction', {
+          communication_id: communication.id,
+          supplier_response_id: response.id,
+          rfq_id: communication.rfq_id,
+        }, 'quote_extraction_agent');
+      }
+
+      await markExecutionSuccess(running.id, {
+        response_count: extracted,
+        skipped_count: skipped,
+        status: 'ready_for_extraction',
+      });
+
+      if (extracted > 0) {
+        await createAlert(inquiryId, 'quote_extraction', 'QUOTE_EXTRACTION_REQUIRED', `${extracted} supplier response(s) are ready for structured quote extraction.`, 'normal');
+      }
+
+      return { execution: running, outcome: extracted > 0 ? 'ready_for_extraction' : 'completed' };
+    }
+
     if (stage === 'email_response') {
       const { data: incoming, error } = await supabase
         .from('communications')
