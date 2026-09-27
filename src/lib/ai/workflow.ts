@@ -178,6 +178,30 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             .update({ status: 'processed', processed_at: new Date().toISOString() })
             .eq('id', file.id);
 
+          for (const requirement of extraction.requirements) {
+            const sourceRef = `${file.id}:${requirement.sourceRef ?? 'document'}`;
+            const { data: duplicate } = await supabase
+              .from('requirements')
+              .select('id')
+              .eq('inquiry_id', inquiryId)
+              .eq('type', requirement.type)
+              .eq('value', requirement.value)
+              .eq('source', file.mime_type === 'text/csv' || file.mime_type.includes('spreadsheet') || file.mime_type === 'application/vnd.ms-excel' ? 'excel' : file.mime_type.startsWith('image/') ? 'image' : 'pdf')
+              .maybeSingle();
+
+            if (!duplicate) {
+              await supabase.from('requirements').insert({
+                inquiry_id: inquiryId,
+                type: requirement.type,
+                value: requirement.value,
+                source: file.mime_type === 'text/csv' || file.mime_type.includes('spreadsheet') || file.mime_type === 'application/vnd.ms-excel' ? 'excel' : file.mime_type.startsWith('image/') ? 'image' : 'pdf',
+                source_ref: sourceRef,
+                status: 'open',
+                admin_edited: false,
+              });
+            }
+          }
+
           processed++;
           await timeline(inquiryId, 'document_processed', {
             file_id: file.id,
@@ -232,9 +256,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       if (error) throw new ToolError('TRANSIENT', error.message);
 
-      // Intake is append-only on first analysis: existing (especially Admin-edited)
-      // requirements remain authoritative. Never infer requirements from an empty source.
-      if (!(requirements ?? []).length) {
+      // Intake may augment document-derived requirements with customer-text requirements.
+      // Existing requirements, especially Admin-edited rows, remain authoritative.
         const { data: source, error: sourceError } = await supabase
           .from('inquiries')
           .select('id,title,description,original_customer_text,normalized_information,current_version')
@@ -265,6 +288,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             {
               original_customer_text: originalText ?? '',
               document_text: documentText,
+              existing_requirements: (requirements ?? []).map((item) => ({
+                type: item.type,
+                value: item.value,
+                source: item.source,
+                source_ref: item.source_ref,
+              })),
               existing_title: source.title,
               existing_description: source.description,
               instructions: [
@@ -279,7 +308,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           );
           const result = ai.output;
           if (result.requirements.some((item) =>
-            item.source === 'customer_text' ? Boolean(!item.sourceRef) : Boolean(item.sourceRef)
+            item.source === 'customer_text' ? Boolean(item.sourceRef) : !Boolean(item.sourceRef)
           )) {
             throw new ToolError('AI_PROCESSING', 'Intake returned invalid source provenance');
           }
@@ -288,24 +317,32 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           // the first extraction or overwrite changes made after the model call.
           const { data: latest, error: latestError } = await supabase
             .from('requirements')
-            .select('id')
-            .eq('inquiry_id', inquiryId)
-            .limit(1);
+            .select('id,type,value,source,source_ref,admin_edited')
+            .eq('inquiry_id', inquiryId);
           if (latestError) throw new ToolError('TRANSIENT', latestError.message);
-          if (!latest?.length) {
-            const ambiguityTypes = new Set(result.ambiguities.map((a) => a.requirementType));
-            const inserts = result.requirements.map((item) => ({
+
+          const existingKeys = new Set(
+            (latest ?? []).map((item) => `${item.type}|${item.value.trim().toLowerCase()}`)
+          );
+          const ambiguityTypes = new Set(result.ambiguities.map((a) => a.requirementType));
+          const inserts = result.requirements
+            .filter((item) => {
+              const key = `${item.type}|${item.value.trim().toLowerCase()}`;
+              return !existingKeys.has(key);
+            })
+            .map((item) => ({
               inquiry_id: inquiryId,
               type: item.type,
               value: item.value,
-              source: 'customer_text',
+              source: item.source,
+              source_ref: item.source === 'customer_text' ? null : item.sourceRef,
               status: ambiguityTypes.has(item.type) ? 'clarification_required' : 'open',
               admin_edited: false,
             }));
-            if (inserts.length) {
-              const { error: insertError } = await supabase.from('requirements').insert(inserts);
-              if (insertError) throw new ToolError('CONFLICT', insertError.message);
-            }
+          if (inserts.length) {
+            const { error: insertError } = await supabase.from('requirements').insert(inserts);
+            if (insertError) throw new ToolError('CONFLICT', insertError.message);
+          }
             // Only update AI-generated title/description while the source version
             // remains unchanged. Preserve existing human-authored values.
             await supabase.from('inquiries')
