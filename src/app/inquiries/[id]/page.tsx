@@ -4,6 +4,7 @@ import { requireAdminPage } from '@/lib/data/admin';
 import { InquiryEditForm } from './edit-form';
 import { RequirementEdit } from './requirement-edit';
 import { WorkflowPanel } from './workflow-panel';
+import { CandidatePanel } from './candidate-panel';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -15,7 +16,7 @@ export default async function InquiryDetailPage({ params }: Props) {
   const { id } = await params;
   const { supabase } = await requireAdminPage();
 
-  const [inquiryResult, requirementsResult, filesResult, timelineResult, executionsResult, alertsResult, clarificationsResult, researchResult] = await Promise.all([
+  const [inquiryResult, requirementsResult, filesResult, timelineResult, executionsResult, alertsResult, clarificationsResult, researchResult, candidatesResult] = await Promise.all([
     supabase.from('inquiries').select('id,reference,title,description,status,priority,original_customer_text,current_version,created_at,updated_at,customers(name,company_name,email,country)').eq('id', id).single(),
     supabase.from('requirements').select('id,type,value,status,source,admin_edited,updated_at').eq('inquiry_id', id).order('created_at', { ascending: true }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,version,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at', { ascending: false }),
@@ -24,10 +25,11 @@ export default async function InquiryDetailPage({ params }: Props) {
     supabase.from('ai_alerts').select('id,agent_id,alert_type,message,priority,status,created_at').eq('inquiry_id', id).eq('status', 'open').order('created_at', { ascending: false }).limit(10),
     supabase.from('clarifications').select('id,requirement_id,question,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('research_cases').select('id,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(5),
+    supabase.from('supplier_candidates').select('id,proposed_name,proposed_country,proposed_website,status,match_evidence,availability_evidence,verification_evidence,created_at').eq('inquiry_id', id).order('created_at', { ascending: true }),
   ]);
 
   if (inquiryResult.error || !inquiryResult.data) notFound();
-  if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error) throw new Error('Failed to load inquiry details');
+  if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error || candidatesResult.error) throw new Error('Failed to load inquiry details');
 
   const inquiry = inquiryResult.data;
   const customer = inquiry.customers;
@@ -43,6 +45,8 @@ export default async function InquiryDetailPage({ params }: Props) {
         </div>
         <div className="topbar-actions"><span className="badge">{label(inquiry.status)}</span><InquiryEditForm inquiryId={inquiry.id} title={inquiry.title} description={inquiry.description ?? ""} version={inquiry.current_version} /></div>
       </header>
+
+      <CandidatePanel inquiryId={inquiry.id} candidates={candidatesResult.data ?? []} />
 
       <WorkflowPanel
         inquiryId={inquiry.id}
