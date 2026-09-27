@@ -14,7 +14,7 @@ export async function enqueueWorkflow(inquiryId:string,stage:WorkflowStage){
  if(error) throw new ToolError('TRANSIENT',error.message); return data;
 }
 export async function markExecutionRunning(executionId:string){
- const supabase=createSupabaseAdminClient(); const {data,error}=await supabase.from('ai_executions').update({status:'running',attempt_count:1,started_at:new Date().toISOString()}).eq('id',executionId).eq('status','queued').select('*').single();
+ const supabase=createSupabaseAdminClient(); const {data,error}=await supabase.from('ai_executions').update({status:'running',started_at:new Date().toISOString()}).eq('id',executionId).eq('status','queued').select('*').single();
  if(error||!data) throw new ToolError('CONFLICT','Execution cannot enter running state'); return data;
 }
 export async function markExecutionSuccess(executionId:string,outputRef:unknown={}){
