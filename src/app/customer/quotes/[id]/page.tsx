@@ -20,6 +20,13 @@ export default async function CustomerQuotePage({ params }: Props) {
   const quote = quotes?.[0];
   if (!quote) notFound();
 
+  const { data: allItems, error: allItemsError } = await supabase
+    .from('customer_quote_items')
+    .select('id,customer_quote_id,quantity,unit_price,total,supplier_products(product_name,model_part_number)')
+    .in('customer_quote_id', (quotes ?? []).map((item) => item.id))
+    .order('created_at', { ascending: true });
+  if (allItemsError) throw allItemsError;
+
   const { data: items, error: itemError } = await supabase
     .from('customer_quote_items')
     .select('id,quantity,unit_price,total,supplier_products(product_name,model_part_number)')
@@ -42,6 +49,18 @@ export default async function CustomerQuotePage({ params }: Props) {
         </div>
         <span className="badge">{quote.status.replaceAll('_', ' ')}</span>
       </header>
+
+      <section className="section">
+        <div className="section-head"><h2>Quotation history</h2><span className="muted">{quotes?.length ?? 0} revision{(quotes?.length ?? 0) === 1 ? '' : 's'}</span></div>
+        <div className="quote-history">
+          {(quotes ?? []).slice().reverse().map((historyQuote) => (
+            <Link className={`quote-history-item ${historyQuote.id === quote.id ? 'active' : ''}`} key={historyQuote.id} href={`/customer/quotes/${id}?revision=${historyQuote.id}`}>
+              <div><strong>{historyQuote.reference}</strong><span className="muted">R{historyQuote.revision_number}</span></div>
+              <span className="badge">{historyQuote.status.replaceAll('_',' ')}</span>
+            </Link>
+          ))}
+        </div>
+      </section>
 
       <section className="detail-card">
         <div className="section-head"><h2>{quote.subject || 'Quotation'}</h2></div>
