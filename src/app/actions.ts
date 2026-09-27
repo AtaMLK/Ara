@@ -762,10 +762,49 @@ export async function approveRfqAction(rfqId: string) {
   }
 }
 
+export async function confirmCustomerQuoteItemPriceAction(itemId: string, unitPrice: number) {
+  try {
+    const parsed = idSchema.parse(itemId);
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new ToolError('VALIDATION', 'Customer price must be a non-negative number');
+    const { supabase } = await requireAdmin();
+    const { data: item, error: itemError } = await supabase
+      .from('customer_quote_items')
+      .select('id,customer_quote_id')
+      .eq('id', parsed)
+      .single();
+    if (itemError || !item) throw new ToolError('NOT_FOUND', 'Quote item not found');
+
+    const { data, error } = await supabase
+      .from('customer_quote_items')
+      .update({ unit_price: unitPrice, price_status: 'admin_confirmed' })
+      .eq('id', parsed)
+      .select('id,customer_quote_id')
+      .single();
+
+    if (error || !data) throw new ToolError('CONFLICT', 'Quote item price could not be confirmed');
+    revalidatePath('/quotes');
+    revalidatePath('/inquiries');
+    return { ok: true, quoteId: data.customer_quote_id };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function requestQuoteApprovalAction(quoteId: string) {
   try {
     const parsed = idSchema.parse(quoteId);
     const { supabase } = await requireAdmin();
+    const { data: pendingItems, error: itemError } = await supabase
+      .from('customer_quote_items')
+      .select('id,price_status')
+      .eq('customer_quote_id', parsed);
+
+    if (itemError) throw new ToolError('TRANSIENT', itemError.message);
+    if (!pendingItems?.length) throw new ToolError('CONFLICT', 'Quote must contain at least one item');
+    if (pendingItems.some((item) => item.price_status !== 'admin_confirmed')) {
+      throw new ToolError('APPROVAL_REQUIRED', 'Every customer quote item price must be confirmed by Admin');
+    }
+
     const { data, error } = await supabase.from('customer_quotes')
       .update({ status: 'pending_approval' })
       .eq('id', parsed)
