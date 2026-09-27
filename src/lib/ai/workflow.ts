@@ -1261,14 +1261,22 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
 
         const validRequirementIds = new Set((requirements ?? []).map((item) => item.id));
+        const quoteIds = new Set(quotes.map((item) => item.id));
         const findings = comparison.findings.filter((finding) => validRequirementIds.has(finding.requirementId));
 
         if (findings.length !== comparison.findings.length) {
           throw new ToolError('AI_PROCESSING', 'Comparison Agent returned a requirement outside the confirmed inquiry requirements');
         }
+        for (const finding of findings) {
+          if (finding.supplierQuoteId && !quoteIds.has(finding.supplierQuoteId)) {
+            throw new ToolError('AI_PROCESSING', 'Comparison Agent returned a supplier quote outside the current response');
+          }
+        }
 
         for (const finding of findings) {
-          const quote = quotes.find((item) => item.product_id);
+          const quote = finding.supplierQuoteId
+            ? quotes.find((item) => item.id === finding.supplierQuoteId)
+            : quotes.length === 1 ? quotes[0] : null;
           const { error: upsertError } = await supabase
             .from('supplier_comparison_findings')
             .upsert({
@@ -1821,6 +1829,29 @@ export async function continueInquiryWorkflow(inquiryId: string) {
       }
 
       if (comparisonExecution?.status === 'succeeded') {
+        const { data: processedResponses } = await supabase
+          .from('supplier_responses')
+          .select('id')
+          .eq('inquiry_id', inquiryId)
+          .eq('status', 'processed');
+
+        const responseIds = (processedResponses ?? []).map((item) => item.id);
+        let comparisonIsCurrent = responseIds.length === 0;
+
+        if (responseIds.length > 0) {
+          const { data: findings } = await supabase
+            .from('supplier_comparison_findings')
+            .select('supplier_response_id')
+            .eq('inquiry_id', inquiryId);
+
+          const comparedIds = new Set((findings ?? []).map((item) => item.supplier_response_id));
+          comparisonIsCurrent = responseIds.every((id) => comparedIds.has(id));
+        }
+
+        if (!comparisonIsCurrent) {
+          return runStage(inquiryId, 'comparison');
+        }
+
         return runStage(inquiryId, 'customer_quote');
       }
 
