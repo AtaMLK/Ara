@@ -193,26 +193,92 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         throw new ToolError('CONFLICT', 'Supplier discovery requires completed research');
       }
 
+      const { data: results, error: resultsError } = await supabase
+        .from('research_results')
+        .select('id,source_name,source_url,finding,structured_data,relevance,confidence,evidence')
+        .eq('research_case_id', research.id)
+        .order('confidence', { ascending: false, nullsFirst: false });
+
+      if (resultsError) throw new ToolError('TRANSIENT', resultsError.message);
+
+      const { data: existingCandidates } = await supabase
+        .from('supplier_candidates')
+        .select('proposed_name,status')
+        .eq('inquiry_id', inquiryId);
+
+      const blockedNames = new Set(
+        (existingCandidates ?? [])
+          .filter((item) => item.status === 'admin_removed' || item.status === 'admin_rejected')
+          .map((item) => item.proposed_name.toLowerCase().trim()),
+      );
+
+      const seen = new Set<string>();
+      let createdCount = 0;
+
+      for (const result of results ?? []) {
+        if (!result.source_url) continue;
+
+        let hostname = '';
+        try {
+          hostname = new URL(result.source_url).hostname.replace(/^www\./, '');
+        } catch {
+          continue;
+        }
+
+        const text = `${result.source_name ?? ''} ${result.finding ?? ''}`.toLowerCase();
+        const supplierSignal = /(manufacturer|manufacturer[s]?|supplier|distributor|fabricat|hydraulic|industrial|machinery|components?)/i.test(text);
+        if (!supplierSignal) continue;
+
+        const proposedName = result.source_name?.trim() || hostname;
+        const key = proposedName.toLowerCase();
+        if (seen.has(key) || blockedNames.has(key)) continue;
+        seen.add(key);
+
+        const { error } = await supabase.from('supplier_candidates').upsert({
+          inquiry_id: inquiryId,
+          proposed_name: proposedName.slice(0, 240),
+          proposed_website: `https://${hostname}`,
+          match_evidence: {
+            research_result_id: result.id,
+            finding: result.finding,
+            relevance: result.relevance,
+            confidence: result.confidence,
+          },
+          availability_evidence: {},
+          verification_evidence: {
+            source_url: result.source_url,
+            source_name: result.source_name,
+          },
+          status: 'proposed',
+        }, { onConflict: 'inquiry_id,proposed_name', ignoreDuplicates: true });
+
+        if (!error) createdCount++;
+      }
+
       await markExecutionSuccess(running.id, {
-        blocked: true,
-        reason: 'supplier_discovery_agent_not_connected',
         research_case_id: research.id,
+        candidate_count: createdCount,
+        next_stage: 'verification',
+        blocked: true,
+        reason: 'admin_candidate_finalization_required',
       });
 
+      await setInquiryStatus(inquiryId, 'researching');
       await supabase.from('ai_alerts').insert({
         inquiry_id: inquiryId,
         agent_id: 'supplier_discovery',
-        alert_type: 'SUPPLIER_DISCOVERY_AGENT_NOT_CONNECTED',
-        message: 'Research evidence is available, but Supplier Discovery is not connected yet. No supplier candidate was fabricated.',
+        alert_type: 'SUPPLIER_CANDIDATES_READY',
+        message: `${createdCount} supplier candidate(s) were discovered from stored research evidence. Admin finalization is required before verification or RFQ.`,
         priority: 'normal',
       });
-
-      await timeline(inquiryId, 'workflow_supplier_discovery_waiting_for_agent', {
+      await timeline(inquiryId, 'workflow_supplier_candidates_ready', {
         research_case_id: research.id,
+        candidate_count: createdCount,
       }, 'supplier_discovery');
 
-      return { execution: running, outcome: 'supplier_discovery_agent_required' as const };
+      return { execution: running, outcome: 'supplier_candidates_ready' as const };
     }
+
 
     if (stage === 'research') {
       const { data: existing } = await supabase
