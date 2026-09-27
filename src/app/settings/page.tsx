@@ -1,10 +1,8 @@
 import { requireAdmin } from '@/lib/ai/guards';
-import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import SettingsForms from './settings-forms';
 
 export default async function SettingsPage() {
-  await requireAdmin();
-  const supabase = createSupabaseAdminClient();
+  const { supabase } = await requireAdmin();
 
   const [{ data: rules }, { data: rates }] = await Promise.all([
     supabase.from('customer_pricing_rules')
