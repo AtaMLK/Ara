@@ -762,6 +762,62 @@ export async function approveRfqAction(rfqId: string) {
   }
 }
 
+export async function createCustomerPricingRuleAction(input: {
+  name: string;
+  markupPercent: number;
+  roundingIncrement?: number;
+}) {
+  try {
+    const parsed = z.object({
+      name: z.string().trim().min(1).max(200),
+      markupPercent: z.number().min(0),
+      roundingIncrement: z.number().positive().optional(),
+    }).parse(input);
+    const { supabase, user } = await requireAdmin();
+    const { data, error } = await supabase
+      .from('customer_pricing_rules')
+      .insert({
+        name: parsed.name,
+        markup_percent: parsed.markupPercent,
+        rounding_increment: parsed.roundingIncrement ?? null,
+        status: 'pending_approval',
+        created_by: user.id,
+      })
+      .select('id,status')
+      .single();
+    if (error || !data) throw new ToolError('CONFLICT', error?.message ?? 'Pricing rule creation failed');
+    revalidatePath('/settings');
+    return { ok: true, id: data.id };
+  } catch (error) {
+    fail(error);
+  }
+}
+
+export async function approveCustomerPricingRuleAction(ruleId: string) {
+  try {
+    const parsed = idSchema.parse(ruleId);
+    const { supabase, user } = await requireAdmin();
+    const { data: existing } = await supabase
+      .from('customer_pricing_rules')
+      .select('id,status')
+      .eq('status', 'approved')
+      .maybeSingle();
+    if (existing) throw new ToolError('CONFLICT', 'An approved customer pricing rule already exists');
+    const { data, error } = await supabase
+      .from('customer_pricing_rules')
+      .update({ status: 'approved', approved_by: user.id, approved_at: new Date().toISOString() })
+      .eq('id', parsed)
+      .eq('status', 'pending_approval')
+      .select('id,status')
+      .single();
+    if (error || !data) throw new ToolError('CONFLICT', 'Pricing rule is not awaiting approval');
+    revalidatePath('/settings');
+    return { ok: true };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function confirmCustomerQuoteItemPriceAction(itemId: string, unitPrice: number) {
   try {
     const parsed = idSchema.parse(itemId);
