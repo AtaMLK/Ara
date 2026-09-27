@@ -27,19 +27,29 @@ export async function requireCustomerInquiryAccess(inquiryId: string) {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role,status,customer_id')
+    .select('role,status')
     .eq('user_id', user.id)
     .single();
 
-  if (profile?.role !== 'customer' || profile.status !== 'active' || !profile.customer_id) {
+  if (profile?.role !== 'customer' || profile.status !== 'active') {
     throw new ToolError('AUTHORIZATION', 'Customer access required');
+  }
+
+  const { data: customer } = await supabase
+    .from('customers')
+    .select('id,status')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!customer || customer.status !== 'active') {
+    throw new ToolError('AUTHORIZATION', 'Customer account is inactive');
   }
 
   const { data: inquiry, error } = await supabase
     .from('inquiries')
     .select('id,customer_id,status,current_version')
     .eq('id', inquiryId)
-    .eq('customer_id', profile.customer_id)
+    .eq('customer_id', customer.id)
     .single();
 
   if (error || !inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
