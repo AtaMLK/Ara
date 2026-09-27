@@ -2,7 +2,7 @@
 'use client';
 
 import { useState } from 'react';
-import { approveClarificationAction, continueInquiryWorkflowAction, startInquiryWorkflowAction } from '@/app/actions';
+import { approveClarificationAction, sendClarificationAction, continueInquiryWorkflowAction, startInquiryWorkflowAction } from '@/app/actions';
 
 function label(value: string) {
   return value.replaceAll('_', ' ').replace(/\\b\\w/g, (c) => c.toUpperCase());
@@ -31,6 +31,19 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
       window.location.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Approval failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendClarification(id: string) {
+    setBusy(true);
+    setError('');
+    try {
+      await sendClarificationAction({ inquiryId, clarificationId: id });
+      window.location.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Send failed');
     } finally {
       setBusy(false);
     }
@@ -82,6 +95,7 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
         <div className="list">
           {clarifications.slice(0, 5).map((item) => <div className="list-item" key={item.id}>
             <div><strong>{label(item.status)}</strong><div className="muted">{item.question}</div></div>{item.status === 'draft' && <button className="inline-button" onClick={() => approveClarification(item.id)} disabled={busy}>Approve</button>}
+            {item.status === 'pending_approval' && <button className="inline-button" onClick={() => sendClarification(item.id)} disabled={busy}>Send to customer</button>}
           </div>)}
         </div>
       </div>}
