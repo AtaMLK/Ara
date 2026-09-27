@@ -67,7 +67,6 @@ async function runVisionOcr(bytes: Uint8Array, mimeType: string, fileName: strin
     body: JSON.stringify({
       model,
       input: [{ role: 'user', content }],
-      temperature: 0,
     }),
     cache: 'no-store',
   });
