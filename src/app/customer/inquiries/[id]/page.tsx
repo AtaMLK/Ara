@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import AnswerClarificationForm from './answer-form';
+import CustomerFileLink from './file-link';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -50,6 +51,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
                     <div className="muted">{Math.round(file.file_size / 1024)} KB · {file.mime_type}</div>
                   </div>
                   <span className="badge">{file.status.replaceAll('_', ' ')}</span>
+                  {file.status !== 'processing_failed' && <CustomerFileLink inquiryId={id} fileId={file.id} />}
                 </div>
               ))}
             </div>
