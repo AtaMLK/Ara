@@ -4,6 +4,7 @@ import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import AnswerClarificationForm from './answer-form';
 import CustomerFileLink from './file-link';
 
+
 type Props = { params: Promise<{ id: string }> };
 
 export default async function CustomerInquiryPage({ params }: Props) {
@@ -21,6 +22,14 @@ export default async function CustomerInquiryPage({ params }: Props) {
   if (inquiryResult.error || !inquiryResult.data) notFound();
 
   const clarifications = (clarificationsResult.data ?? []).filter((item) => ['sent'].includes(item.status));
+  const { data: latestQuote } = await supabase
+    .from('customer_quotes')
+    .select('id,reference,status,revision_number')
+    .eq('inquiry_id', id)
+    .in('status', ['sent','accepted','rejected','revision_requested'])
+    .order('revision_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
   const timelineEvents = timelineResult.data ?? [];
 
   return (
@@ -81,6 +90,20 @@ export default async function CustomerInquiryPage({ params }: Props) {
         </div>
       </section>
 
+
+      <section className="section">
+        <div className="section-head"><h2>Quotation</h2></div>
+        {latestQuote ? (
+          <div className="detail-card">
+            <div>
+              <div className="eyebrow">CUSTOMER QUOTE</div>
+              <h3>{latestQuote.reference}</h3>
+              <p className="muted">Revision R{latestQuote.revision_number} · {latestQuote.status.replaceAll('_', ' ')}</p>
+            </div>
+            <Link className="secondary-button" href={\`/customer/quotes/\${id}\`}>View quotation</Link>
+          </div>
+        ) : <div className="empty">No quotation is available yet.</div>}
+      </section>
       <section className="section">
         <div className="section-head"><h2>Activity</h2></div>
         <div className="detail-card">
