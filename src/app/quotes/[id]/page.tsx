@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { getCustomerQuote } from '@/lib/data/admin';
 import { QuoteItemEditor } from './quote-item-editor';
 import { QuoteActions } from '../quote-actions';
+import QuoteDetailsEditor from './quote-details-editor';
 
 function label(value: string) {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
@@ -46,6 +47,18 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         </div>
       </section>
 
+      {quote.revisionRequest && (
+        <section className="section">
+          <div className="detail-card revision-context">
+            <div className="section-head"><h2>Customer revision request</h2><span className="badge">{label(quote.revisionRequest.status)}</span></div>
+            <dl className="details">
+              <div><dt>Reason</dt><dd>{label(quote.revisionRequest.reason)}</dd></div>
+              <div><dt>Customer message</dt><dd>{quote.revisionRequest.free_text || 'No additional details.'}</dd></div>
+            </dl>
+          </div>
+        </section>
+      )}
+
       <section className="section">
         <div className="section-head"><h2>Quote items</h2><span className="muted">{quote.items.length} line{quote.items.length === 1 ? '' : 's'}</span></div>
         <div className="quote-items">
@@ -55,11 +68,9 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         </div>
       </section>
 
+      {(quote.status === 'draft' || quote.status === 'pending_approval') && <section className="section"><QuoteDetailsEditor quote={quote} /></section>}
       <section className="section">
-        <div className="detail-card">
-          <div className="section-head"><h2>Customer message</h2></div>
-          <div className="detail-text">{quote.body || 'No message.'}</div>
-        </div>
+        <div className="detail-card"><div className="section-head"><h2>Customer message</h2></div><div className="detail-text">{quote.body || 'No message.'}</div></div>
       </section>
     </>
   );

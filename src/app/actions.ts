@@ -1211,6 +1211,50 @@ export async function reviewCustomerQuoteRevisionAction(input: {
   } catch (error) { fail(error); }
 }
 
+
+export async function updateCustomerQuoteItemQuantityAction(itemId: string, quantity: number) {
+  try {
+    const parsed = z.object({ itemId: idSchema, quantity: z.number().positive().finite() }).parse({ itemId, quantity });
+    const { supabase } = await requireAdmin();
+    const { data: item, error } = await supabase.from('customer_quote_items').select('id,customer_quote_id').eq('id',parsed.itemId).single();
+    if (error || !item) throw new ToolError('NOT_FOUND','Quote item not found');
+    const { data: quote } = await supabase.from('customer_quotes').select('id,status').eq('id',item.customer_quote_id).single();
+    if (!quote || !['draft','pending_approval'].includes(quote.status)) throw new ToolError('CONFLICT','Only editable quotes can be changed');
+    const { error:updateError } = await supabase.from('customer_quote_items').update({ quantity: parsed.quantity, price_status:'suggested' }).eq('id',item.id);
+    if (updateError) throw new ToolError('CONFLICT','Quantity could not be updated');
+    revalidatePath('/quotes'); revalidatePath('/quotes/'+quote.id);
+    return {ok:true};
+  } catch(error) { fail(error); }
+}
+
+export async function updateCustomerQuoteDetailsAction(input: {
+  quoteId: string;
+  subject?: string;
+  body?: string;
+  validUntil?: string;
+}) {
+  try {
+    const parsed = z.object({
+      quoteId:idSchema,
+      subject:z.string().trim().max(200).optional(),
+      body:z.string().trim().max(10000).optional(),
+      validUntil:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/).optional(),
+    }).parse(input);
+    const { supabase } = await requireAdmin();
+    const { data: quote } = await supabase.from('customer_quotes').select('id,status').eq('id',parsed.quoteId).single();
+    if (!quote) throw new ToolError('NOT_FOUND','Customer quote not found');
+    if (!['draft','pending_approval'].includes(quote.status)) throw new ToolError('CONFLICT','Only editable quotes can be changed');
+    const { error } = await supabase.from('customer_quotes').update({
+      subject: parsed.subject || null,
+      body: parsed.body || null,
+      valid_until: parsed.validUntil || null,
+    }).eq('id',quote.id);
+    if (error) throw new ToolError('CONFLICT','Quote details could not be updated');
+    revalidatePath('/quotes'); revalidatePath('/quotes/'+quote.id);
+    return {ok:true};
+  } catch(error) { fail(error); }
+}
+
 export async function confirmCustomerQuoteItemPriceAction(itemId: string, unitPrice: number) {
   try {
     const parsed = idSchema.parse(itemId);
