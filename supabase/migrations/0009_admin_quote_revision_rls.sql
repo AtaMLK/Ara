@@ -1,3 +1,5 @@
+alter type public.quote_status add value if not exists 'superseded';
+
 -- Allow Admin to manage customer quote revision workflow.
 
 create policy customer_quotes_admin_all
