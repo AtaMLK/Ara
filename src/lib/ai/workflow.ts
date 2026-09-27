@@ -284,7 +284,131 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         pending_count: pending,
       }, 'supplier_verification');
 
+      if (pending === 0 && verified > 0) {
+        await enqueueStage(inquiryId, 'rfq');
+      }
+
       return { execution: running, outcome };
+    }
+
+    if (stage === 'rfq') {
+      const { data: candidates, error: candidateError } = await supabase
+        .from('supplier_candidates')
+        .select('id,supplier_id,proposed_name,status')
+        .eq('inquiry_id', inquiryId)
+        .eq('status', 'finalized');
+
+      if (candidateError) throw new ToolError('TRANSIENT', candidateError.message);
+
+      const supplierIds = (candidates ?? [])
+        .map((c) => c.supplier_id)
+        .filter((id): id is string => Boolean(id));
+
+      if (!supplierIds.length) {
+        await markExecutionSuccess(running.id, { blocked: true, reason: 'no_verified_suppliers' });
+        await createAlert(inquiryId, 'rfq', 'NO_VERIFIED_SUPPLIERS', 'RFQ cannot be created until at least one supplier is verified.', 'normal');
+        return { execution: running, outcome: 'blocked' as const };
+      }
+
+      const { data: suppliers } = await supabase
+        .from('suppliers')
+        .select('id,legal_name,verification_status')
+        .in('id', supplierIds);
+
+      const verifiedSuppliers = (suppliers ?? []).filter((s) => s.verification_status === 'verified');
+
+      if (!verifiedSuppliers.length) {
+        await markExecutionSuccess(running.id, { blocked: true, reason: 'suppliers_not_verified' });
+        await createAlert(inquiryId, 'rfq', 'SUPPLIERS_NOT_VERIFIED', 'RFQ is waiting for supplier verification.', 'normal');
+        return { execution: running, outcome: 'blocked' as const };
+      }
+
+      const { data: requirements, error: reqError } = await supabase
+        .from('requirements')
+        .select('id,type,value,status')
+        .eq('inquiry_id', inquiryId)
+        .eq('status', 'confirmed');
+
+      if (reqError) throw new ToolError('TRANSIENT', reqError.message);
+
+      const { data: inquiry } = await supabase
+        .from('inquiries')
+        .select('title,description,reference')
+        .eq('id', inquiryId)
+        .single();
+
+      let created = 0;
+      for (const supplier of verifiedSuppliers) {
+        const { data: email } = await supabase
+          .from('supplier_emails')
+          .select('email')
+          .eq('supplier_id', supplier.id)
+          .eq('status', 'active')
+          .eq('is_primary', true)
+          .maybeSingle();
+
+        if (!email?.email) {
+          await createAlert(inquiryId, 'rfq', 'SUPPLIER_CONTACT_REQUIRED', `No primary active email is available for ${supplier.legal_name}.`, 'normal');
+          continue;
+        }
+
+        const subject = `RFQ — ${inquiry?.reference ?? inquiryId}`;
+        const body = [
+          `Dear ${supplier.legal_name} team,`,
+          '',
+          'We would like to request your quotation for the following requirements:',
+          '',
+          ...(requirements ?? []).map((r) => `- ${r.type}: ${r.value}`),
+          '',
+          'Please provide your unit prices, currency, availability/lead time, MOQ, quotation validity, payment terms, and delivery terms.',
+          '',
+          'Regards,',
+          'Purchase Department',
+        ].join('\n');
+
+        const { data: rfq, error: rfqError } = await supabase
+          .from('rfqs')
+          .insert({
+            inquiry_id: inquiryId,
+            supplier_id: supplier.id,
+            status: 'pending_approval',
+            subject,
+            body,
+            recipient_email: email.email,
+            sender_email: process.env.PURCHASE_DEP_EMAIL ?? 'purchase-dep@aryaautomation.com',
+            approval_required: true,
+          })
+          .select('id')
+          .single();
+
+        if (rfqError) throw new ToolError('CONFLICT', rfqError.message);
+
+        for (const requirement of requirements ?? []) {
+          await supabase.from('rfq_items').insert({
+            rfq_id: rfq.id,
+            requirement_id: requirement.id,
+            requested_data: { type: requirement.type, value: requirement.value },
+          });
+        }
+
+        created++;
+        await timeline(inquiryId, 'rfq_draft_created', {
+          rfq_id: rfq.id,
+          supplier_id: supplier.id,
+          recipient_email: email.email,
+        }, 'rfq_agent');
+      }
+
+      await markExecutionSuccess(running.id, {
+        created_count: created,
+        status: 'pending_approval',
+      });
+
+      if (created > 0) {
+        await createAlert(inquiryId, 'rfq', 'RFQ_APPROVAL_REQUIRED', `${created} RFQ draft(s) are ready for Admin approval.`, 'normal');
+      }
+
+      return { execution: running, outcome: created > 0 ? 'rfq_pending_approval' : 'blocked' };
     }
 
     if (stage === 'supplier_discovery') {
