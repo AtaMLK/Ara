@@ -1114,7 +1114,7 @@ export async function approveCustomerQuoteAction(quoteId: string) {
     }
 
     const adminSupabase = createSupabaseAdminClient();
-    const idempotencyKey = \`customer-quote-\${quote.id}-r\${quote.revision_number}\`;
+    const idempotencyKey = `customer-quote-${quote.id}-r${quote.revision_number}`;
 
     const { data: previousSend, error: previousSendError } = await adminSupabase
       .from('communications')
@@ -1132,37 +1132,37 @@ export async function approveCustomerQuoteAction(quoteId: string) {
     }
 
     const customerName = customer.company_name || customer.name || 'Customer';
-    const quoteUrl = \`\${appUrl.replace(/\/$/, '')}/customer/inquiries/\${quote.inquiry_id}\`;
-    const subject = quote.subject?.trim() || \`ARAT quotation — \${quote.reference}\`;
+    const quoteUrl = `${appUrl.replace(/\/$/, '')}/customer/inquiries/${quote.inquiry_id}`;
+    const subject = quote.subject?.trim() || `ARAT quotation — ${quote.reference}`;
 
     const rows = pendingItems.map((item) => {
       const product = Array.isArray(item.supplier_products) ? item.supplier_products[0] : item.supplier_products;
       const productName = product?.product_name || product?.model_part_number || 'Quoted item';
-      const model = product?.model_part_number && product?.product_name ? \`<div style="color:#6b7280;font-size:12px">\${escapeHtml(product.model_part_number)}</div>\` : '';
-      return \`<tr>
-        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb">\${escapeHtml(productName)}\${model}</td>
-        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">\${escapeHtml(item.quantity)}</td>
-        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">\${escapeHtml(item.unit_price.toFixed ? item.unit_price.toFixed(2) : item.unit_price)} \${escapeHtml(quote.currency)}</td>
-        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">\${escapeHtml(item.total.toFixed ? item.total.toFixed(2) : item.total)} \${escapeHtml(quote.currency)}</td>
-      </tr>\`;
+      const model = product?.model_part_number && product?.product_name ? `<div style="color:#6b7280;font-size:12px">${escapeHtml(product.model_part_number)}</div>` : '';
+      return `<tr>
+        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb">${escapeHtml(productName)}${model}</td>
+        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${escapeHtml(item.quantity)}</td>
+        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${escapeHtml(item.unit_price.toFixed ? item.unit_price.toFixed(2) : item.unit_price)} ${escapeHtml(quote.currency)}</td>
+        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${escapeHtml(item.total.toFixed ? item.total.toFixed(2) : item.total)} ${escapeHtml(quote.currency)}</td>
+      </tr>`;
     }).join('');
 
     const grandTotal = pendingItems.reduce((sum, item) => sum + Number(item.total || 0), 0);
     const safeName = escapeHtml(customerName);
     const safeBody = escapeHtml(quote.body || '').replaceAll('\n', '<br />');
     const validUntil = quote.valid_until
-      ? \`<p><strong>Valid until:</strong> \${escapeHtml(quote.valid_until)}</p>\`
+      ? `<p><strong>Valid until:</strong> ${escapeHtml(quote.valid_until)}</p>`
       : '';
 
-    const html = \`<!doctype html>
+    const html = `<!doctype html>
 <html>
   <body style="margin:0;background:#f7f8fa;font-family:Arial,sans-serif;color:#17202a;line-height:1.6">
     <div style="max-width:720px;margin:0 auto;padding:32px 20px">
       <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:28px">
-        <h2 style="margin-top:0">Quotation \${escapeHtml(quote.reference)}</h2>
-        <p>Hello \${safeName},</p>
+        <h2 style="margin-top:0">Quotation ${escapeHtml(quote.reference)}</h2>
+        <p>Hello ${safeName},</p>
         <p>Please find our quotation below.</p>
-        \${safeBody ? \`<p>\${safeBody}</p>\` : ''}
+        ${safeBody ? `<p>${safeBody}</p>` : ''}
         <table style="width:100%;border-collapse:collapse;margin:24px 0;font-size:14px">
           <thead>
             <tr>
@@ -1172,40 +1172,40 @@ export async function approveCustomerQuoteAction(quoteId: string) {
               <th style="text-align:right;padding:10px 8px;border-bottom:2px solid #d1d5db">Total</th>
             </tr>
           </thead>
-          <tbody>\${rows}</tbody>
+          <tbody>${rows}</tbody>
           <tfoot>
             <tr>
               <td colspan="3" style="padding:14px 8px;text-align:right;font-weight:700">Total</td>
-              <td style="padding:14px 8px;text-align:right;font-weight:700">\${grandTotal.toFixed(2)} \${escapeHtml(quote.currency)}</td>
+              <td style="padding:14px 8px;text-align:right;font-weight:700">${grandTotal.toFixed(2)} ${escapeHtml(quote.currency)}</td>
             </tr>
           </tfoot>
         </table>
-        \${validUntil}
-        <p><a href="\${quoteUrl}" style="display:inline-block;padding:10px 16px;background:#17202a;color:#fff;text-decoration:none;border-radius:7px">Open request in ARAT</a></p>
-        <p style="color:#6b7280;font-size:12px">Quotation reference: \${escapeHtml(quote.reference)}</p>
+        ${validUntil}
+        <p><a href="${quoteUrl}" style="display:inline-block;padding:10px 16px;background:#17202a;color:#fff;text-decoration:none;border-radius:7px">Open request in ARAT</a></p>
+        <p style="color:#6b7280;font-size:12px">Quotation reference: ${escapeHtml(quote.reference)}</p>
       </div>
     </div>
   </body>
-</html>\`;
+</html>`;
 
     const textLines = pendingItems.map((item) => {
       const product = Array.isArray(item.supplier_products) ? item.supplier_products[0] : item.supplier_products;
       const productName = product?.product_name || product?.model_part_number || 'Quoted item';
-      return \`- \${productName} | Qty: \${item.quantity} | Unit: \${Number(item.unit_price).toFixed(2)} \${quote.currency} | Total: \${Number(item.total).toFixed(2)} \${quote.currency}\`;
+      return `- ${productName} | Qty: ${item.quantity} | Unit: ${Number(item.unit_price).toFixed(2)} ${quote.currency} | Total: ${Number(item.total).toFixed(2)} ${quote.currency}`;
     }).join('\n');
 
-    const text = \`Hello \${customerName},
+    const text = `Hello ${customerName},
 
-Please find our quotation \${quote.reference} below.
+Please find our quotation ${quote.reference} below.
 
-\${quote.body || ''}
+${quote.body || ''}
 
-\${textLines}
+${textLines}
 
-Total: \${grandTotal.toFixed(2)} \${quote.currency}
-\${quote.valid_until ? \`Valid until: \${quote.valid_until}\n\` : ''}
+Total: ${grandTotal.toFixed(2)} ${quote.currency}
+${quote.valid_until ? `Valid until: ${quote.valid_until}\n` : ''}
 Open your request in ARAT:
-\${quoteUrl}\`;
+${quoteUrl}`;
 
     const provider = getEmailProvider();
     const result = await provider.send({
@@ -1243,7 +1243,7 @@ Open your request in ARAT:
         inquiry_id: quote.inquiry_id,
         agent_id: 'orchestrator',
         alert_type: 'CUSTOMER_QUOTE_EMAIL_LOG_CONFLICT',
-        message: \`Customer quote email was accepted by the provider but could not be recorded. Provider message: \${result.providerMessageId}\`,
+        message: `Customer quote email was accepted by the provider but could not be recorded. Provider message: ${result.providerMessageId}`,
         priority: 'urgent',
       });
       throw new ToolError('CONFLICT', 'Email was sent, but could not be recorded. Check the quote before retrying.');
@@ -1267,7 +1267,7 @@ Open your request in ARAT:
         inquiry_id: quote.inquiry_id,
         agent_id: 'orchestrator',
         alert_type: 'CUSTOMER_QUOTE_EMAIL_STATE_CONFLICT',
-        message: \`Customer quote email was accepted and recorded, but quote state could not be changed to Sent. Provider message: \${result.providerMessageId}\`,
+        message: `Customer quote email was accepted and recorded, but quote state could not be changed to Sent. Provider message: ${result.providerMessageId}`,
         priority: 'urgent',
       });
       throw new ToolError('CONFLICT', 'Email was sent and recorded, but quote state could not be updated. Check the quote.');
@@ -1307,9 +1307,9 @@ Open your request in ARAT:
     }
 
     revalidatePath('/quotes');
-    revalidatePath(\`/quotes/\${quote.id}\`);
-    revalidatePath(\`/inquiries/\${quote.inquiry_id}\`);
-    revalidatePath(\`/customer/inquiries/\${quote.inquiry_id}\`);
+    revalidatePath(`/quotes/${quote.id}`);
+    revalidatePath(`/inquiries/${quote.inquiry_id}`);
+    revalidatePath(`/customer/inquiries/${quote.inquiry_id}`);
     return { ok: true, providerMessageId: result.providerMessageId };
   } catch (error) {
     fail(error);
