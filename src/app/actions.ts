@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { requireAdmin } from '@/lib/ai/guards';
+import { requireAdmin, requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import { ToolError } from '@/lib/errors';
 import { continueInquiryWorkflow, startInquiryWorkflow } from '@/lib/ai/workflow';
 
@@ -194,7 +194,7 @@ export async function answerClarificationAction(input: { inquiryId: string; clar
       clarificationId: idSchema,
       answer: z.string().trim().min(1),
     }).parse(input);
-    const { supabase, user } = await requireAdmin();
+    const { supabase, user } = await requireCustomerInquiryAccess(parsed.inquiryId);
 
     const { data: clarification, error: clarificationError } = await supabase
       .from('clarifications')
