@@ -16,7 +16,7 @@ export async function createSupplierResponse(ctx:AIContext,input:unknown){
   return data;
 }
 
-const quoteSchema=z.object({supplierResponseId:z.string().uuid(),productId:z.string().uuid().optional(),matchStatus:z.enum(['match','partial_match','mismatch','unknown']).default('unknown'),currency:z.string().length(3).optional(),quantity:z.number().nonnegative().optional(),moq:z.number().nonnegative().optional(),netPrice:z.number().nonnegative().optional(),validUntil:z.string().optional(),leadTimeText:z.string().optional(),availability:z.string().optional(),paymentTerms:z.string().optional(),incoterm:z.string().optional(),deliveryMethod:z.string().optional(),originalData:z.record(z.string(),z.unknown()).default({})});
+const quoteSchema=z.object({supplierResponseId:z.string().uuid(),productId:z.string().uuid().optional(),matchStatus:z.enum(['match','partial_match','mismatch','unknown']).default('unknown'),currency:z.string().length(3).optional(),quantity:z.number().nonnegative().optional(),moq:z.number().nonnegative().optional(),listPrice:z.number().nonnegative().optional(),discount:z.number().nonnegative().optional(),netPrice:z.number().nonnegative().optional(),vat:z.number().nonnegative().optional(),grossPrice:z.number().nonnegative().optional(),validityFrom:z.string().optional(),validUntil:z.string().optional(),leadTimeText:z.string().optional(),availability:z.string().optional(),paymentTerms:z.string().optional(),incoterm:z.string().optional(),deliveryMethod:z.string().optional(),additionalConditions:z.array(z.unknown()).default([]),originalData:z.record(z.string(),z.unknown()).default({})});
 
 export async function createSupplierQuote(ctx:AIContext,input:unknown){
   const value=quoteSchema.parse(input);
@@ -26,7 +26,7 @@ export async function createSupplierQuote(ctx:AIContext,input:unknown){
   if(value.currency && value.currency.length!==3) throw new ToolError('VALIDATION','Currency must be a 3-letter code');
   const {data,error}=await supabase.from('supplier_quotes').insert({
     supplier_response_id:value.supplierResponseId,product_id:value.productId,match_status:value.matchStatus,
-    currency:value.currency,quantity:value.quantity,moq:value.moq,net_price:value.netPrice,
+    currency:value.currency,quantity:value.quantity,moq:value.moq,list_price:value.listPrice,discount:value.discount,net_price:value.netPrice,vat:value.vat,gross_price:value.grossPrice,validity_from:value.validityFrom,additional_conditions:value.additionalConditions,
     valid_until:value.validUntil,lead_time_text:value.leadTimeText,availability:value.availability,
     payment_terms:value.paymentTerms,incoterm:value.incoterm,delivery_method:value.deliveryMethod,
     original_data:value.originalData

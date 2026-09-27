@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider } from './research/provider';
 import { runAgent } from './agent-runner';
-import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema } from './agent-schemas';
+import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
   enqueueWorkflow,
@@ -101,7 +101,36 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
   if (execution.status === 'succeeded') {
     const output = execution.output_ref as { blocked?: boolean } | null;
-    if (!output?.blocked) return { execution, outcome: 'already_succeeded' as const };
+
+    // Supplier replies can arrive after the original quote-extraction stage
+    // succeeded. Reopen the stage when there are new supplier responses.
+    if (stage === 'quote_extraction' && !output?.blocked) {
+      const { data: pendingResponses } = await createSupabaseAdminClient()
+        .from('supplier_responses')
+        .select('id')
+        .eq('inquiry_id', inquiryId)
+        .in('status', ['received', 'processing'])
+        .limit(1);
+
+      if ((pendingResponses ?? []).length > 0) {
+        const reopened = await createSupabaseAdminClient()
+          .from('ai_executions')
+          .update({ status: 'queued', error_code: null, error_message: null, completed_at: null })
+          .eq('id', execution.id)
+          .eq('status', 'succeeded')
+          .select('*')
+          .single();
+
+        if (reopened.error || !reopened.data) {
+          throw new ToolError('CONFLICT', 'Quote extraction execution cannot be reopened');
+        }
+        execution.status = 'queued';
+      } else {
+        return { execution, outcome: 'already_succeeded' as const };
+      }
+    } else if (!output?.blocked) {
+      return { execution, outcome: 'already_succeeded' as const };
+    }
     const reopened = await createSupabaseAdminClient()
       .from('ai_executions')
       .update({ status: 'queued', error_code: null, error_message: null, completed_at: null })
@@ -928,91 +957,236 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
     }
 
     if (stage === 'quote_extraction') {
-      const { data: communications, error } = await supabase
-        .from('communications')
-        .select('id,inquiry_id,supplier_id,rfq_id,subject,body,metadata')
+      const { data: responses, error: responseError } = await supabase
+        .from('supplier_responses')
+        .select('id,communication_id,supplier_id,inquiry_id,status,raw_extraction,attachments')
         .eq('inquiry_id', inquiryId)
-        .eq('direction', 'incoming')
-        .not('rfq_id', 'is', null)
+        .in('status', ['received', 'processing'])
         .order('created_at', { ascending: true });
 
-      if (error) throw new ToolError('TRANSIENT', error.message);
+      if (responseError) throw new ToolError('TRANSIENT', responseError.message);
 
-      let extracted = 0;
+      const { data: requirements, error: requirementError } = await supabase
+        .from('requirements')
+        .select('id,type,value,status,source,source_ref,admin_edited')
+        .eq('inquiry_id', inquiryId)
+        .order('created_at', { ascending: true });
+
+      if (requirementError) throw new ToolError('TRANSIENT', requirementError.message);
+
+      let processed = 0;
       let skipped = 0;
+      let alerts = 0;
 
-      for (const communication of communications ?? []) {
-        const { data: existing } = await supabase
-          .from('supplier_responses')
-          .select('id')
-          .eq('communication_id', communication.id)
+      for (const response of responses ?? []) {
+        const { data: communication } = await supabase
+          .from('communications')
+          .select('id,subject,body,metadata,rfq_id,supplier_id')
+          .eq('id', response.communication_id)
           .maybeSingle();
 
-        if (existing) {
+        if (!communication || !response.supplier_id) {
           skipped++;
           continue;
         }
 
-        if (!communication.supplier_id || !communication.rfq_id) {
-          skipped++;
-          continue;
-        }
-
-        const body = communication.body ?? '';
-        const metadata = (communication.metadata ?? {}) as Record<string, unknown>;
-
-        const { data: response, error: responseError } = await supabase
-          .from('supplier_responses')
-          .insert({
-            communication_id: communication.id,
-            supplier_id: communication.supplier_id,
-            inquiry_id: inquiryId,
-            status: 'processing',
-            raw_extraction: {
-              source: 'supplier_email',
-              subject: communication.subject,
-              body,
-              metadata,
-              extraction_policy: 'explicit_values_only',
-            },
-          })
+        const { data: existingQuotes } = await supabase
+          .from('supplier_quotes')
           .select('id')
-          .single();
+          .eq('supplier_response_id', response.id)
+          .limit(1);
 
-        if (responseError || !response) throw new ToolError('CONFLICT', responseError?.message ?? 'Supplier response creation failed');
+        if (existingQuotes && existingQuotes.length > 0) {
+          await supabase.from('supplier_responses').update({ status: 'processed' }).eq('id', response.id);
+          skipped++;
+          continue;
+        }
 
-        // The workflow stores the raw response first. Actual semantic extraction is performed by the Quote Extraction agent/model.
-        // No price/currency/quantity/lead-time value is inferred from free text at this stage.
+        const { data: supplierProducts, error: productsError } = await supabase
+          .from('supplier_products')
+          .select('id,product_name,model_part_number,description,status')
+          .eq('supplier_id', response.supplier_id)
+          .eq('status', 'active')
+          .order('created_at', { ascending: true });
+
+        if (productsError) throw new ToolError('TRANSIENT', productsError.message);
+
+        const { data: rfqItems } = communication.rfq_id
+          ? await supabase
+              .from('rfq_items')
+              .select('id,requirement_id,product_id,requested_quantity,requested_data')
+              .eq('rfq_id', communication.rfq_id)
+          : { data: [] };
+
+        const raw = (response.raw_extraction ?? {}) as Record<string, unknown>;
+        const body = typeof raw.body === 'string' ? raw.body : (communication.body ?? '');
+
+        await supabase.from('supplier_responses').update({ status: 'processing' }).eq('id', response.id);
+
+        const ai = await runAgent(
+          { agentId: 'quote_extraction', executionId: running.id, inquiryId },
+          {
+            supplier_response_id: response.id,
+            supplier_id: response.supplier_id,
+            rfq_id: communication.rfq_id,
+            subject: communication.subject,
+            email_body: body,
+            attachments: response.attachments ?? [],
+            inquiry_requirements: (requirements ?? []).map((item) => ({
+              id: item.id,
+              type: item.type,
+              value: item.value,
+              status: item.status,
+              source: item.source,
+              admin_edited: item.admin_edited,
+            })),
+            rfq_items: rfqItems ?? [],
+            supplier_products: supplierProducts ?? [],
+            instructions: [
+              'Extract only values explicitly present in the supplier response or supplied attachment text.',
+              'Do not infer currency from supplier country, symbol alone, prior quotes, or general knowledge.',
+              'Do not calculate net/gross/list prices, discounts, VAT, or conversions unless the response explicitly states the resulting value.',
+              'Match each quoted product independently against the inquiry requirements, RFQ items, and supplied supplier product records.',
+              'Use productId only when the supplied supplier product record is clearly the quoted product.',
+              'If a product cannot be reliably matched, leave productId empty and use partial_match, mismatch, or unknown.',
+              'Multiple prices for the same product must be represented as separate quotes or priceTiers exactly as stated; never choose one.',
+              'Preserve the supplier wording in originalData and conditions where useful.',
+              'Unknown, missing, conflicting, or ambiguous values must remain blank and be listed in uncertainties.',
+              'Never create customer pricing, margin, or exchange-rate data.',
+            ],
+          },
+          quoteExtractionOutputSchema,
+        );
+
+        if (ai.output.quotes.length === 0) {
+          await supabase.from('supplier_responses').update({ status: 'processed' }).eq('id', response.id);
+          await createAlert(
+            inquiryId,
+            'quote_extraction',
+            'QUOTE_EXTRACTION_NO_QUOTE',
+            `Supplier response ${response.id} contained no reliably extractable quotation line.`,
+            'normal',
+          );
+          alerts++;
+          processed++;
+          continue;
+        }
+
+        for (const quote of ai.output.quotes) {
+          if (quote.productId && !supplierProducts?.some((p) => p.id === quote.productId)) {
+            throw new ToolError('AI_PROCESSING', 'Quote extraction returned a productId outside the supplier product set');
+          }
+
+          const { data: createdQuote, error: quoteError } = await supabase
+            .from('supplier_quotes')
+            .insert({
+              supplier_response_id: response.id,
+              product_id: quote.productId ?? null,
+              match_status: quote.matchStatus,
+              currency: quote.currency,
+              quantity: quote.quantity,
+              moq: quote.moq,
+              list_price: quote.listPrice,
+              discount: quote.discount,
+              net_price: quote.netPrice,
+              vat: quote.vat,
+              gross_price: quote.grossPrice,
+              validity_from: quote.validityFrom || null,
+              valid_until: quote.validUntil || null,
+              availability: quote.availability,
+              lead_time_text: quote.leadTimeText,
+              payment_terms: quote.paymentTerms,
+              incoterm: quote.incoterm,
+              delivery_method: quote.deliveryMethod,
+              ai_calculated: false,
+              additional_conditions: quote.conditions,
+              original_data: {
+                ...quote.originalData,
+                extraction: {
+                  provider: ai.provider,
+                  model: ai.model,
+                  execution_id: running.id,
+                  uncertainties: quote.uncertainties,
+                },
+              },
+            })
+            .select('id')
+            .single();
+
+          if (quoteError || !createdQuote) {
+            throw new ToolError('CONFLICT', quoteError?.message ?? 'Supplier quote creation failed');
+          }
+
+          if (quote.priceTiers.length > 0) {
+            const { error: tierError } = await supabase
+              .from('supplier_quote_price_tiers')
+              .insert(quote.priceTiers.map((tier) => ({
+                supplier_quote_id: createdQuote.id,
+                min_quantity: tier.minQuantity,
+                max_quantity: tier.maxQuantity,
+                unit_price: tier.unitPrice,
+                currency: tier.currency,
+                condition_text: tier.conditionText,
+              })));
+            if (tierError) throw new ToolError('CONFLICT', tierError.message);
+          }
+
+          if (quote.conditions.length > 0) {
+            const { error: conditionError } = await supabase
+              .from('supplier_quote_conditions')
+              .insert(quote.conditions.map((condition) => ({
+                supplier_quote_id: createdQuote.id,
+                condition_type: condition.type,
+                condition_text: condition.text,
+                deadline: condition.deadline || null,
+                stackable: condition.stackable ?? null,
+              })));
+            if (conditionError) throw new ToolError('CONFLICT', conditionError.message);
+          }
+
+          if (quote.uncertainties.length > 0) {
+            await createAlert(
+              inquiryId,
+              'quote_extraction',
+              'QUOTE_EXTRACTION_UNCERTAINTY',
+              `Supplier quote ${createdQuote.id} has unresolved extraction uncertainty: ${quote.uncertainties.join('; ')}`,
+              'normal',
+            );
+            alerts++;
+          }
+
+          await timeline(inquiryId, 'supplier_quote_extracted', {
+            supplier_response_id: response.id,
+            supplier_quote_id: createdQuote.id,
+            rfq_id: communication.rfq_id,
+            match_status: quote.matchStatus,
+            uncertainty_count: quote.uncertainties.length,
+          }, 'quote_extraction');
+        }
+
         await supabase
           .from('supplier_responses')
-          .update({ status: 'received' })
+          .update({ status: 'processed', raw_extraction: { ...raw, semantic_extraction: ai.output } })
           .eq('id', response.id);
 
-        extracted++;
-        await timeline(inquiryId, 'supplier_response_ready_for_extraction', {
-          communication_id: communication.id,
-          supplier_response_id: response.id,
-          rfq_id: communication.rfq_id,
-        }, 'quote_extraction_agent');
+        processed++;
       }
 
       await markExecutionSuccess(running.id, {
-        response_count: extracted,
+        response_count: responses?.length ?? 0,
+        processed_count: processed,
         skipped_count: skipped,
-        status: 'ready_for_extraction',
+        alert_count: alerts,
+        status: 'completed',
       });
 
-      if (extracted > 0) {
-        await createAlert(inquiryId, 'quote_extraction', 'QUOTE_EXTRACTION_REQUIRED', `${extracted} supplier response(s) are ready for structured quote extraction.`, 'normal');
-      }
+      await timeline(inquiryId, 'quote_extraction_completed', {
+        processed_count: processed,
+        skipped_count: skipped,
+        alert_count: alerts,
+      }, 'quote_extraction');
 
-      if (extracted === 0) {
-        await markExecutionSuccess(running.id, { response_count: 0, skipped_count: skipped, status: 'completed' });
-      }
-
-
-
-      return { execution: running, outcome: extracted > 0 ? 'ready_for_extraction' : 'completed' };
+      return { execution: running, outcome: 'completed' };
     }
 
     if (stage === 'email_response') {
