@@ -1,2 +1,31 @@
-const items=["RFQ approval required","Supplier response needs review","AI clarification required"];
-export default function Page(){return <><header className="topbar"><div><div className="eyebrow">ADMIN</div><h1 className="title">Notifications</h1><div className="muted">Approvals, tasks and AI alerts</div></div></header><section className="section"><div className="table"><div className="row header"><div>Name</div><div>Status</div><div>Updated</div><div></div></div>{items.map((x,i)=><div className="row" key={x}><div>{x}</div><div><span className="badge">{i===0?'Needs attention':'Active'}</span></div><div>Today</div><div>→</div></div>)}</div></section></>}
+import { listNotifications } from '@/lib/data/admin';
+
+function label(value: string) {
+  return value.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export default async function NotificationsPage() {
+  const items = await listNotifications();
+
+  return (
+    <>
+      <header className="topbar">
+        <div><div className="eyebrow">ADMIN</div><h1 className="title">Notifications</h1><div className="muted">Approvals, tasks and AI alerts</div></div>
+      </header>
+
+      <section className="section">
+        <div className="table">
+          <div className="row header"><div>Notification</div><div>Category</div><div>Priority</div><div>Created</div></div>
+          {items.length === 0 ? <div className="empty">No notifications yet.</div> : items.map((item) => (
+            <div className="row" key={item.id}>
+              <div><strong>{item.title}</strong><div className="muted">{item.message}</div></div>
+              <div><span className="badge">{label(item.category)}</span></div>
+              <div><span className="badge">{label(item.priority)}</span></div>
+              <div>{new Date(item.created_at).toLocaleDateString('en-GB')}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
