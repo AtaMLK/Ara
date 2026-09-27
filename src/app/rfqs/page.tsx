@@ -1,4 +1,5 @@
 import { listRfqs } from '@/lib/data/admin';
+import { ApproveRfqButton } from './approve-button';
 
 type Props = { searchParams: Promise<{ q?: string; status?: string }> };
 
@@ -32,7 +33,7 @@ export default async function RfqsPage({ searchParams }: Props) {
               <div><strong>{item.subject || 'Untitled RFQ'}</strong><div className="muted">{item.inquiries?.reference ?? '—'}</div></div>
               <div>{item.suppliers?.legal_name ?? '—'}</div>
               <div><span className="badge">{label(item.status)}</span></div>
-              <div>{new Date(item.created_at).toLocaleDateString('en-GB')}</div>
+              <div className="action-cell">{new Date(item.created_at).toLocaleDateString('en-GB')}{item.status === 'pending_approval' && <ApproveRfqButton id={item.id} />}</div>
             </div>
           ))}
         </div>
