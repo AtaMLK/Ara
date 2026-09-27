@@ -407,6 +407,56 @@ export async function approveClarificationAction(input: { inquiryId: string; cla
   }
 }
 
+export async function sendClarificationAction(input: { inquiryId: string; clarificationId: string }) {
+  try {
+    const parsed = z.object({
+      inquiryId: idSchema,
+      clarificationId: idSchema,
+    }).parse(input);
+    const { supabase, user } = await requireAdmin();
+
+    const { data: clarification, error: readError } = await supabase
+      .from('clarifications')
+      .select('id,requirement_id,question,status')
+      .eq('id', parsed.clarificationId)
+      .eq('inquiry_id', parsed.inquiryId)
+      .single();
+
+    if (readError || !clarification) throw new ToolError('NOT_FOUND', 'Clarification not found');
+    if (!clarification.requirement_id) throw new ToolError('VALIDATION', 'Clarification is not linked to a requirement');
+    if (clarification.status !== 'pending_approval') {
+      throw new ToolError('CONFLICT', 'Only approved clarifications can be sent');
+    }
+
+    const { data, error } = await supabase
+      .from('clarifications')
+      .update({ status: 'sent', sent_at: new Date().toISOString() })
+      .eq('id', clarification.id)
+      .eq('inquiry_id', parsed.inquiryId)
+      .eq('status', 'pending_approval')
+      .select('id')
+      .single();
+
+    if (error || !data) throw new ToolError('CONFLICT', 'Clarification changed before it could be sent');
+
+    await supabase.from('timeline_events').insert({
+      inquiry_id: parsed.inquiryId,
+      event_type: 'clarification_sent',
+      visibility: 'customer',
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      metadata: { clarification_id: clarification.id },
+    });
+
+    revalidatePath('/inquiries');
+    revalidatePath(`/inquiries/${parsed.inquiryId}`);
+    revalidatePath(`/customer/inquiries/${parsed.inquiryId}`);
+    return { ok: true };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function answerClarificationAction(input: { inquiryId: string; clarificationId: string; answer: string }) {
   try {
     const parsed = z.object({
@@ -441,6 +491,8 @@ export async function answerClarificationAction(input: { inquiryId: string; clar
       .from('requirements')
       .update({
         value: parsed.answer,
+        source: 'clarification',
+        source_ref: clarification.id,
         status: 'confirmed',
         current_version: requirement.current_version + 1,
       })
@@ -470,7 +522,7 @@ export async function answerClarificationAction(input: { inquiryId: string; clar
       new_value: parsed.answer,
       old_status: requirement.status,
       new_status: 'confirmed',
-      actor_type: 'admin',
+      actor_type: 'customer',
       actor_user_id: user.id,
       reason: 'Customer clarification answer applied',
     });
@@ -478,8 +530,8 @@ export async function answerClarificationAction(input: { inquiryId: string; clar
     await supabase.from('timeline_events').insert({
       inquiry_id: parsed.inquiryId,
       event_type: 'clarification_answer_applied',
-      visibility: 'admin',
-      actor_type: 'admin',
+      visibility: 'customer',
+      actor_type: 'customer',
       actor_user_id: user.id,
       metadata: {
         clarification_id: clarification.id,
@@ -487,8 +539,11 @@ export async function answerClarificationAction(input: { inquiryId: string; clar
       },
     });
 
+    await continueInquiryWorkflow(parsed.inquiryId);
+
     revalidatePath('/inquiries');
     revalidatePath(`/inquiries/${parsed.inquiryId}`);
+    revalidatePath(`/customer/inquiries/${parsed.inquiryId}`);
     return { ok: true, requirementId: requirement.id };
   } catch (error) {
     fail(error);
