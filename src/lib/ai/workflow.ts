@@ -446,6 +446,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         await createAlert(inquiryId, 'quote_extraction', 'QUOTE_EXTRACTION_REQUIRED', `${extracted} supplier response(s) are ready for structured quote extraction.`, 'normal');
       }
 
+      if (extracted === 0) {
+        await markExecutionSuccess(running.id, { response_count: 0, skipped_count: skipped, status: 'completed' });
+      }
+
+
+
       return { execution: running, outcome: extracted > 0 ? 'ready_for_extraction' : 'completed' };
     }
 
