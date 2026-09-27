@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireAdminPage } from '@/lib/data/admin';
 import { InquiryEditForm } from './edit-form';
 import { RequirementEdit } from './requirement-edit';
+import { WorkflowPanel } from './workflow-panel';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -14,15 +15,19 @@ export default async function InquiryDetailPage({ params }: Props) {
   const { id } = await params;
   const { supabase } = await requireAdminPage();
 
-  const [inquiryResult, requirementsResult, filesResult, timelineResult] = await Promise.all([
+  const [inquiryResult, requirementsResult, filesResult, timelineResult, executionsResult, alertsResult, clarificationsResult, researchResult] = await Promise.all([
     supabase.from('inquiries').select('id,reference,title,description,status,priority,original_customer_text,current_version,created_at,updated_at,customers(name,company_name,email,country)').eq('id', id).single(),
     supabase.from('requirements').select('id,type,value,status,source,admin_edited,updated_at').eq('inquiry_id', id).order('created_at', { ascending: true }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,version,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at', { ascending: false }),
     supabase.from('timeline_events').select('id,event_type,visibility,actor_type,agent_id,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(30),
+    supabase.from('ai_executions').select('id,task_key,agent_id,status,attempt_count,error_code,error_message,started_at,completed_at,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(20),
+    supabase.from('ai_alerts').select('id,agent_id,alert_type,message,priority,status,created_at').eq('inquiry_id', id).eq('status', 'open').order('created_at', { ascending: false }).limit(10),
+    supabase.from('clarifications').select('id,requirement_id,question,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
+    supabase.from('research_cases').select('id,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(5),
   ]);
 
   if (inquiryResult.error || !inquiryResult.data) notFound();
-  if (requirementsResult.error || filesResult.error || timelineResult.error) throw new Error('Failed to load inquiry details');
+  if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error) throw new Error('Failed to load inquiry details');
 
   const inquiry = inquiryResult.data;
   const customer = inquiry.customers;
@@ -38,6 +43,15 @@ export default async function InquiryDetailPage({ params }: Props) {
         </div>
         <div className="topbar-actions"><span className="badge">{label(inquiry.status)}</span><InquiryEditForm inquiryId={inquiry.id} title={inquiry.title} description={inquiry.description ?? ""} version={inquiry.current_version} /></div>
       </header>
+
+      <WorkflowPanel
+        inquiryId={inquiry.id}
+        status={inquiry.status}
+        executions={executionsResult.data ?? []}
+        alerts={alertsResult.data ?? []}
+        clarifications={clarificationsResult.data ?? []}
+        researchCases={researchResult.data ?? []}
+      />
 
       <section className="detail-grid">
         <div className="detail-card">
