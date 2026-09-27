@@ -303,16 +303,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 'Do not mark material requirements confirmed when ambiguous.',
                 'For unclear quantities, model, brand, or specifications, report ambiguity.',
                 'Do not invent evidence references or document content.',
-                'Requirements may be sourced from customer_text, pdf, excel, or image only when explicitly supported by the supplied source text. For document-derived requirements, include sourceRef and preserve the file_id/location provenance.',
+                'Document-derived requirements are already persisted separately. In this Intake pass, create only new requirements sourced from customer_text. Do not recreate or modify document-derived requirements.',
               ],
             },
             intakeOutputSchema,
           );
           const result = ai.output;
-          if (result.requirements.some((item) =>
-            item.source === 'customer_text' ? Boolean(item.sourceRef) : !Boolean(item.sourceRef)
-          )) {
-            throw new ToolError('AI_PROCESSING', 'Intake returned invalid source provenance');
+          if (result.requirements.some((item) => item.source !== 'customer_text' || item.sourceRef)) {
+            throw new ToolError('AI_PROCESSING', 'Intake must only add customer_text requirements in this pass');
           }
 
           // An execution can be retried after partial persistence; never duplicate
