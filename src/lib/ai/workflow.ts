@@ -436,6 +436,17 @@ export async function continueInquiryWorkflow(inquiryId: string) {
       return runStage(inquiryId, 'research');
     }
     if (research.status === 'completed') {
+      const { data: discovery } = await supabase
+        .from('ai_executions')
+        .select('id,status,output_ref')
+        .eq('inquiry_id', inquiryId)
+        .eq('task_key', `inquiry:${inquiryId}:stage:supplier_discovery`)
+        .maybeSingle();
+
+      if (discovery?.status === 'succeeded') {
+        throw new ToolError('APPROVAL_REQUIRED', 'Supplier candidates require Admin finalization and approval before verification');
+      }
+
       return runStage(inquiryId, 'supplier_discovery');
     }
   }
