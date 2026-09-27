@@ -52,6 +52,7 @@ export const supplierVerificationOutputSchema = z.object({
 
 export const quoteExtractionOutputSchema = z.object({
   quotes: z.array(z.object({
+    productId: z.string().uuid().optional(),
     matchStatus: z.enum(['match','partial_match','mismatch','unknown']),
     currency: z.string().length(3).optional(),
     quantity: z.number().nonnegative().optional(),
@@ -68,6 +69,20 @@ export const quoteExtractionOutputSchema = z.object({
     paymentTerms: z.string().optional(),
     incoterm: z.string().optional(),
     deliveryMethod: z.string().optional(),
+    conditions: z.array(z.object({
+      type: z.string().min(1),
+      text: z.string().min(1),
+      deadline: z.string().optional(),
+      stackable: z.boolean().optional(),
+    })).default([]),
+    priceTiers: z.array(z.object({
+      minQuantity: z.number().nonnegative().optional(),
+      maxQuantity: z.number().nonnegative().optional(),
+      unitPrice: z.number().nonnegative(),
+      currency: z.string().length(3),
+      conditionText: z.string().optional(),
+    })).default([]),
+    uncertainties: z.array(z.string()).default([]),
     originalData: z.record(z.string(),z.unknown()).default({}),
   })),
 });
