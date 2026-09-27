@@ -142,7 +142,7 @@ export async function getCustomerQuote(id: string) {
   const { supabase } = await requireAdminPage();
   const { data: quote, error } = await supabase
     .from('customer_quotes')
-    .select('id,inquiry_id,reference,revision_number,status,currency,valid_until,subject,body,created_at,updated_at,customers(name,company_name)')
+    .select('id,inquiry_id,reference,revision_number,status,currency,valid_until,subject,body,created_at,updated_at,customers(name,company_name),parent_quote_id')
     .eq('id', id)
     .single();
 
@@ -157,10 +157,19 @@ export async function getCustomerQuote(id: string) {
   if (itemError) throw itemError;
 
   const rows = items ?? [];
+  const { data: revisionRequest } = await supabase
+    .from('quote_revision_requests')
+    .select('id,quote_id,reason,free_text,status,requested_by,created_at')
+    .eq('quote_id', id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   return {
     ...quote,
     items: rows,
     confirmedItemCount: rows.filter((item) => item.price_status === 'admin_confirmed').length,
+    revisionRequest,
   };
 }
 
