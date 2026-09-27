@@ -3,10 +3,11 @@ import { notFound } from 'next/navigation';
 import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import CustomerQuoteActions from './quote-actions';
 
-type Props = { params: Promise<{ id: string }> };
+type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ revision?: string }> };
 
 export default async function CustomerQuotePage({ params }: Props) {
   const { id } = await params;
+  const { revision } = await searchParams;
   const { supabase } = await requireCustomerInquiryAccess(id);
 
   const { data: quotes, error } = await supabase
@@ -17,7 +18,7 @@ export default async function CustomerQuotePage({ params }: Props) {
     .order('revision_number', { ascending: false });
 
   if (error) throw error;
-  const quote = quotes?.[0];
+  const quote = (revision && quotes?.find((item) => item.id === revision)) || quotes?.[0];
   if (!quote) notFound();
 
   const { data: items, error: itemError } = await supabase
@@ -42,6 +43,18 @@ export default async function CustomerQuotePage({ params }: Props) {
         </div>
         <span className="badge">{quote.status.replaceAll('_', ' ')}</span>
       </header>
+
+      <section className="section">
+        <div className="section-head"><h2>Quotation history</h2><span className="muted">{quotes?.length ?? 0} revision{(quotes?.length ?? 0) === 1 ? '' : 's'}</span></div>
+        <div className="quote-history">
+          {(quotes ?? []).slice().reverse().map((historyQuote) => (
+            <Link className={`quote-history-item ${historyQuote.id === quote.id ? 'active' : ''}`} key={historyQuote.id} href={`/customer/quotes/${id}?revision=${historyQuote.id}`}>
+              <div><strong>{historyQuote.reference}</strong><span className="muted">R{historyQuote.revision_number}</span></div>
+              <span className="badge">{historyQuote.status.replaceAll('_',' ')}</span>
+            </Link>
+          ))}
+        </div>
+      </section>
 
       <section className="detail-card">
         <div className="section-head"><h2>{quote.subject || 'Quotation'}</h2></div>
