@@ -119,7 +119,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       if (!(requirements ?? []).length) {
         const { data: source, error: sourceError } = await supabase
           .from('inquiries')
-          .select('id,title,description,original_customer_text,current_version')
+          .select('id,title,description,original_customer_text,normalized_information,current_version')
           .eq('id', inquiryId)
           .single();
         if (sourceError || !source) throw new ToolError('NOT_FOUND', 'Inquiry source not found');
@@ -174,6 +174,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             await supabase.from('inquiries')
               .update({
                 normalized_information: {
+                  ...((source.normalized_information ?? {}) as Record<string, unknown>),
                   intake: {
                     title: result.title,
                     description: result.description,
