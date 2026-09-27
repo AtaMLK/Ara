@@ -9,10 +9,11 @@ export default async function CustomerInquiryPage({ params }: Props) {
   const { id } = await params;
   const { supabase, inquiry } = await requireCustomerInquiryAccess(id);
 
-  const [inquiryResult, requirementsResult, clarificationsResult] = await Promise.all([
-    supabase.from('inquiries').select('id,reference,title,description,status,updated_at').eq('id', id).single(),
-    supabase.from('requirements').select('id,type,value,status').eq('inquiry_id', id).order('created_at'),
+  const [inquiryResult, requirementsResult, clarificationsResult, filesResult] = await Promise.all([
+    supabase.from('inquiries').select('id,reference,title,description,original_customer_text,status,updated_at').eq('id', id).single(),
+    supabase.from('requirements').select('id,type,value,status,source,source_ref,admin_edited').eq('inquiry_id', id).order('created_at'),
     supabase.from('clarifications').select('id,requirement_id,question,answer,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
+    supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at'),
   ]);
 
   if (inquiryResult.error || !inquiryResult.data) notFound();
@@ -33,6 +34,31 @@ export default async function CustomerInquiryPage({ params }: Props) {
 
       <section className="detail-grid">
         <div className="detail-card">
+          <div className="section-head"><h2>Your request</h2></div>
+          <p className="detail-text">{inquiryResult.data.original_customer_text || inquiryResult.data.description || 'No request text available.'}</p>
+        </div>
+        <div className="detail-card">
+          <div className="section-head"><h2>Attachments</h2></div>
+          {(filesResult.data ?? []).length === 0 ? (
+            <div className="empty">No attachments.</div>
+          ) : (
+            <div className="list">
+              {(filesResult.data ?? []).map((file) => (
+                <div className="list-item" key={file.id}>
+                  <div>
+                    <strong>{file.original_name}</strong>
+                    <div className="muted">{Math.round(file.file_size / 1024)} KB · {file.mime_type}</div>
+                  </div>
+                  <span className="badge">{file.status.replaceAll('_', ' ')}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="detail-card">
           <div className="section-head"><h2>Request</h2></div>
           <p>{inquiryResult.data.description || 'No additional description.'}</p>
         </div>
@@ -43,6 +69,9 @@ export default async function CustomerInquiryPage({ params }: Props) {
               <strong>{item.type.replaceAll('_',' ')}</strong>
               <span>{item.value}</span>
               <span className="badge">{item.status.replaceAll('_',' ')}</span>
+              <span className="muted requirement-source">
+                {item.source === 'customer_text' ? 'From your request' : item.source === 'clarification' ? 'From your answer' : 'From attachment'}
+              </span>
             </div>
           ))}
         </div>
