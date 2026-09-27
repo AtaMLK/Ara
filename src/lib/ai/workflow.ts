@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
+import { getResearchProvider } from './research/provider';
 import {
   enqueueWorkflow,
   markExecutionRunning,
@@ -203,6 +204,58 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           throw new ToolError('TRANSIENT', created.error?.message ?? 'Failed to create research case');
         }
         researchCase = created.data;
+      }
+
+      const provider = getResearchProvider();
+
+      if (provider) {
+        const { data: requirements } = await supabase
+          .from('requirements')
+          .select('type,value')
+          .eq('inquiry_id', inquiryId)
+          .eq('status', 'confirmed')
+          .order('created_at', { ascending: true });
+
+        const query = (requirements ?? [])
+          .map((item) => `${item.type}: ${item.value}`)
+          .join(' | ');
+
+        const results = await provider.search({
+          inquiryId,
+          query,
+          limit: 10,
+        });
+
+        for (const result of results) {
+          await supabase.from('research_results').insert({
+            research_case_id: researchCase.id,
+            source_type: result.sourceType,
+            source_name: result.sourceName,
+            source_url: result.sourceUrl,
+            finding: result.finding,
+            structured_data: result.structuredData,
+            relevance: result.relevance,
+            confidence: result.confidence,
+            evidence: result.evidence,
+          });
+        }
+
+        await supabase.from('research_cases')
+          .update({ status: 'completed', completed_at: new Date().toISOString() })
+          .eq('id', researchCase.id);
+
+        await markExecutionSuccess(running.id, {
+          research_case_id: researchCase.id,
+          result_count: results.length,
+          next_stage: 'supplier_discovery',
+        });
+
+        await timeline(inquiryId, 'workflow_research_completed', {
+          research_case_id: researchCase.id,
+          result_count: results.length,
+        }, 'product_research');
+
+        return { execution: running, outcome: 'research_completed' as const };
       }
 
       await markExecutionSuccess(running.id, {
