@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ToolError } from '@/lib/errors';
-import { getResendReceivedEmail, parseResendReceivedEvent, verifyResendWebhook } from '@/lib/email/resend-inbound';
+import {
+  getResendReceivedAttachments,
+  getResendReceivedEmail,
+  parseResendReceivedEvent,
+  verifyResendWebhook,
+} from '@/lib/email/resend-inbound';
 import { processInboundEmail } from '@/lib/email/inbound';
 
 export const runtime = 'nodejs';
@@ -15,6 +20,7 @@ export async function POST(request: NextRequest) {
     if (!received) return NextResponse.json({ ok: true });
 
     const email = await getResendReceivedEmail(received.emailId);
+    const attachments = await getResendReceivedAttachments(received.emailId);
     const result = await processInboundEmail({
       providerMessageId: email.id,
       messageId: email.message_id ?? received.messageId ?? null,
@@ -27,7 +33,7 @@ export async function POST(request: NextRequest) {
       html: email.html ?? null,
       receivedAt: email.created_at ?? new Date().toISOString(),
       provider: 'resend',
-      attachments: [],
+      attachments,
     });
 
     return NextResponse.json(result);
