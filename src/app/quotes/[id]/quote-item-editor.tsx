@@ -15,6 +15,7 @@ type Item = {
   price_status: string;
   pricing_rule_id: string | null;
   price_calculation: Record<string, unknown>;
+  supplier_products?: { product_name?: string | null; model_part_number?: string | null } | null;
 };
 
 export function QuoteItemEditor({ item, currency, editable }: { item: Item; currency: string; editable: boolean }) {
@@ -48,7 +49,7 @@ export function QuoteItemEditor({ item, currency, editable }: { item: Item; curr
       <div className="quote-item-main">
         <div>
           <div className="eyebrow">LINE ITEM</div>
-          <h3>{item.product_id || 'Product not linked'}</h3>
+          <h3>{item.supplier_products?.product_name || item.supplier_products?.model_part_number || item.product_id || 'Product not linked'}</h3>
           <div className="muted">Qty {item.quantity} · Supplier quote {item.supplier_quote_id || '—'}</div>
         </div>
         <span className="badge">{item.price_status === 'admin_confirmed' ? 'Admin confirmed' : 'Suggested'}</span>
