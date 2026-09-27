@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { requireAdmin, requireCustomerInquiryAccess } from '@/lib/ai/guards';
+import { requireAdmin, requireCustomerAccess, requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import { ToolError } from '@/lib/errors';
 import { continueInquiryWorkflow, startInquiryWorkflow } from '@/lib/ai/workflow';
 
@@ -12,6 +12,72 @@ function fail(error: unknown): never {
   if (error instanceof ToolError) throw new Error(error.message);
   if (error instanceof z.ZodError) throw new Error('Invalid input');
   throw error instanceof Error ? error : new Error('Action failed');
+}
+
+export async function createCustomerInquiryAction(input: {
+  title?: string;
+  description?: string;
+  originalCustomerText: string;
+  priority?: 'normal' | 'urgent';
+}) {
+  try {
+    const parsed = z.object({
+      title: z.string().trim().max(200).optional(),
+      description: z.string().trim().max(5000).optional(),
+      originalCustomerText: z.string().trim().min(1).max(20000),
+      priority: z.enum(['normal', 'urgent']).default('normal'),
+    }).parse(input);
+
+    const { supabase, user, customer } = await requireCustomerAccess();
+    const date = new Date().toISOString().slice(0, 10).replaceAll('-', '');
+    const title = parsed.title || 'New procurement request';
+
+    let inquiry: { id: string; reference: string } | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const reference = `${customer.customer_code}-${date}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+      const { data, error } = await supabase.from('inquiries').insert({
+        customer_id: customer.id,
+        reference,
+        title,
+        description: parsed.description || null,
+        status: 'processing',
+        priority: parsed.priority,
+        original_customer_text: parsed.originalCustomerText,
+      }).select('id,reference').single();
+      if (data) { inquiry = data; break; }
+      if (attempt === 2) throw new ToolError('CONFLICT', error?.message ?? 'Inquiry creation failed');
+    }
+
+    if (!inquiry) throw new ToolError('CONFLICT', 'Inquiry creation failed');
+
+    await supabase.from('timeline_events').insert({
+      inquiry_id: inquiry.id,
+      event_type: 'customer_inquiry_created',
+      visibility: 'customer',
+      actor_type: 'customer',
+      actor_user_id: user.id,
+      metadata: { reference: inquiry.reference },
+    });
+
+    try {
+      await startInquiryWorkflow(inquiry.id);
+    } catch (workflowError) {
+      await supabase.from('timeline_events').insert({
+        inquiry_id: inquiry.id,
+        event_type: 'workflow_start_failed',
+        visibility: 'admin',
+        actor_type: 'system',
+        metadata: { message: workflowError instanceof Error ? workflowError.message : 'Workflow start failed' },
+      });
+    }
+
+    revalidatePath('/customer');
+    revalidatePath(`/customer/inquiries/${inquiry.id}`);
+    revalidatePath('/inquiries');
+    return { ok: true, inquiryId: inquiry.id, reference: inquiry.reference };
+  } catch (error) {
+    fail(error);
+  }
 }
 
 export async function startInquiryWorkflowAction(inquiryId: string) {
