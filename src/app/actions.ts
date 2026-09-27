@@ -19,6 +19,7 @@ export async function createCustomerInquiryAction(input: {
   description?: string;
   originalCustomerText: string;
   priority?: 'normal' | 'urgent';
+  files?: File[];
 }) {
   try {
     const parsed = z.object({
@@ -26,6 +27,7 @@ export async function createCustomerInquiryAction(input: {
       description: z.string().trim().max(5000).optional(),
       originalCustomerText: z.string().trim().min(1).max(20000),
       priority: z.enum(['normal', 'urgent']).default('normal'),
+      files: z.array(z.instanceof(File)).max(10).default([]),
     }).parse(input);
 
     const { supabase, user, customer } = await requireCustomerAccess();
@@ -58,6 +60,10 @@ export async function createCustomerInquiryAction(input: {
       actor_user_id: user.id,
       metadata: { reference: inquiry.reference },
     });
+
+    if (parsed.files.length) {
+      await uploadInquiryFilesAction({ inquiryId: inquiry.id, files: parsed.files });
+    }
 
     try {
       await startInquiryWorkflow(inquiry.id);
