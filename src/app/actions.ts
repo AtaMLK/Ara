@@ -825,10 +825,20 @@ export async function confirmCustomerQuoteItemPriceAction(itemId: string, unitPr
     const { supabase } = await requireAdmin();
     const { data: item, error: itemError } = await supabase
       .from('customer_quote_items')
-      .select('id,customer_quote_id')
+      .select('id,customer_quote_id,unit_price,price_status')
       .eq('id', parsed)
       .single();
     if (itemError || !item) throw new ToolError('NOT_FOUND', 'Quote item not found');
+
+    const { data: quote, error: quoteError } = await supabase
+      .from('customer_quotes')
+      .select('id,status')
+      .eq('id', item.customer_quote_id)
+      .single();
+    if (quoteError || !quote) throw new ToolError('NOT_FOUND', 'Customer quote not found');
+    if (!['draft', 'pending_approval'].includes(quote.status)) {
+      throw new ToolError('CONFLICT', 'Only Draft or Pending Approval quotes can have their prices edited');
+    }
 
     const { data, error } = await supabase
       .from('customer_quote_items')
@@ -838,6 +848,17 @@ export async function confirmCustomerQuoteItemPriceAction(itemId: string, unitPr
       .single();
 
     if (error || !data) throw new ToolError('CONFLICT', 'Quote item price could not be confirmed');
+
+    await supabase.from('audit_logs').insert({
+      actor_type: 'admin',
+      action: 'customer_quote_item_price_confirmed',
+      record_type: 'customer_quote_item',
+      record_id: item.id,
+      before_data: { unit_price: item.unit_price, price_status: item.price_status },
+      after_data: { unit_price: unitPrice, price_status: 'admin_confirmed' },
+      metadata: { customer_quote_id: item.customer_quote_id },
+    });
+
     revalidatePath('/quotes');
     revalidatePath('/inquiries');
     return { ok: true, quoteId: data.customer_quote_id };
