@@ -180,6 +180,40 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       return { execution: running, outcome: 'research_queued' as const };
     }
 
+    if (stage === 'supplier_discovery') {
+      const { data: research } = await supabase
+        .from('research_cases')
+        .select('id,status')
+        .eq('inquiry_id', inquiryId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!research || research.status !== 'completed') {
+        throw new ToolError('CONFLICT', 'Supplier discovery requires completed research');
+      }
+
+      await markExecutionSuccess(running.id, {
+        blocked: true,
+        reason: 'supplier_discovery_agent_not_connected',
+        research_case_id: research.id,
+      });
+
+      await supabase.from('ai_alerts').insert({
+        inquiry_id: inquiryId,
+        agent_id: 'supplier_discovery',
+        alert_type: 'SUPPLIER_DISCOVERY_AGENT_NOT_CONNECTED',
+        message: 'Research evidence is available, but Supplier Discovery is not connected yet. No supplier candidate was fabricated.',
+        priority: 'normal',
+      });
+
+      await timeline(inquiryId, 'workflow_supplier_discovery_waiting_for_agent', {
+        research_case_id: research.id,
+      }, 'supplier_discovery');
+
+      return { execution: running, outcome: 'supplier_discovery_agent_required' as const };
+    }
+
     if (stage === 'research') {
       const { data: existing } = await supabase
         .from('research_cases')
@@ -334,6 +368,9 @@ export async function continueInquiryWorkflow(inquiryId: string) {
 
     if (!research || research.status === 'pending') {
       return runStage(inquiryId, 'research');
+    }
+    if (research.status === 'completed') {
+      return runStage(inquiryId, 'supplier_discovery');
     }
   }
 
