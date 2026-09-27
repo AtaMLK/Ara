@@ -682,6 +682,25 @@ export async function continueInquiryWorkflow(inquiryId: string) {
           .eq('status', 'finalized');
 
         if ((finalized ?? []).some((candidate) => candidate.supplier_id)) {
+          const { data: verification } = await supabase
+            .from('ai_executions')
+            .select('status')
+            .eq('inquiry_id', inquiryId)
+            .eq('task_key', `inquiry:${inquiryId}:stage:verification`)
+            .maybeSingle();
+
+          if (verification?.status === 'succeeded') {
+            const { data: rfqExecution } = await supabase
+              .from('ai_executions')
+              .select('status')
+              .eq('inquiry_id', inquiryId)
+              .eq('task_key', `inquiry:${inquiryId}:stage:rfq`)
+              .maybeSingle();
+
+            if (rfqExecution?.status !== 'succeeded') return runStage(inquiryId, 'rfq');
+            throw new ToolError('APPROVAL_REQUIRED', 'RFQ drafts require Admin approval before sending');
+          }
+
           return runStage(inquiryId, 'verification');
         }
 
