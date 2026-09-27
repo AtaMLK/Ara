@@ -90,6 +90,7 @@ const agentPrompts: Partial<Record<AgentId, string>> = {
   email_response: 'Match incoming supplier emails using reliable evidence. Never attach an ambiguous email.',
   quote_extraction: 'Extract supplier quote facts exactly. Unknown or missing values remain unknown.',
   comparison: 'Compare requirements and supplier quotes factually. Never rank suppliers or select a winner.',
+  customer_quote: 'Prepare factual customer quote line proposals only. Never set final customer prices, margins, markups, or exchange rates.',
   reporting: 'Produce factual current-state reports. Never rank suppliers or make commercial recommendations.',
 };
 

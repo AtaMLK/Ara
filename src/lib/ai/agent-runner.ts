@@ -25,6 +25,7 @@ const toolNames: Record<AgentId, string[]> = {
   email_response: ['incoming-email'],
   quote_extraction: ['supplier-responses'],
   comparison: ['supplier-responses','supplier-quotes'],
+  customer_quote: ['supplier-quotes'],
   reporting: [],
 };
 
