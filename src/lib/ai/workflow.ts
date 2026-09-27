@@ -1,0 +1,321 @@
+import 'server-only';
+
+import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { ToolError } from '@/lib/errors';
+import {
+  enqueueWorkflow,
+  markExecutionRunning,
+  markExecutionSuccess,
+  markExecutionFailure,
+  type WorkflowStage,
+} from './orchestrator';
+
+const STAGE_STATUS: Partial<Record<WorkflowStage, string>> = {
+  intake: 'processing',
+  clarification: 'clarification_required',
+  research: 'researching',
+  supplier_discovery: 'researching',
+  verification: 'researching',
+  rfq: 'rfq',
+  quote_extraction: 'quoting',
+  customer_quote: 'quoting',
+  completed: 'converted',
+};
+
+type RequirementRow = {
+  id: string;
+  type: string;
+  value: string;
+  status: 'open' | 'clarification_required' | 'confirmed' | 'rejected';
+};
+
+async function timeline(
+  inquiryId: string,
+  eventType: string,
+  metadata: Record<string, unknown> = {},
+  agentId = 'orchestrator',
+) {
+  const supabase = createSupabaseAdminClient();
+  await supabase.from('timeline_events').insert({
+    inquiry_id: inquiryId,
+    event_type: eventType,
+    visibility: 'admin',
+    actor_type: 'ai',
+    agent_id: agentId,
+    metadata,
+  });
+}
+
+async function setInquiryStatus(inquiryId: string, status: string) {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from('inquiries')
+    .update({ status })
+    .eq('id', inquiryId);
+  if (error) throw new ToolError('TRANSIENT', error.message);
+}
+
+async function createClarificationDrafts(
+  inquiryId: string,
+  requirements: RequirementRow[],
+) {
+  const supabase = createSupabaseAdminClient();
+  const unresolved = requirements.filter(
+    (r) => r.status === 'open' || r.status === 'clarification_required',
+  );
+
+  for (const requirement of unresolved) {
+    const { data: existing } = await supabase
+      .from('clarifications')
+      .select('id')
+      .eq('inquiry_id', inquiryId)
+      .eq('requirement_id', requirement.id)
+      .in('status', ['draft', 'pending_approval', 'sent'])
+      .limit(1)
+      .maybeSingle();
+
+    if (existing) continue;
+
+    await supabase.from('clarifications').insert({
+      inquiry_id: inquiryId,
+      requirement_id: requirement.id,
+      question: `Please confirm the ${requirement.type.replaceAll('_', ' ')}: ${requirement.value}`,
+      status: 'draft',
+    });
+  }
+}
+
+async function runStage(inquiryId: string, stage: WorkflowStage) {
+  const execution = await enqueueWorkflow(inquiryId, stage);
+
+  if (execution.status === 'succeeded') {
+    return { execution, outcome: 'already_succeeded' as const };
+  }
+
+  const running = await markExecutionRunning(execution.id);
+  const supabase = createSupabaseAdminClient();
+
+  try {
+    const { data: inquiry, error: inquiryError } = await supabase
+      .from('inquiries')
+      .select('id,status')
+      .eq('id', inquiryId)
+      .single();
+
+    if (inquiryError || !inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
+
+    if (stage === 'intake') {
+      const { data: requirements, error } = await supabase
+        .from('requirements')
+        .select('id,type,value,status')
+        .eq('inquiry_id', inquiryId)
+        .order('created_at', { ascending: true });
+
+      if (error) throw new ToolError('TRANSIENT', error.message);
+
+      const rows = (requirements ?? []) as RequirementRow[];
+      const unresolved = rows.filter(
+        (r) => r.status === 'open' || r.status === 'clarification_required',
+      );
+
+      if (rows.length === 0 || unresolved.length > 0) {
+        await createClarificationDrafts(inquiryId, rows);
+        await setInquiryStatus(inquiryId, 'clarification_required');
+        await timeline(inquiryId, 'workflow_clarification_required', {
+          unresolved_requirement_ids: unresolved.map((r) => r.id),
+          reason: rows.length === 0 ? 'no_requirements' : 'unresolved_requirements',
+        }, 'intake');
+
+        await markExecutionSuccess(running.id, {
+          next_stage: 'clarification',
+          blocked: true,
+          unresolved_count: unresolved.length,
+        });
+
+        return { execution: running, outcome: 'clarification_required' as const };
+      }
+
+      await setInquiryStatus(inquiryId, 'researching');
+      await timeline(inquiryId, 'workflow_research_ready', {
+        confirmed_requirement_count: rows.length,
+      }, 'intake');
+
+      const research = await enqueueWorkflow(inquiryId, 'research');
+      await markExecutionSuccess(running.id, {
+        next_stage: 'research',
+        research_execution_id: research.id,
+      });
+
+      return { execution: running, outcome: 'research_queued' as const };
+    }
+
+    if (stage === 'clarification') {
+      const { data: pending } = await supabase
+        .from('clarifications')
+        .select('id,status')
+        .eq('inquiry_id', inquiryId)
+        .in('status', ['draft', 'pending_approval', 'sent']);
+
+      const unresolved = await supabase
+        .from('requirements')
+        .select('id')
+        .eq('inquiry_id', inquiryId)
+        .in('status', ['open', 'clarification_required']);
+
+      if ((unresolved.data?.length ?? 0) > 0) {
+        await setInquiryStatus(inquiryId, 'clarification_required');
+        await markExecutionSuccess(running.id, {
+          blocked: true,
+          reason: 'requirements_not_confirmed',
+          pending_clarifications: pending?.length ?? 0,
+        });
+        return { execution: running, outcome: 'still_blocked' as const };
+      }
+
+      await setInquiryStatus(inquiryId, 'researching');
+      const research = await enqueueWorkflow(inquiryId, 'research');
+      await timeline(inquiryId, 'workflow_research_started', {
+        execution_id: research.id,
+      });
+      await markExecutionSuccess(running.id, { next_stage: 'research' });
+      return { execution: running, outcome: 'research_queued' as const };
+    }
+
+    if (stage === 'research') {
+      const { data: existing } = await supabase
+        .from('research_cases')
+        .select('id,status')
+        .eq('inquiry_id', inquiryId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      let researchCase = existing;
+      if (!researchCase) {
+        const created = await supabase
+          .from('research_cases')
+          .insert({
+            inquiry_id: inquiryId,
+            status: 'pending',
+            scope: { source_types: ['web', 'public_specialized_sources'] },
+          })
+          .select('id,status')
+          .single();
+        if (created.error || !created.data) {
+          throw new ToolError('TRANSIENT', created.error?.message ?? 'Failed to create research case');
+        }
+        researchCase = created.data;
+      }
+
+      await markExecutionSuccess(running.id, {
+        research_case_id: researchCase.id,
+        blocked: true,
+        reason: 'research_provider_not_connected',
+      });
+      await supabase.from('ai_alerts').insert({
+        inquiry_id: inquiryId,
+        agent_id: 'product_research',
+        alert_type: 'RESEARCH_PROVIDER_NOT_CONNECTED',
+        message: 'Research case is ready, but no external research provider is connected yet. No supplier facts were fabricated.',
+        priority: 'normal',
+      });
+      await timeline(inquiryId, 'workflow_research_waiting_for_provider', {
+        research_case_id: researchCase.id,
+      }, 'product_research');
+
+      return { execution: running, outcome: 'research_provider_required' as const };
+    }
+
+    throw new ToolError('VALIDATION', `Stage ${stage} is not executable by the current workflow runner`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Workflow stage failed';
+    await markExecutionFailure(
+      running.id,
+      error instanceof ToolError ? error.code : 'AI_PROCESSING',
+      message,
+    );
+    throw error;
+  }
+}
+
+export async function startInquiryWorkflow(inquiryId: string) {
+  const supabase = createSupabaseAdminClient();
+  const { data: inquiry, error } = await supabase
+    .from('inquiries')
+    .select('id,status')
+    .eq('id', inquiryId)
+    .single();
+
+  if (error || !inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
+
+  if (['converted', 'closed', 'no_suitable_supplier'].includes(inquiry.status)) {
+    throw new ToolError('CONFLICT', `Inquiry cannot be started from status ${inquiry.status}`);
+  }
+
+  await timeline(inquiryId, 'workflow_started', { previous_status: inquiry.status });
+  return runStage(inquiryId, 'intake');
+}
+
+export async function continueInquiryWorkflow(inquiryId: string) {
+  const supabase = createSupabaseAdminClient();
+  const { data: inquiry, error } = await supabase
+    .from('inquiries')
+    .select('id,status')
+    .eq('id', inquiryId)
+    .single();
+
+  if (error || !inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
+
+  if (inquiry.status === 'clarification_required') {
+    return runStage(inquiryId, 'clarification');
+  }
+
+  if (inquiry.status === 'researching') {
+    const { data: research } = await supabase
+      .from('research_cases')
+      .select('status')
+      .eq('inquiry_id', inquiryId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!research || research.status === 'pending') {
+      return runStage(inquiryId, 'research');
+    }
+  }
+
+  throw new ToolError('CONFLICT', `No executable workflow stage for inquiry status ${inquiry.status}`);
+}
+
+export async function getWorkflowState(inquiryId: string) {
+  const supabase = createSupabaseAdminClient();
+  const [executions, alerts, clarifications, research] = await Promise.all([
+    supabase.from('ai_executions').select('id,task_key,agent_id,status,attempt_count,error_code,error_message,started_at,completed_at,created_at').eq('inquiry_id', inquiryId).order('created_at', { ascending: false }).limit(30),
+    supabase.from('ai_alerts').select('id,agent_id,alert_type,message,priority,status,created_at').eq('inquiry_id', inquiryId).eq('status', 'open').order('created_at', { ascending: false }).limit(20),
+    supabase.from('clarifications').select('id,requirement_id,question,status,created_at').eq('inquiry_id', inquiryId).order('created_at', { ascending: false }),
+    supabase.from('research_cases').select('id,status,scope,started_at,completed_at,created_at').eq('inquiry_id', inquiryId).order('created_at', { ascending: false }).limit(5),
+  ]);
+
+  return {
+    executions: executions.data ?? [],
+    alerts: alerts.data ?? [],
+    clarifications: clarifications.data ?? [],
+    researchCases: research.data ?? [],
+  };
+}
+
+export async function setClarificationPendingApproval(inquiryId: string, clarificationId: string) {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('clarifications')
+    .update({ status: 'pending_approval' })
+    .eq('id', clarificationId)
+    .eq('inquiry_id', inquiryId)
+    .eq('status', 'draft')
+    .select('id')
+    .single();
+
+  if (error || !data) throw new ToolError('CONFLICT', 'Clarification is not in Draft state');
+  await timeline(inquiryId, 'clarification_pending_approval', { clarification_id: clarificationId });
+  return data;
+}
