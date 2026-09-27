@@ -187,6 +187,94 @@ export async function approveClarificationAction(input: { inquiryId: string; cla
   }
 }
 
+export async function answerClarificationAction(input: { inquiryId: string; clarificationId: string; answer: string }) {
+  try {
+    const parsed = z.object({
+      inquiryId: idSchema,
+      clarificationId: idSchema,
+      answer: z.string().trim().min(1),
+    }).parse(input);
+    const { supabase, user } = await requireAdmin();
+
+    const { data: clarification, error: clarificationError } = await supabase
+      .from('clarifications')
+      .select('id,inquiry_id,requirement_id,status')
+      .eq('id', parsed.clarificationId)
+      .eq('inquiry_id', parsed.inquiryId)
+      .single();
+
+    if (clarificationError || !clarification) throw new ToolError('NOT_FOUND', 'Clarification not found');
+    if (!clarification.requirement_id) throw new ToolError('VALIDATION', 'Clarification is not linked to a requirement');
+    if (!['sent'].includes(clarification.status)) throw new ToolError('CONFLICT', 'Only sent clarifications can be answered');
+
+    const { data: requirement, error: requirementError } = await supabase
+      .from('requirements')
+      .select('id,value,status,current_version,admin_edited')
+      .eq('id', clarification.requirement_id)
+      .eq('inquiry_id', parsed.inquiryId)
+      .single();
+
+    if (requirementError || !requirement) throw new ToolError('NOT_FOUND', 'Requirement not found');
+    if (requirement.admin_edited) throw new ToolError('AUTHORIZATION', 'Admin-edited Requirement is authoritative');
+
+    const { data: updated, error: updateError } = await supabase
+      .from('requirements')
+      .update({
+        value: parsed.answer,
+        status: 'confirmed',
+        current_version: requirement.current_version + 1,
+      })
+      .eq('id', requirement.id)
+      .eq('current_version', requirement.current_version)
+      .eq('admin_edited', false)
+      .select('id,status,current_version')
+      .single();
+
+    if (updateError || !updated) throw new ToolError('CONFLICT', 'Requirement changed before the customer answer was applied');
+
+    const { error: clarificationUpdateError } = await supabase
+      .from('clarifications')
+      .update({
+        answer: parsed.answer,
+        status: 'answered',
+        answered_at: new Date().toISOString(),
+      })
+      .eq('id', clarification.id)
+      .eq('status', 'sent');
+
+    if (clarificationUpdateError) throw new ToolError('CONFLICT', clarificationUpdateError.message);
+
+    await supabase.from('requirement_history').insert({
+      requirement_id: requirement.id,
+      old_value: requirement.value,
+      new_value: parsed.answer,
+      old_status: requirement.status,
+      new_status: 'confirmed',
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      reason: 'Customer clarification answer applied',
+    });
+
+    await supabase.from('timeline_events').insert({
+      inquiry_id: parsed.inquiryId,
+      event_type: 'clarification_answer_applied',
+      visibility: 'admin',
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      metadata: {
+        clarification_id: clarification.id,
+        requirement_id: requirement.id,
+      },
+    });
+
+    revalidatePath('/inquiries');
+    revalidatePath(`/inquiries/${parsed.inquiryId}`);
+    return { ok: true, requirementId: requirement.id };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function updateInquiryAction(input: {
   inquiryId: string;
   title: string;
