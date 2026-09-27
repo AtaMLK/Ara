@@ -40,6 +40,35 @@ export async function continueInquiryWorkflowAction(inquiryId: string) {
   }
 }
 
+export async function approveClarificationAction(input: { inquiryId: string; clarificationId: string }) {
+  try {
+    const parsed = z.object({ inquiryId: idSchema, clarificationId: idSchema }).parse(input);
+    const { supabase, user } = await requireAdmin();
+    const { data, error } = await supabase
+      .from('clarifications')
+      .update({ status: 'pending_approval', approved_by: user.id, approved_at: new Date().toISOString() })
+      .eq('id', parsed.clarificationId)
+      .eq('inquiry_id', parsed.inquiryId)
+      .eq('status', 'draft')
+      .select('id')
+      .single();
+
+    if (error || !data) throw new ToolError('CONFLICT', 'Clarification is not in Draft state');
+    await supabase.from('timeline_events').insert({
+      inquiry_id: parsed.inquiryId,
+      event_type: 'clarification_pending_approval',
+      visibility: 'admin',
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      metadata: { clarification_id: parsed.clarificationId },
+    });
+    revalidatePath(`/inquiries/${parsed.inquiryId}`);
+    return { ok: true };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function updateInquiryAction(input: {
   inquiryId: string;
   title: string;
