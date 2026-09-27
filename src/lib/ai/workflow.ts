@@ -244,10 +244,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .update({ status: 'completed', completed_at: new Date().toISOString() })
           .eq('id', researchCase.id);
 
+        const discovery = await enqueueWorkflow(inquiryId, 'supplier_discovery');
         await markExecutionSuccess(running.id, {
           research_case_id: researchCase.id,
           result_count: results.length,
           next_stage: 'supplier_discovery',
+          supplier_discovery_execution_id: discovery.id,
         });
 
         await timeline(inquiryId, 'workflow_research_completed', {
