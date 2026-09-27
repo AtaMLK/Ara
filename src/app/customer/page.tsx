@@ -20,6 +20,7 @@ export default async function CustomerPortalPage() {
     <main className="portal-shell">
       <header className="topbar">
         <div><div className="eyebrow">CUSTOMER PORTAL</div><h1 className="title">Welcome{customer.company_name ? `, ${customer.company_name}` : ` ${customer.name}`}</h1><div className="muted">Your procurement requests and actions.</div></div>
+        <Link className="primary-button" href="/customer/inquiries/new">+ New Request</Link>
       </header>
       <section className="section">
         <div className="table">
