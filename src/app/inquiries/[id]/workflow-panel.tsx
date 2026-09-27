@@ -2,7 +2,7 @@
 'use client';
 
 import { useState } from 'react';
-import { continueInquiryWorkflowAction, startInquiryWorkflowAction } from '@/app/actions';
+import { approveClarificationAction, continueInquiryWorkflowAction, startInquiryWorkflowAction } from '@/app/actions';
 
 function label(value: string) {
   return value.replaceAll('_', ' ').replace(/\\b\\w/g, (c) => c.toUpperCase());
@@ -22,6 +22,19 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
   const canStart = !['converted', 'closed'].includes(status);
   const latestExecution = executions[0];
   const actionLabel = status === 'processing' ? 'Start workflow' : status === 'clarification_required' || status === 'researching' ? 'Continue workflow' : 'Run workflow';
+
+  async function approveClarification(id: string) {
+    setBusy(true);
+    setError('');
+    try {
+      await approveClarificationAction({ inquiryId, clarificationId: id });
+      window.location.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Approval failed');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function run() {
     setBusy(true);
@@ -68,7 +81,7 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
         <strong>Clarifications</strong>
         <div className="list">
           {clarifications.slice(0, 5).map((item) => <div className="list-item" key={item.id}>
-            <div><strong>{label(item.status)}</strong><div className="muted">{item.question}</div></div>
+            <div><strong>{label(item.status)}</strong><div className="muted">{item.question}</div></div>{item.status === 'draft' && <button className="inline-button" onClick={() => approveClarification(item.id)} disabled={busy}>Approve</button>}
           </div>)}
         </div>
       </div>}
