@@ -291,6 +291,95 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       return { execution: running, outcome };
     }
 
+    if (stage === 'reporting') {
+      const [
+        inquiryResult,
+        requirementsResult,
+        candidatesResult,
+        suppliersResult,
+        rfqsResult,
+        responsesResult,
+        quotesResult,
+        customerQuotesResult,
+        alertsResult,
+      ] = await Promise.all([
+        supabase.from('inquiries').select('id,reference,status,priority,title,created_at,updated_at').eq('id', inquiryId).single(),
+        supabase.from('requirements').select('id,type,value,status,created_at').eq('inquiry_id', inquiryId),
+        supabase.from('supplier_candidates').select('id,proposed_name,status,supplier_id,created_at').eq('inquiry_id', inquiryId),
+        supabase.from('supplier_candidates').select('supplier_id').eq('inquiry_id', inquiryId).not('supplier_id','is',null),
+        supabase.from('rfqs').select('id,supplier_id,status,created_at,sent_at').eq('inquiry_id', inquiryId),
+        supabase.from('supplier_responses').select('id,supplier_id,status,created_at').eq('inquiry_id', inquiryId),
+        supabase.from('supplier_quotes').select('id,supplier_response_id,match_status,currency,quantity,moq,net_price,valid_until').in(
+          'supplier_response_id',
+          (await supabase.from('supplier_responses').select('id').eq('inquiry_id', inquiryId)).data?.map((r) => r.id) ?? [],
+        ),
+        supabase.from('customer_quotes').select('id,reference,revision_number,status,currency,valid_until,created_at').eq('inquiry_id', inquiryId).order('created_at',{ascending:false}),
+        supabase.from('ai_alerts').select('id,alert_type,message,priority,status,created_at').eq('inquiry_id', inquiryId).eq('status','open'),
+      ]);
+
+      if (inquiryResult.error || !inquiryResult.data) throw new ToolError('NOT_FOUND','Inquiry not found');
+      if (requirementsResult.error) throw new ToolError('TRANSIENT',requirementsResult.error.message);
+      if (candidatesResult.error) throw new ToolError('TRANSIENT',candidatesResult.error.message);
+      if (rfqsResult.error) throw new ToolError('TRANSIENT',rfqsResult.error.message);
+      if (responsesResult.error) throw new ToolError('TRANSIENT',responsesResult.error.message);
+      if (customerQuotesResult.error) throw new ToolError('TRANSIENT',customerQuotesResult.error.message);
+      if (alertsResult.error) throw new ToolError('TRANSIENT',alertsResult.error.message);
+
+      const report = {
+        generated_at: new Date().toISOString(),
+        policy: 'factual_current_state_only_no_ranking',
+        inquiry: inquiryResult.data,
+        requirements: {
+          total: requirementsResult.data?.length ?? 0,
+          by_status: (requirementsResult.data ?? []).reduce<Record<string,number>>((acc,r) => {
+            acc[r.status] = (acc[r.status] ?? 0) + 1; return acc;
+          }, {}),
+        },
+        supplier_candidates: {
+          total: candidatesResult.data?.length ?? 0,
+          by_status: (candidatesResult.data ?? []).reduce<Record<string,number>>((acc,r) => {
+            acc[r.status] = (acc[r.status] ?? 0) + 1; return acc;
+          }, {}),
+        },
+        rfqs: {
+          total: rfqsResult.data?.length ?? 0,
+          by_status: (rfqsResult.data ?? []).reduce<Record<string,number>>((acc,r) => {
+            acc[r.status] = (acc[r.status] ?? 0) + 1; return acc;
+          }, {}),
+        },
+        supplier_responses: {
+          total: responsesResult.data?.length ?? 0,
+          by_status: (responsesResult.data ?? []).reduce<Record<string,number>>((acc,r) => {
+            acc[r.status] = (acc[r.status] ?? 0) + 1; return acc;
+          }, {}),
+        },
+        supplier_quotes: {
+          total: quotesResult.data?.length ?? 0,
+          by_match_status: (quotesResult.data ?? []).reduce<Record<string,number>>((acc,r) => {
+            acc[r.match_status] = (acc[r.match_status] ?? 0) + 1; return acc;
+          }, {}),
+          currencies: [...new Set((quotesResult.data ?? []).map((q) => q.currency).filter(Boolean))],
+        },
+        customer_quotes: {
+          total: customerQuotesResult.data?.length ?? 0,
+          latest: customerQuotesResult.data?.[0] ?? null,
+        },
+        open_ai_alerts: alertsResult.data ?? [],
+      };
+
+      await markExecutionSuccess(running.id, report);
+      await timeline(inquiryId, 'reporting_completed', {
+        requirements: report.requirements.total,
+        candidates: report.supplier_candidates.total,
+        rfqs: report.rfqs.total,
+        supplier_responses: report.supplier_responses.total,
+        supplier_quotes: report.supplier_quotes.total,
+        customer_quotes: report.customer_quotes.total,
+      }, 'reporting_agent');
+
+      return { execution: running, outcome: 'completed', report };
+    }
+
     if (stage === 'customer_response') {
       const { data: quotes, error } = await supabase
         .from('customer_quotes')
