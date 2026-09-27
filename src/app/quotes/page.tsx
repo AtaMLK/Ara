@@ -1,4 +1,5 @@
 import { listCustomerQuotes } from '@/lib/data/admin';
+import Link from 'next/link';
 import { QuoteActions } from './quote-actions';
 
 type Props = { searchParams: Promise<{ q?: string; status?: string }> };
@@ -30,7 +31,7 @@ export default async function QuotesPage({ searchParams }: Props) {
           <div className="row header"><div>Reference</div><div>Customer</div><div>Status</div><div>Currency / Validity</div></div>
           {items.length === 0 ? <div className="empty">No quotes found.</div> : items.map((item) => (
             <div className="row" key={item.id}>
-              <div><strong>{item.reference}</strong></div>
+              <div><Link className="row-link" href={'/quotes/' + item.id}><strong>{item.reference}</strong></Link></div>
               <div>{item.customers?.company_name || item.customers?.name || '—'}</div>
               <div><span className="badge">{label(item.status)}</span></div>
               <div className="action-cell">{item.currency} · {item.valid_until ? new Date(item.valid_until).toLocaleDateString('en-GB') : 'No expiry'}<QuoteActions id={item.id} status={item.status} /></div>
