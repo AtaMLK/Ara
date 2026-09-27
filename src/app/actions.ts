@@ -80,6 +80,117 @@ export async function createCustomerInquiryAction(input: {
   }
 }
 
+const INQUIRY_FILE_LIMIT = 10 * 1024 * 1024;
+const ALLOWED_INQUIRY_FILES = new Map([
+  ['application/pdf', 'pdf'],
+  ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'excel'],
+  ['application/vnd.ms-excel', 'excel'],
+  ['text/csv', 'excel'],
+  ['image/png', 'image'],
+  ['image/jpeg', 'image'],
+  ['image/webp', 'image'],
+]);
+
+export async function uploadInquiryFilesAction(input: {
+  inquiryId: string;
+  files: File[];
+}) {
+  try {
+    const parsed = z.object({
+      inquiryId: idSchema,
+      files: z.array(z.instanceof(File)).min(1).max(10),
+    }).parse(input);
+
+    const { supabase, user } = await requireCustomerInquiryAccess(parsed.inquiryId);
+    const { data: inquiry } = await supabase
+      .from('inquiries')
+      .select('id,reference')
+      .eq('id', parsed.inquiryId)
+      .single();
+
+    if (!inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
+
+    const uploaded: Array<{ id: string; name: string }> = [];
+
+    for (const file of parsed.files) {
+      const category = ALLOWED_INQUIRY_FILES.get(file.type);
+      if (!category) throw new ToolError('VALIDATION', `Unsupported file type: ${file.name}`);
+      if (file.size <= 0 || file.size > INQUIRY_FILE_LIMIT) {
+        throw new ToolError('VALIDATION', `File must be between 1 byte and 10 MB: ${file.name}`);
+      }
+
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 180);
+      const storagePath = `${inquiry.id}/${crypto.randomUUID()}-${safeName}`;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+
+      const { error: uploadError } = await supabase.storage
+        .from('inquiry-files')
+        .upload(storagePath, bytes, {
+          contentType: file.type,
+          upsert: false,
+        });
+
+      if (uploadError) throw new ToolError('CONFLICT', `File upload failed: ${file.name}`);
+
+      const { data: row, error: rowError } = await supabase
+        .from('inquiry_files')
+        .insert({
+          inquiry_id: inquiry.id,
+          storage_path: storagePath,
+          original_name: file.name,
+          mime_type: file.type,
+          file_size: file.size,
+          status: 'uploaded',
+          uploaded_by: user.id,
+          metadata: { category },
+        })
+        .select('id,original_name')
+        .single();
+
+      if (rowError || !row) {
+        await supabase.storage.from('inquiry-files').remove([storagePath]);
+        throw new ToolError('CONFLICT', `Could not register file: ${file.name}`);
+      }
+
+      const { error: processingError } = await supabase
+        .from('document_processing')
+        .insert({
+          file_id: row.id,
+          processor: 'document_agent',
+          status: 'processing',
+          attempt_count: 0,
+        });
+
+      if (processingError) {
+        await supabase.storage.from('inquiry-files').remove([storagePath]);
+        await supabase.from('inquiry_files').delete().eq('id', row.id);
+        throw new ToolError('CONFLICT', `Could not queue document processing: ${file.name}`);
+      }
+
+      await supabase.from('inquiry_files')
+        .update({ status: 'processing' })
+        .eq('id', row.id);
+
+      await supabase.from('timeline_events').insert({
+        inquiry_id: inquiry.id,
+        event_type: 'customer_file_uploaded',
+        visibility: 'customer',
+        actor_type: 'customer',
+        actor_user_id: user.id,
+        metadata: { file_id: row.id, file_name: file.name, category },
+      });
+
+      uploaded.push({ id: row.id, name: row.original_name });
+    }
+
+    revalidatePath(`/customer/inquiries/${inquiry.id}`);
+    revalidatePath('/inquiries');
+    return { ok: true, uploaded };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function startInquiryWorkflowAction(inquiryId: string) {
   try {
     const parsed = idSchema.parse(inquiryId);
