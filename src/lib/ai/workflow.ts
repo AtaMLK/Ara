@@ -1148,6 +1148,17 @@ export async function continueInquiryWorkflow(inquiryId: string) {
         return runStage(inquiryId, 'customer_response');
       }
 
+      const { data: customerQuoteExecution } = await supabase
+        .from('ai_executions')
+        .select('status')
+        .eq('inquiry_id', inquiryId)
+        .eq('task_key', `inquiry:${inquiryId}:stage:customer_quote`)
+        .maybeSingle();
+
+      if (customerQuoteExecution?.status === 'succeeded') {
+        return runStage(inquiryId, 'reporting');
+      }
+
       if (comparisonExecution?.status === 'succeeded') {
         return runStage(inquiryId, 'customer_quote');
       }
