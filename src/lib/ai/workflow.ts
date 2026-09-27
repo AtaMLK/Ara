@@ -291,6 +291,77 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       return { execution: running, outcome };
     }
 
+    if (stage === 'email_response') {
+      const { data: incoming, error } = await supabase
+        .from('communications')
+        .select('id,inquiry_id,supplier_id,rfq_id,subject,body,thread_id,provider_message_id')
+        .eq('inquiry_id', inquiryId)
+        .eq('direction', 'incoming')
+        .order('created_at', { ascending: true });
+
+      if (error) throw new ToolError('TRANSIENT', error.message);
+
+      let matched = 0;
+      let unmatched = 0;
+
+      for (const email of incoming ?? []) {
+        if (email.rfq_id) {
+          matched++;
+          continue;
+        }
+
+        if (!email.supplier_id) {
+          unmatched++;
+          await supabase.from('unmatched_emails').upsert({
+            communication_id: email.id,
+            reason: 'Incoming email has no reliable supplier identity or RFQ reference',
+          }, { onConflict: 'communication_id' });
+          continue;
+        }
+
+        const { data: rfqs } = await supabase
+          .from('rfqs')
+          .select('id,inquiry_id,supplier_id,subject')
+          .eq('inquiry_id', inquiryId)
+          .eq('supplier_id', email.supplier_id);
+
+        const normalizedSubject = (email.subject ?? '').trim().toLowerCase();
+        const matches = (rfqs ?? []).filter((rfq) =>
+          rfq.subject?.trim().toLowerCase() === normalizedSubject
+        );
+
+        if (matches.length === 1) {
+          await supabase.from('communications').update({
+            rfq_id: matches[0].id,
+            supplier_id: matches[0].supplier_id,
+            inquiry_id: matches[0].inquiry_id,
+          }).eq('id', email.id);
+          matched++;
+        } else {
+          unmatched++;
+          await supabase.from('unmatched_emails').upsert({
+            communication_id: email.id,
+            reason: matches.length > 1
+              ? 'Multiple RFQs match supplier and subject'
+              : 'No unique RFQ match for supplier and subject',
+          }, { onConflict: 'communication_id' });
+          await createAlert(inquiryId, 'email_response', 'UNMATCHED_SUPPLIER_EMAIL', 'A supplier email could not be uniquely matched to an RFQ.', 'normal');
+        }
+      }
+
+      await markExecutionSuccess(running.id, {
+        matched_count: matched,
+        unmatched_count: unmatched,
+      });
+
+      await timeline(inquiryId, 'email_response_matching_completed', {
+        matched_count: matched,
+        unmatched_count: unmatched,
+      }, 'email_response_agent');
+
+      return { execution: running, outcome: unmatched > 0 ? 'partial' : 'completed' };
+    }
+
     if (stage === 'rfq') {
       const { data: candidates, error: candidateError } = await supabase
         .from('supplier_candidates')
