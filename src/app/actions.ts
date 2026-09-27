@@ -762,6 +762,118 @@ export async function approveRfqAction(rfqId: string) {
   }
 }
 
+export async function sendRfqAction(rfqId: string) {
+  try {
+    const parsed = idSchema.parse(rfqId);
+    const { supabase, user } = await requireAdmin();
+
+    const { data: rfq, error: rfqError } = await supabase
+      .from('rfqs')
+      .select('id,inquiry_id,supplier_id,status,subject,body,recipient_email,sender_email')
+      .eq('id', parsed)
+      .single();
+
+    if (rfqError || !rfq) throw new ToolError('NOT_FOUND', 'RFQ not found');
+    if (rfq.status !== 'approved') throw new ToolError('CONFLICT', 'Only approved RFQs can be sent');
+    if (!rfq.recipient_email) throw new ToolError('VALIDATION', 'RFQ recipient email is missing');
+
+    const from = rfq.sender_email || process.env.PURCHASE_DEP_EMAIL || process.env.EMAIL_FROM;
+    if (!from) throw new ToolError('VALIDATION', 'PURCHASE_DEP_EMAIL or EMAIL_FROM must be configured');
+
+    const adminSupabase = createSupabaseAdminClient();
+    const { data: previous } = await adminSupabase
+      .from('communications')
+      .select('id,provider_message_id')
+      .eq('rfq_id', rfq.id)
+      .eq('direction', 'outgoing')
+      .eq('channel', 'email')
+      .limit(1)
+      .maybeSingle();
+
+    if (previous?.provider_message_id) throw new ToolError('CONFLICT', 'This RFQ has already been sent');
+
+    const provider = getEmailProvider();
+    const result = await provider.send({
+      from,
+      to: [rfq.recipient_email],
+      subject: rfq.subject,
+      html: `<!doctype html><html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#17202a"><p>${escapeHtml(rfq.body).replaceAll('\\n','<br />')}</p></body></html>`,
+      text: rfq.body,
+      idempotencyKey: `rfq-${rfq.id}`,
+    });
+
+    const { error: communicationError } = await adminSupabase.from('communications').insert({
+      inquiry_id: rfq.inquiry_id,
+      supplier_id: rfq.supplier_id,
+      rfq_id: rfq.id,
+      direction: 'outgoing',
+      channel: 'email',
+      provider_message_id: result.providerMessageId,
+      thread_id: result.threadId ?? null,
+      subject: rfq.subject,
+      body: rfq.body,
+      sent_at: result.sentAt,
+      metadata: { type: 'supplier_rfq', rfq_id: rfq.id },
+    });
+
+    if (communicationError) {
+      await adminSupabase.from('ai_alerts').insert({
+        inquiry_id: rfq.inquiry_id,
+        agent_id: 'rfq',
+        alert_type: 'RFQ_EMAIL_LOG_CONFLICT',
+        message: `RFQ email was accepted by the provider but could not be recorded. Provider message: ${result.providerMessageId}`,
+        priority: 'urgent',
+      });
+      throw new ToolError('CONFLICT', 'RFQ was sent but could not be recorded. Check the RFQ before retrying.');
+    }
+
+    const { data: sent, error: updateError } = await adminSupabase
+      .from('rfqs')
+      .update({ status: 'sent', sent_at: result.sentAt })
+      .eq('id', rfq.id)
+      .eq('status', 'approved')
+      .select('id')
+      .single();
+
+    if (updateError || !sent) {
+      await adminSupabase.from('ai_alerts').insert({
+        inquiry_id: rfq.inquiry_id,
+        agent_id: 'rfq',
+        alert_type: 'RFQ_EMAIL_STATE_CONFLICT',
+        message: `RFQ email was sent and recorded, but RFQ state could not be changed to Sent. Provider message: ${result.providerMessageId}`,
+        priority: 'urgent',
+      });
+      throw new ToolError('CONFLICT', 'RFQ was sent and recorded, but its state could not be updated.');
+    }
+
+    await adminSupabase.from('audit_logs').insert({
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      action: 'rfq_sent',
+      record_type: 'rfq',
+      record_id: rfq.id,
+      before_data: { status: 'approved' },
+      after_data: { status: 'sent', sent_at: result.sentAt },
+      metadata: { provider_message_id: result.providerMessageId, recipient: rfq.recipient_email },
+    });
+
+    await adminSupabase.from('timeline_events').insert({
+      inquiry_id: rfq.inquiry_id,
+      event_type: 'rfq_sent',
+      visibility: 'admin',
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      metadata: { rfq_id: rfq.id, supplier_id: rfq.supplier_id, provider_message_id: result.providerMessageId },
+    });
+
+    revalidatePath('/rfqs');
+    revalidatePath(`/inquiries/${rfq.inquiry_id}`);
+    return { ok: true, providerMessageId: result.providerMessageId };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function createExchangeRateAction(input: {
   fromCurrency: string;
   toCurrency: string;
