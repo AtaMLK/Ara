@@ -201,6 +201,39 @@ export async function uploadInquiryFilesAction(input: {
   }
 }
 
+export async function getCustomerInquiryFileUrlAction(input: { inquiryId: string; fileId: string }) {
+  try {
+    const parsed = z.object({ inquiryId: idSchema, fileId: idSchema }).parse(input);
+    const { supabase } = await requireCustomerInquiryAccess(parsed.inquiryId);
+
+    const { data: file, error } = await supabase
+      .from('inquiry_files')
+      .select('id,storage_path,original_name,mime_type')
+      .eq('id', parsed.fileId)
+      .eq('inquiry_id', parsed.inquiryId)
+      .single();
+
+    if (error || !file) throw new ToolError('NOT_FOUND', 'File not found');
+
+    const { data, error: signedError } = await supabase.storage
+      .from('inquiry-files')
+      .createSignedUrl(file.storage_path, 300);
+
+    if (signedError || !data?.signedUrl) {
+      throw new ToolError('TRANSIENT', 'Could not create file access link');
+    }
+
+    return {
+      ok: true,
+      url: data.signedUrl,
+      fileName: file.original_name,
+      mimeType: file.mime_type,
+    };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function startInquiryWorkflowAction(inquiryId: string) {
   try {
     const parsed = idSchema.parse(inquiryId);
