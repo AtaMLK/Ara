@@ -843,19 +843,27 @@ export async function approveExchangeRateAction(rateId: string) {
     if (readError || !rate) throw new ToolError('NOT_FOUND', 'Exchange rate not found');
     if (rate.status !== 'proposed') throw new ToolError('CONFLICT', 'Only proposed exchange rates can be approved');
 
-    const { data: conflict } = await supabase
+    const { data: approvedRates, error: approvedRatesError } = await supabase
       .from('exchange_rates')
-      .select('id')
+      .select('id,valid_from,valid_until')
       .eq('status', 'approved')
       .eq('from_currency', rate.from_currency)
       .eq('to_currency', rate.to_currency)
-      .lte('valid_from', rate.valid_until ?? rate.valid_from)
-      .or(`valid_until.is.null,valid_until.gte.${rate.valid_from}`)
-      .neq('id', rate.id)
-      .limit(1)
-      .maybeSingle();
+      .neq('id', rate.id);
 
-    if (conflict) {
+    if (approvedRatesError) throw new ToolError('TRANSIENT', approvedRatesError.message);
+
+    const proposedStart = new Date(rate.valid_from + 'T00:00:00Z').getTime();
+    const proposedEnd = rate.valid_until ? new Date(rate.valid_until + 'T00:00:00Z').getTime() : Number.POSITIVE_INFINITY;
+    const overlaps = (approvedRates ?? []).some((existing) => {
+      const existingStart = new Date(existing.valid_from + 'T00:00:00Z').getTime();
+      const existingEnd = existing.valid_until
+        ? new Date(existing.valid_until + 'T00:00:00Z').getTime()
+        : Number.POSITIVE_INFINITY;
+      return existingStart <= proposedEnd && proposedStart <= existingEnd;
+    });
+
+    if (overlaps) {
       throw new ToolError('CONFLICT', 'An approved exchange rate overlaps this currency pair and validity period');
     }
 
