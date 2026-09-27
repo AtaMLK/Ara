@@ -291,6 +291,95 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       return { execution: running, outcome };
     }
 
+    if (stage === 'customer_quote') {
+      const { data: inquiry, error: inquiryError } = await supabase
+        .from('inquiries')
+        .select('id,customer_id,reference,title,description')
+        .eq('id', inquiryId)
+        .single();
+
+      if (inquiryError || !inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
+
+      const { data: existing } = await supabase
+        .from('customer_quotes')
+        .select('id,status,revision_number')
+        .eq('inquiry_id', inquiryId)
+        .in('status', ['draft','pending_approval','sent'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        await markExecutionSuccess(running.id, {
+          customer_quote_id: existing.id,
+          status: existing.status,
+          reused_existing_quote: true,
+        });
+        return { execution: running, outcome: 'existing_quote' };
+      }
+
+      const { data: comparisons } = await supabase
+        .from('ai_executions')
+        .select('output_ref,status')
+        .eq('inquiry_id', inquiryId)
+        .eq('task_key', `inquiry:${inquiryId}:stage:comparison`)
+        .eq('status', 'succeeded')
+        .maybeSingle();
+
+      const { data: customer } = await supabase
+        .from('customers')
+        .select('id,default_currency')
+        .eq('id', inquiry.customer_id)
+        .single();
+
+      if (!customer) throw new ToolError('NOT_FOUND', 'Customer not found');
+
+      const currency = customer.default_currency ?? 'EUR';
+      const reference = `DRAFT-${inquiry.reference ?? inquiryId}-${crypto.randomUUID().slice(0, 8)}`;
+
+      const { data: quote, error: quoteError } = await supabase
+        .from('customer_quotes')
+        .insert({
+          inquiry_id: inquiryId,
+          customer_id: inquiry.customer_id,
+          reference,
+          revision_number: 0,
+          status: 'draft',
+          currency,
+          subject: `Quotation — ${inquiry.reference ?? inquiryId}`,
+          body: [
+            `Dear Customer,`,
+            '',
+            `Please find our quotation regarding inquiry ${inquiry.reference ?? inquiryId}.`,
+            '',
+            'Final customer pricing and commercial terms require Admin review and approval.',
+            '',
+            'Regards,',
+            'Purchase Department',
+          ].join('\n'),
+        })
+        .select('*')
+        .single();
+
+      if (quoteError || !quote) throw new ToolError('CONFLICT', quoteError?.message ?? 'Customer quote creation failed');
+
+      await markExecutionSuccess(running.id, {
+        customer_quote_id: quote.id,
+        comparison_execution: comparisons?.output_ref ?? null,
+        customer_price_policy: 'ADMIN_ONLY',
+      });
+
+      await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_REVIEW_REQUIRED', 'Customer quote draft created. Admin must set final customer prices and approve before sending.', 'normal');
+
+      await timeline(inquiryId, 'customer_quote_draft_created', {
+        customer_quote_id: quote.id,
+        currency,
+        customer_price_policy: 'ADMIN_ONLY',
+      }, 'customer_quote_agent');
+
+      return { execution: running, outcome: 'draft_created' };
+    }
+
     if (stage === 'comparison') {
       const { data: requirements, error: reqError } = await supabase
         .from('requirements')
