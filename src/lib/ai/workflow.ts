@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider } from './research/provider';
 import { runAgent } from './agent-runner';
-import { intakeOutputSchema } from './agent-schemas';
+import { intakeOutputSchema, clarificationOutputSchema } from './agent-schemas';
 import {
   enqueueWorkflow,
   markExecutionRunning,
@@ -243,24 +243,86 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
     }
 
     if (stage === 'clarification') {
-      const { data: pending } = await supabase
-        .from('clarifications')
-        .select('id,status')
-        .eq('inquiry_id', inquiryId)
-        .in('status', ['draft', 'pending_approval', 'sent']);
-
-      const unresolved = await supabase
+      const { data: requirements, error: requirementsError } = await supabase
         .from('requirements')
-        .select('id')
+        .select('id,type,value,status,admin_edited,current_version')
         .eq('inquiry_id', inquiryId)
-        .in('status', ['open', 'clarification_required']);
+        .in('status', ['open', 'clarification_required'])
+        .order('created_at', { ascending: true });
 
-      if ((unresolved.data?.length ?? 0) > 0) {
+      if (requirementsError) throw new ToolError('TRANSIENT', requirementsError.message);
+
+      if ((requirements ?? []).length > 0) {
+        const { data: existing } = await supabase
+          .from('clarifications')
+          .select('id,requirement_id,question,status')
+          .eq('inquiry_id', inquiryId)
+          .in('status', ['draft', 'pending_approval', 'sent'])
+          .order('created_at', { ascending: true });
+
+        const existingRequirementIds = new Set(
+          (existing ?? []).map((item) => item.requirement_id).filter(Boolean),
+        );
+
+        const unresolvedForAI = (requirements ?? []).filter(
+          (item) => !existingRequirementIds.has(item.id),
+        );
+
+        if (unresolvedForAI.length > 0) {
+          const ai = await runAgent(
+            { agentId: 'clarification', executionId: running.id, inquiryId },
+            {
+              requirements: unresolvedForAI.map((item) => ({
+                id: item.id,
+                type: item.type,
+                value: item.value,
+                admin_edited: item.admin_edited,
+                current_version: item.current_version,
+              })),
+              instructions: [
+                'Only ask about material ambiguity that can change product, model, part number, quantity, specification, delivery, price, currency, terms, or supplier identity.',
+                'Ask the minimum targeted question.',
+                'Never ask the customer to repeat information that is already explicit.',
+                'Do not resolve the ambiguity yourself.',
+                'Do not create or send customer communication.',
+              ],
+            },
+            clarificationOutputSchema,
+          );
+
+          for (const question of ai.output.questions) {
+            if (!question.requirementId) continue;
+            const requirement = unresolvedForAI.find((item) => item.id === question.requirementId);
+            if (!requirement || existingRequirementIds.has(requirement.id)) continue;
+
+            const { error: insertError } = await supabase.from('clarifications').insert({
+              inquiry_id: inquiryId,
+              requirement_id: requirement.id,
+              question: question.question,
+              status: 'draft',
+            });
+            if (insertError) throw new ToolError('CONFLICT', insertError.message);
+          }
+
+          await timeline(inquiryId, 'clarification_ai_drafts_created', {
+            execution_id: running.id,
+            question_count: ai.output.questions.length,
+            provider: ai.provider,
+            model: ai.model,
+          }, 'clarification');
+        }
+
         await setInquiryStatus(inquiryId, 'clarification_required');
+        const { data: drafts } = await supabase
+          .from('clarifications')
+          .select('id,status')
+          .eq('inquiry_id', inquiryId)
+          .in('status', ['draft', 'pending_approval', 'sent']);
+
         await markExecutionSuccess(running.id, {
           blocked: true,
           reason: 'requirements_not_confirmed',
-          pending_clarifications: pending?.length ?? 0,
+          pending_clarifications: drafts?.length ?? 0,
         });
         return { execution: running, outcome: 'still_blocked' as const };
       }
