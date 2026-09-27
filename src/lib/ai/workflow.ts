@@ -910,6 +910,17 @@ export async function continueInquiryWorkflow(inquiryId: string) {
         .eq('task_key', `inquiry:${inquiryId}:stage:rfq`)
         .maybeSingle();
 
+      const { data: extractionExecution } = await supabase
+        .from('ai_executions')
+        .select('status')
+        .eq('inquiry_id', inquiryId)
+        .eq('task_key', `inquiry:${inquiryId}:stage:quote_extraction`)
+        .maybeSingle();
+
+      if (extractionExecution?.status === 'succeeded') {
+        return runStage(inquiryId, 'comparison');
+      }
+
       if (rfqExecution?.status === 'succeeded') {
         const { data: matchedEmails } = await supabase
           .from('communications')
