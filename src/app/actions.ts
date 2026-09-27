@@ -40,6 +40,49 @@ export async function continueInquiryWorkflowAction(inquiryId: string) {
   }
 }
 
+export async function finalizeSupplierCandidateAction(input: { inquiryId: string; candidateId: string }) {
+  try {
+    const parsed = z.object({ inquiryId: idSchema, candidateId: idSchema }).parse(input);
+    const { supabase, user } = await requireAdmin();
+
+    const { data: candidate, error: readError } = await supabase
+      .from('supplier_candidates')
+      .select('id,status,proposed_name,proposed_country,proposed_website')
+      .eq('id', parsed.candidateId)
+      .eq('inquiry_id', parsed.inquiryId)
+      .single();
+
+    if (readError || !candidate) throw new ToolError('NOT_FOUND', 'Supplier candidate not found');
+    if (candidate.status !== 'proposed') throw new ToolError('CONFLICT', 'Only proposed candidates can be finalized');
+
+    const { data, error } = await supabase
+      .from('supplier_candidates')
+      .update({ status: 'finalized' })
+      .eq('id', parsed.candidateId)
+      .eq('inquiry_id', parsed.inquiryId)
+      .eq('status', 'proposed')
+      .select('id')
+      .single();
+
+    if (error || !data) throw new ToolError('CONFLICT', 'Candidate changed. Refresh and try again.');
+
+    await supabase.from('timeline_events').insert({
+      inquiry_id: parsed.inquiryId,
+      event_type: 'supplier_candidate_finalized',
+      visibility: 'admin',
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      metadata: { candidate_id: parsed.candidateId },
+    });
+
+    revalidatePath(`/inquiries/${parsed.inquiryId}`);
+    revalidatePath('/suppliers');
+    return { ok: true };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function approveClarificationAction(input: { inquiryId: string; clarificationId: string }) {
   try {
     const parsed = z.object({ inquiryId: idSchema, clarificationId: idSchema }).parse(input);
