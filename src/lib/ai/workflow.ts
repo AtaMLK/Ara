@@ -18,6 +18,8 @@ type RequirementRow = {
   id: string;
   type: string;
   value: string;
+  source?: 'customer_text' | 'pdf' | 'excel' | 'image' | 'clarification';
+  source_ref?: string | null;
   status: 'open' | 'clarification_required' | 'confirmed' | 'rejected';
 };
 
@@ -250,7 +252,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
     if (stage === 'intake') {
       const { data: requirements, error } = await supabase
         .from('requirements')
-        .select('id,type,value,status')
+        .select('id,type,value,status,source,source_ref')
         .eq('inquiry_id', inquiryId)
         .order('created_at', { ascending: true });
 
