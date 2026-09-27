@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider } from './research/provider';
 import { runAgent } from './agent-runner';
-import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema } from './agent-schemas';
+import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
   enqueueWorkflow,
@@ -104,15 +104,35 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
     // Supplier replies can arrive after the original quote-extraction stage
     // succeeded. Reopen the stage when there are new supplier responses.
-    if (stage === 'quote_extraction' && !output?.blocked) {
-      const { data: pendingResponses } = await createSupabaseAdminClient()
-        .from('supplier_responses')
-        .select('id')
-        .eq('inquiry_id', inquiryId)
-        .in('status', ['received', 'processing'])
-        .limit(1);
+    if ((stage === 'quote_extraction' || stage === 'comparison') && !output?.blocked) {
+      let needsRerun = false;
 
-      if ((pendingResponses ?? []).length > 0) {
+      if (stage === 'quote_extraction') {
+        const { data: pendingResponses } = await createSupabaseAdminClient()
+          .from('supplier_responses')
+          .select('id')
+          .eq('inquiry_id', inquiryId)
+          .in('status', ['received', 'processing'])
+          .limit(1);
+        needsRerun = (pendingResponses ?? []).length > 0;
+      } else {
+        const { data: processedResponses } = await createSupabaseAdminClient()
+          .from('supplier_responses')
+          .select('id')
+          .eq('inquiry_id', inquiryId)
+          .eq('status', 'processed');
+        const responseIds = (processedResponses ?? []).map((item) => item.id);
+        if (responseIds.length > 0) {
+          const { data: findings } = await createSupabaseAdminClient()
+            .from('supplier_comparison_findings')
+            .select('supplier_response_id')
+            .eq('inquiry_id', inquiryId);
+          const comparedIds = new Set((findings ?? []).map((item) => item.supplier_response_id));
+          needsRerun = responseIds.some((id) => !comparedIds.has(id));
+        }
+      }
+
+      if (needsRerun) {
         const reopened = await createSupabaseAdminClient()
           .from('ai_executions')
           .update({ status: 'queued', error_code: null, error_message: null, completed_at: null })
@@ -122,7 +142,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .single();
 
         if (reopened.error || !reopened.data) {
-          throw new ToolError('CONFLICT', 'Quote extraction execution cannot be reopened');
+          throw new ToolError('CONFLICT', stage + ' execution cannot be reopened');
         }
         execution.status = 'queued';
       } else {
@@ -131,15 +151,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
     } else if (!output?.blocked) {
       return { execution, outcome: 'already_succeeded' as const };
     }
-    const reopened = await createSupabaseAdminClient()
-      .from('ai_executions')
-      .update({ status: 'queued', error_code: null, error_message: null, completed_at: null })
-      .eq('id', execution.id)
-      .eq('status', 'succeeded')
-      .select('*')
-      .single();
-    if (reopened.error || !reopened.data) throw new ToolError('CONFLICT', 'Blocked workflow execution cannot be resumed');
-    execution.status = 'queued';
+
+    if (output?.blocked) {
+      const reopened = await createSupabaseAdminClient()
+        .from('ai_executions')
+        .update({ status: 'queued', error_code: null, error_message: null, completed_at: null })
+        .eq('id', execution.id)
+        .eq('status', 'succeeded')
+        .select('*')
+        .single();
+      if (reopened.error || !reopened.data) throw new ToolError('CONFLICT', 'Blocked workflow execution cannot be resumed');
+      execution.status = 'queued';
+    }
   }
 
   const running = await markExecutionRunning(execution.id);
@@ -880,82 +903,6 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       return { execution: running, outcome: 'draft_created' };
     }
 
-    if (stage === 'comparison') {
-      const { data: requirements, error: reqError } = await supabase
-        .from('requirements')
-        .select('id,type,value,status')
-        .eq('inquiry_id', inquiryId)
-        .eq('status', 'confirmed');
-
-      if (reqError) throw new ToolError('TRANSIENT', reqError.message);
-
-      const { data: responses, error: responseError } = await supabase
-        .from('supplier_responses')
-        .select('id,supplier_id,inquiry_id,status,raw_extraction,created_at')
-        .eq('inquiry_id', inquiryId)
-        .in('status', ['received','processed']);
-
-      if (responseError) throw new ToolError('TRANSIENT', responseError.message);
-
-      const responseIds = (responses ?? []).map((r) => r.id);
-      const { data: quotes, error: quoteError } = responseIds.length
-        ? await supabase
-            .from('supplier_quotes')
-            .select('id,supplier_response_id,product_id,match_status,currency,quantity,moq,net_price,valid_until,availability,lead_time_text,payment_terms,incoterm,delivery_method,original_data')
-            .in('supplier_response_id', responseIds)
-        : { data: [], error: null };
-
-      if (quoteError) throw new ToolError('TRANSIENT', quoteError.message);
-
-      const comparisons = (responses ?? []).map((response) => {
-        const supplierQuotes = (quotes ?? []).filter((quote) => quote.supplier_response_id === response.id);
-        const requirementResults = (requirements ?? []).map((requirement) => {
-          const related = supplierQuotes.filter((quote) => quote.product_id === requirement.id);
-          const explicit = related.length > 0;
-          return {
-            requirement_id: requirement.id,
-            requirement_type: requirement.type,
-            requirement_value: requirement.value,
-            quote_count: related.length,
-            status: explicit ? 'matched_evidence_available' : 'no_direct_quote_link',
-          };
-        });
-
-        return {
-          supplier_id: response.supplier_id,
-          supplier_response_id: response.id,
-          requirements: requirementResults,
-          quotes: supplierQuotes.map((quote) => ({
-            quote_id: quote.id,
-            match_status: quote.match_status,
-            currency: quote.currency,
-            quantity: quote.quantity,
-            moq: quote.moq,
-            net_price: quote.net_price,
-            valid_until: quote.valid_until,
-            availability: quote.availability,
-            lead_time_text: quote.lead_time_text,
-            payment_terms: quote.payment_terms,
-            incoterm: quote.incoterm,
-            delivery_method: quote.delivery_method,
-          })),
-        };
-      });
-
-      await markExecutionSuccess(running.id, {
-        comparison_count: comparisons.length,
-        comparisons,
-        policy: 'factual_comparison_only_no_supplier_ranking',
-      });
-
-      await timeline(inquiryId, 'supplier_quote_comparison_completed', {
-        supplier_response_count: responses?.length ?? 0,
-        quote_count: quotes?.length ?? 0,
-      }, 'comparison_agent');
-
-      return { execution: running, outcome: 'completed' };
-    }
-
     if (stage === 'quote_extraction') {
       const { data: responses, error: responseError } = await supabase
         .from('supplier_responses')
@@ -1180,11 +1127,166 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         status: 'completed',
       });
 
+      let comparisonExecutionId: string | null = null;
+      if (processed > 0) {
+        const comparison = await enqueueWorkflow(inquiryId, 'comparison');
+        comparisonExecutionId = comparison.id;
+      }
+
       await timeline(inquiryId, 'quote_extraction_completed', {
         processed_count: processed,
         skipped_count: skipped,
         alert_count: alerts,
+        comparison_execution_id: comparisonExecutionId,
       }, 'quote_extraction');
+
+      return { execution: running, outcome: processed > 0 ? 'comparison_queued' : 'completed' };
+    }
+
+    if (stage === 'comparison') {
+      const { data: requirements, error: requirementsError } = await supabase
+        .from('requirements')
+        .select('id,type,value,status,source,admin_edited')
+        .eq('inquiry_id', inquiryId)
+        .eq('status', 'confirmed')
+        .order('created_at', { ascending: true });
+
+      if (requirementsError) throw new ToolError('TRANSIENT', requirementsError.message);
+
+      const { data: responses, error: responsesError } = await supabase
+        .from('supplier_responses')
+        .select('id,supplier_id,inquiry_id,status,raw_extraction,attachments')
+        .eq('inquiry_id', inquiryId)
+        .eq('status', 'processed')
+        .order('created_at', { ascending: true });
+
+      if (responsesError) throw new ToolError('TRANSIENT', responsesError.message);
+
+      let compared = 0;
+      let findingCount = 0;
+      let alertCount = 0;
+
+      for (const response of responses ?? []) {
+        const { data: quotes } = await supabase
+          .from('supplier_quotes')
+          .select('id,product_id,match_status,currency,quantity,moq,list_price,discount,net_price,vat,gross_price,validity_from,valid_until,availability,lead_time_text,payment_terms,incoterm,delivery_method,additional_conditions,original_data')
+          .eq('supplier_response_id', response.id)
+          .order('created_at', { ascending: true });
+
+        if (!quotes?.length) continue;
+
+        const { data: supplier } = await supabase
+          .from('suppliers')
+          .select('id,legal_name,primary_country,verification_status')
+          .eq('id', response.supplier_id)
+          .maybeSingle();
+
+        const ai = await runAgent(
+          { agentId: 'comparison', executionId: running.id, inquiryId },
+          {
+            supplier_response_id: response.id,
+            supplier: supplier ?? { id: response.supplier_id },
+            requirements: requirements ?? [],
+            supplier_quotes: quotes,
+            instructions: [
+              'Compare only confirmed inquiry requirements against the supplied supplier quote data.',
+              'Produce one factual finding per requirement for this supplier response when evidence exists; use unknown when the quote does not provide enough evidence.',
+              'Use match when the supplier quote explicitly satisfies the requirement, partial_match when only part is supported, mismatch when the supplier data explicitly conflicts with it, and unknown when there is insufficient evidence.',
+              'Evidence must quote or precisely summarize only data present in the supplied input. Do not invent technical specifications or commercial terms.',
+              'Do not convert currencies, calculate margins, normalize prices, rank suppliers, score suppliers, or select a supplier.',
+              'Do not change requirements, even if the supplier quote appears to contradict them.',
+              'If multiple quotes or price tiers exist, report the factual differences rather than choosing one.',
+            ],
+          },
+          comparisonOutputSchema,
+        );
+
+        const comparison = ai.output.comparisons.find((item) => item.supplierResponseId === response.id);
+        if (!comparison) {
+          await createAlert(
+            inquiryId,
+            'comparison',
+            'COMPARISON_MISSING_RESPONSE',
+            `Comparison Agent returned no comparison for supplier response ${response.id}.`,
+            'normal',
+          );
+          alertCount++;
+          continue;
+        }
+
+        const validRequirementIds = new Set((requirements ?? []).map((item) => item.id));
+        const quoteIds = new Set(quotes.map((item) => item.id));
+        const findings = comparison.findings.filter((finding) => validRequirementIds.has(finding.requirementId));
+
+        if (findings.length !== comparison.findings.length) {
+          throw new ToolError('AI_PROCESSING', 'Comparison Agent returned a requirement outside the confirmed inquiry requirements');
+        }
+        for (const finding of findings) {
+          if (finding.supplierQuoteId && !quoteIds.has(finding.supplierQuoteId)) {
+            throw new ToolError('AI_PROCESSING', 'Comparison Agent returned a supplier quote outside the current response');
+          }
+        }
+
+        for (const finding of findings) {
+          const quote = finding.supplierQuoteId
+            ? quotes.find((item) => item.id === finding.supplierQuoteId)
+            : quotes.length === 1 ? quotes[0] : null;
+          const { error: upsertError } = await supabase
+            .from('supplier_comparison_findings')
+            .upsert({
+              inquiry_id: inquiryId,
+              supplier_response_id: response.id,
+              supplier_quote_id: quote?.id ?? null,
+              requirement_id: finding.requirementId,
+              status: finding.status,
+              evidence: finding.evidence,
+              source_data: {
+                supplier_response_id: response.id,
+                quote_ids: quotes.map((item) => item.id),
+                provider: ai.provider,
+                model: ai.model,
+              },
+              ai_execution_id: running.id,
+            }, { onConflict: 'supplier_response_id,requirement_id' });
+
+          if (upsertError) throw new ToolError('CONFLICT', upsertError.message);
+
+          findingCount++;
+
+          if (finding.status === 'mismatch' || finding.status === 'unknown') {
+            await createAlert(
+              inquiryId,
+              'comparison',
+              finding.status === 'mismatch' ? 'SUPPLIER_REQUIREMENT_MISMATCH' : 'SUPPLIER_REQUIREMENT_UNKNOWN',
+              `Supplier response ${response.id}: requirement ${finding.requirementId} is ${finding.status}. Evidence: ${finding.evidence}`,
+              'normal',
+            );
+            alertCount++;
+          }
+        }
+
+        compared++;
+        await timeline(inquiryId, 'supplier_comparison_completed', {
+          supplier_response_id: response.id,
+          finding_count: findings.length,
+          provider: ai.provider,
+          model: ai.model,
+        }, 'comparison');
+      }
+
+      await markExecutionSuccess(running.id, {
+        response_count: responses?.length ?? 0,
+        compared_count: compared,
+        finding_count: findingCount,
+        alert_count: alertCount,
+        status: 'completed',
+      });
+
+      await timeline(inquiryId, 'comparison_completed', {
+        compared_count: compared,
+        finding_count: findingCount,
+        alert_count: alertCount,
+      }, 'comparison');
 
       return { execution: running, outcome: 'completed' };
     }
@@ -1681,6 +1783,29 @@ export async function continueInquiryWorkflow(inquiryId: string) {
       }
 
       if (comparisonExecution?.status === 'succeeded') {
+        const { data: processedResponses } = await supabase
+          .from('supplier_responses')
+          .select('id')
+          .eq('inquiry_id', inquiryId)
+          .eq('status', 'processed');
+
+        const responseIds = (processedResponses ?? []).map((item) => item.id);
+        let comparisonIsCurrent = responseIds.length === 0;
+
+        if (responseIds.length > 0) {
+          const { data: findings } = await supabase
+            .from('supplier_comparison_findings')
+            .select('supplier_response_id')
+            .eq('inquiry_id', inquiryId);
+
+          const comparedIds = new Set((findings ?? []).map((item) => item.supplier_response_id));
+          comparisonIsCurrent = responseIds.every((id) => comparedIds.has(id));
+        }
+
+        if (!comparisonIsCurrent) {
+          return runStage(inquiryId, 'comparison');
+        }
+
         return runStage(inquiryId, 'customer_quote');
       }
 

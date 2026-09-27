@@ -92,6 +92,7 @@ export const comparisonOutputSchema = z.object({
     supplierResponseId: z.string().uuid(),
     findings: z.array(z.object({
       requirementId: z.string().uuid(),
+      supplierQuoteId: z.string().uuid().optional(),
       status: z.enum(['match','partial_match','mismatch','unknown']),
       evidence: z.string().min(1),
     })),
