@@ -138,6 +138,32 @@ export async function listCustomerQuotes(search?: string, status?: string) {
   return data ?? [];
 }
 
+export async function getCustomerQuote(id: string) {
+  const { supabase } = await requireAdminPage();
+  const { data: quote, error } = await supabase
+    .from('customer_quotes')
+    .select('id,inquiry_id,reference,revision_number,status,currency,valid_until,subject,body,created_at,updated_at,customers(name,company_name)')
+    .eq('id', id)
+    .single();
+
+  if (error || !quote) throw new Error('Customer quote not found');
+
+  const { data: items, error: itemError } = await supabase
+    .from('customer_quote_items')
+    .select('id,product_id,supplier_quote_id,quantity,unit_price,total,supplier_cost,supplier_currency,price_status,pricing_rule_id,exchange_rate_id,price_calculation')
+    .eq('customer_quote_id', id)
+    .order('created_at', { ascending: true });
+
+  if (itemError) throw itemError;
+
+  const rows = items ?? [];
+  return {
+    ...quote,
+    items: rows,
+    confirmedItemCount: rows.filter((item) => item.price_status === 'admin_confirmed').length,
+  };
+}
+
 export async function listNotifications() {
   const { supabase, user } = await requireAdminPage();
   const { data, error } = await supabase
