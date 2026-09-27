@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { confirmCustomerQuoteItemPriceAction } from '@/app/actions';
+import { confirmCustomerQuoteItemPriceAction, updateCustomerQuoteItemQuantityAction } from '@/app/actions';
 
 type Item = {
   id: string;
@@ -21,7 +21,16 @@ type Item = {
 export function QuoteItemEditor({ item, currency, editable }: { item: Item; currency: string; editable: boolean }) {
   const [price, setPrice] = useState(String(item.unit_price));
   const [saving, setSaving] = useState(false);
+  const [quantity, setQuantity] = useState(String(item.quantity));
   const [error, setError] = useState('');
+
+  async function confirmQuantity() {
+    const value = Number(quantity);
+    if (!Number.isFinite(value) || value <= 0) { setError('Enter a valid positive quantity.'); return; }
+    setSaving(true); setError('');
+    try { await updateCustomerQuoteItemQuantityAction(item.id, value); window.location.reload(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not save quantity.'); setSaving(false); }
+  }
 
   async function confirmPrice() {
     const value = Number(price);
@@ -56,6 +65,7 @@ export function QuoteItemEditor({ item, currency, editable }: { item: Item; curr
       </div>
 
       <div className="quote-item-grid">
+        <div><span className="field-label">Quantity</span><div className="price-edit"><input type="number" min="0.0001" step="1" value={quantity} disabled={!editable || saving} onChange={(e) => setQuantity(e.target.value)} /></div></div>
         <div><span className="field-label">Supplier cost</span><strong>{item.supplier_cost ?? '—'} {item.supplier_currency || ''}</strong></div>
         <div><span className="field-label">Exchange rate</span><strong>{rate ?? 'Same currency'}</strong></div>
         <div><span className="field-label">Markup rule</span><strong>{markup == null ? '—' : markup + '%'}</strong></div>
@@ -63,9 +73,10 @@ export function QuoteItemEditor({ item, currency, editable }: { item: Item; curr
         <div><span className="field-label">Line total</span><strong>{(Number(item.quantity) * Number(item.unit_price)).toFixed(2)} {currency}</strong></div>
       </div>
 
-      {editable && item.price_status !== 'admin_confirmed' && (
+      {editable && (
         <div className="quote-item-actions">
-          <button className="primary-button" disabled={saving} onClick={confirmPrice}>{saving ? 'Confirming…' : 'Confirm price'}</button>
+          <button className="secondary-button" disabled={saving} onClick={confirmQuantity}>Save quantity</button>
+          {item.price_status !== 'admin_confirmed' && <button className="primary-button" disabled={saving} onClick={confirmPrice}>{saving ? 'Confirming…' : 'Confirm price'}</button>}
           {error && <span className="error-inline">{error}</span>}
         </div>
       )}
