@@ -101,7 +101,36 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
   if (execution.status === 'succeeded') {
     const output = execution.output_ref as { blocked?: boolean } | null;
-    if (!output?.blocked) return { execution, outcome: 'already_succeeded' as const };
+
+    // Supplier replies can arrive after the original quote-extraction stage
+    // succeeded. Reopen the stage when there are new supplier responses.
+    if (stage === 'quote_extraction' && !output?.blocked) {
+      const { data: pendingResponses } = await createSupabaseAdminClient()
+        .from('supplier_responses')
+        .select('id')
+        .eq('inquiry_id', inquiryId)
+        .in('status', ['received', 'processing'])
+        .limit(1);
+
+      if ((pendingResponses ?? []).length > 0) {
+        const reopened = await createSupabaseAdminClient()
+          .from('ai_executions')
+          .update({ status: 'queued', error_code: null, error_message: null, completed_at: null })
+          .eq('id', execution.id)
+          .eq('status', 'succeeded')
+          .select('*')
+          .single();
+
+        if (reopened.error || !reopened.data) {
+          throw new ToolError('CONFLICT', 'Quote extraction execution cannot be reopened');
+        }
+        execution.status = 'queued';
+      } else {
+        return { execution, outcome: 'already_succeeded' as const };
+      }
+    } else if (!output?.blocked) {
+      return { execution, outcome: 'already_succeeded' as const };
+    }
     const reopened = await createSupabaseAdminClient()
       .from('ai_executions')
       .update({ status: 'queued', error_code: null, error_message: null, completed_at: null })
