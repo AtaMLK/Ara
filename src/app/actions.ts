@@ -1099,7 +1099,7 @@ export async function approveCustomerQuoteAction(quoteId: string) {
 
     const { data: customer, error: customerError } = await supabase
       .from('customers')
-      .select('id,email,name,company_name')
+      .select('id,email,name,company_name,user_id')
       .eq('id', quote.customer_id)
       .single();
 
@@ -1293,25 +1293,17 @@ Open your request in ARAT:
       metadata: { quote_id: quote.id, reference: quote.reference },
     });
 
-    if (customer.id) {
-      const { data: customerProfile } = await adminSupabase
-        .from('profiles')
-        .select('id')
-        .eq('id', customer.id)
-        .maybeSingle();
-
-      if (customerProfile?.id) {
-        await adminSupabase.from('notifications').insert({
-          user_id: customerProfile.id,
-          category: 'customer',
-          priority: 'normal',
-          title: 'Quotation sent',
-          message: \`Quotation \${quote.reference} has been sent.\`,
-          record_type: 'customer_quote',
-          record_id: quote.id,
-          action_url: quoteUrl,
-        });
-      }
+    if (customer.user_id) {
+      await adminSupabase.from('notifications').insert({
+        user_id: customer.user_id,
+        category: 'customer',
+        priority: 'normal',
+        title: 'Quotation sent',
+        message: `Quotation ${quote.reference} has been sent.`,
+        record_type: 'customer_quote',
+        record_id: quote.id,
+        action_url: quoteUrl,
+      });
     }
 
     revalidatePath('/quotes');
