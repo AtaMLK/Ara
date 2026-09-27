@@ -150,7 +150,7 @@ export async function getCustomerQuote(id: string) {
 
   const { data: items, error: itemError } = await supabase
     .from('customer_quote_items')
-    .select('id,product_id,supplier_quote_id,quantity,unit_price,total,supplier_cost,supplier_currency,price_status,pricing_rule_id,exchange_rate_id,price_calculation')
+    .select('id,product_id,supplier_quote_id,quantity,unit_price,total,supplier_cost,supplier_currency,price_status,pricing_rule_id,exchange_rate_id,price_calculation,supplier_products(product_name,model_part_number)')
     .eq('customer_quote_id', id)
     .order('created_at', { ascending: true });
 
