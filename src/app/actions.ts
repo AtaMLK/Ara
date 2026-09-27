@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { requireAdmin, requireCustomerAccess, requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import { ToolError } from '@/lib/errors';
 import { continueInquiryWorkflow, startInquiryWorkflow } from '@/lib/ai/workflow';
+import { getEmailProvider } from '@/lib/email/provider';
 
 const idSchema = z.string().uuid();
 
@@ -428,16 +429,121 @@ export async function sendClarificationAction(input: { inquiryId: string; clarif
       throw new ToolError('CONFLICT', 'Only approved clarifications can be sent');
     }
 
+    const { data: inquiry } = await supabase
+      .from('inquiries')
+      .select('id,reference,title,customer_id')
+      .eq('id', parsed.inquiryId)
+      .single();
+
+    if (!inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
+
+    const { data: customer } = await supabase
+      .from('customers')
+      .select('id,email,name,company_name,user_id')
+      .eq('id', inquiry.customer_id)
+      .single();
+
+    if (!customer?.email) throw new ToolError('VALIDATION', 'Customer email is not configured');
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+    const from = process.env.EMAIL_FROM;
+    if (!appUrl || !from) {
+      throw new ToolError('VALIDATION', 'NEXT_PUBLIC_APP_URL and EMAIL_FROM must be configured');
+    }
+
+    const customerName = customer.company_name || customer.name;
+    const inquiryUrl = `${appUrl.replace(/\/$/, '')}/customer/inquiries/${inquiry.id}`;
+    const subject = `ARAT needs more information — ${inquiry.reference}`;
+    const safeQuestion = clarification.question
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+
+    const html = `<!doctype html>
+<html>
+  <body style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+    <h2>More information is required</h2>
+    <p>Hello ${customerName},</p>
+    <p>We need one clarification before we can continue processing your procurement request.</p>
+    <div style="padding:16px;border:1px solid #e5e7eb;border-radius:8px;margin:20px 0">
+      <strong>${safeQuestion}</strong>
+    </div>
+    <p><a href="${inquiryUrl}" style="display:inline-block;padding:10px 16px;background:#111827;color:white;text-decoration:none;border-radius:6px">Open request and answer</a></p>
+    <p style="color:#6b7280;font-size:13px">Request reference: ${inquiry.reference}</p>
+  </body>
+</html>`;
+
+    const text = `Hello ${customerName},
+
+We need one clarification before we can continue processing your procurement request.
+
+Question:
+${clarification.question}
+
+Open your request and answer:
+${inquiryUrl}
+
+Request reference: ${inquiry.reference}`;
+
+    const provider = getEmailProvider();
+    const result = await provider.send({
+      from,
+      to: [customer.email],
+      subject,
+      html,
+      text,
+    });
+
     const { data, error } = await supabase
       .from('clarifications')
-      .update({ status: 'sent', sent_at: new Date().toISOString() })
+      .update({ status: 'sent', sent_at: result.sentAt })
       .eq('id', clarification.id)
       .eq('inquiry_id', parsed.inquiryId)
       .eq('status', 'pending_approval')
       .select('id')
       .single();
 
-    if (error || !data) throw new ToolError('CONFLICT', 'Clarification changed before it could be sent');
+    if (error || !data) {
+      await supabase.from('ai_alerts').insert({
+        inquiry_id: parsed.inquiryId,
+        agent_id: 'orchestrator',
+        alert_type: 'CLARIFICATION_EMAIL_STATE_CONFLICT',
+        message: `Clarification email was accepted by the provider but the clarification state could not be updated. Provider message: ${result.providerMessageId}`,
+        priority: 'urgent',
+      });
+      throw new ToolError('CONFLICT', 'Email was sent, but the clarification state could not be updated. Check the inquiry before retrying.');
+    }
+
+    await supabase.from('communications').insert({
+      inquiry_id: parsed.inquiryId,
+      customer_id: customer.id,
+      direction: 'outgoing',
+      channel: 'email',
+      provider_message_id: result.providerMessageId,
+      thread_id: result.threadId ?? null,
+      subject,
+      body: text,
+      sent_at: result.sentAt,
+      metadata: {
+        type: 'clarification',
+        clarification_id: clarification.id,
+      },
+    });
+
+    if (customer.user_id) {
+      await supabase.from('notifications').insert({
+        user_id: customer.user_id,
+        category: 'customer',
+        priority: 'normal',
+        title: 'More information required',
+        message: `Please answer the clarification for request ${inquiry.reference}.`,
+        record_type: 'inquiry',
+        record_id: inquiry.id,
+        action_url: `/customer/inquiries/${inquiry.id}`,
+      });
+    }
 
     await supabase.from('timeline_events').insert({
       inquiry_id: parsed.inquiryId,
@@ -451,7 +557,7 @@ export async function sendClarificationAction(input: { inquiryId: string; clarif
     revalidatePath('/inquiries');
     revalidatePath(`/inquiries/${parsed.inquiryId}`);
     revalidatePath(`/customer/inquiries/${parsed.inquiryId}`);
-    return { ok: true };
+    return { ok: true, providerMessageId: result.providerMessageId };
   } catch (error) {
     fail(error);
   }
