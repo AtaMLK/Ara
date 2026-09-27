@@ -180,6 +180,113 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       return { execution: running, outcome: 'research_queued' as const };
     }
 
+    if (stage === 'verification') {
+      const { data: candidates, error } = await supabase
+        .from('supplier_candidates')
+        .select('id,supplier_id,status,proposed_name,proposed_country,proposed_website,verification_evidence')
+        .eq('inquiry_id', inquiryId)
+        .eq('status', 'finalized');
+
+      if (error) throw new ToolError('TRANSIENT', error.message);
+      if (!candidates?.length) {
+        await markExecutionSuccess(running.id, { blocked: true, reason: 'no_finalized_supplier_candidates' });
+        await createAlert(inquiryId, 'supplier_verification', 'NO_FINALIZED_SUPPLIERS', 'No finalized supplier candidates are available for verification', 'normal');
+        return { execution: running, outcome: 'blocked' as const };
+      }
+
+      let verified = 0;
+      let pending = 0;
+
+      for (const candidate of candidates) {
+        if (!candidate.supplier_id) continue;
+
+        const evidence = {
+          candidate_id: candidate.id,
+          supplier_name: candidate.proposed_name,
+          country: candidate.proposed_country,
+          website: candidate.proposed_website,
+          ...((candidate.verification_evidence ?? {}) as Record<string, unknown>),
+        };
+
+        const hasIdentity = Boolean(candidate.proposed_name?.trim());
+        const hasCountry = Boolean(candidate.proposed_country?.trim());
+        const hasWebsite = Boolean(candidate.proposed_website?.trim());
+
+        if (hasIdentity && hasCountry && hasWebsite) {
+          const { error: updateError } = await supabase
+            .from('suppliers')
+            .update({
+              legal_name: candidate.proposed_name,
+              primary_country: candidate.proposed_country,
+              verification_status: 'verified',
+              last_verified_at: new Date().toISOString(),
+            })
+            .eq('id', candidate.supplier_id);
+
+          if (updateError) throw new ToolError('CONFLICT', updateError.message);
+
+          await supabase.from('supplier_sources').insert({
+            supplier_id: candidate.supplier_id,
+            source_type: 'AI Research',
+            source_url: candidate.proposed_website,
+            source_name: candidate.proposed_name,
+            evidence,
+          });
+
+          await supabase.from('supplier_verification_history').insert({
+            supplier_id: candidate.supplier_id,
+            new_status: 'verified',
+            reason: 'Verified from finalized candidate evidence',
+            explanation: 'Identity, country, and website evidence were available from the approved research candidate.',
+            agent_id: 'supplier_verification',
+          });
+
+          verified++;
+        } else {
+          await supabase
+            .from('suppliers')
+            .update({ verification_status: 'pending' })
+            .eq('id', candidate.supplier_id);
+
+          await supabase.from('supplier_verification_history').insert({
+            supplier_id: candidate.supplier_id,
+            new_status: 'pending',
+            reason: 'Insufficient verification evidence',
+            explanation: 'Required supplier identity, country, or website evidence is missing.',
+            agent_id: 'supplier_verification',
+          });
+
+          pending++;
+        }
+      }
+
+      const outcome = pending > 0 && verified === 0 ? 'verification_pending' : 'verification_completed';
+
+      await markExecutionSuccess(running.id, {
+        verified_count: verified,
+        pending_count: pending,
+        blocked: pending > 0,
+        next_stage: pending > 0 ? null : 'rfq',
+      });
+
+      await createAlert(
+        inquiryId,
+        'supplier_verification',
+        pending > 0 ? 'SUPPLIER_VERIFICATION_PENDING' : 'SUPPLIER_VERIFICATION_COMPLETED',
+        pending > 0
+          ? `${pending} supplier(s) remain pending because verification evidence is incomplete.`
+          : `${verified} supplier(s) passed the verification evidence gate.`,
+        pending > 0 ? 'normal' : 'normal',
+      );
+
+      await timeline(inquiryId, 'workflow_supplier_verification_completed', {
+        verified_count: verified,
+        pending_count: pending,
+      }, 'supplier_verification');
+
+      return { execution: running, outcome };
+    }
+
     if (stage === 'supplier_discovery') {
       const { data: research } = await supabase
         .from('research_cases')
