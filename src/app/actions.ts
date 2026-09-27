@@ -1183,7 +1183,7 @@ export async function reviewCustomerQuoteRevisionAction(input: {
     if (requestUpdateError) throw new ToolError('CONFLICT','Revision request could not be approved');
 
     await supabase.from('customer_quotes').update({
-      status:'rejected',
+      status:'superseded',
       decision_reason: request.reason==='price'?'price_too_high':request.reason==='delivery_time'?'delivery_too_long':
         request.reason==='quantity'?'quantity_moq_issue':request.reason==='product_specification'?'product_specification_not_suitable':
         request.reason==='payment_terms'?'terms_not_suitable':'other',
