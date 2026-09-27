@@ -15,7 +15,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
     supabase.from('clarifications').select('id,requirement_id,question,answer,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
   ]);
 
-  if (inquiryResult.error || !inquiryResult.data || inquiryResult.data.customer_id !== inquiry.customer_id) notFound();
+  if (inquiryResult.error || !inquiryResult.data) notFound();
 
   const clarifications = (clarificationsResult.data ?? []).filter((item) => ['sent'].includes(item.status));
 
