@@ -20,6 +20,17 @@ export async function requireInquiryAccess(ctx:AIContext,inquiryId:string){
 }
 
 
+export async function requireCustomerAccess() {
+  const supabase = await createSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new ToolError('AUTHORIZATION', 'Authentication required');
+  const { data: profile } = await supabase.from('profiles').select('role,status').eq('user_id', user.id).single();
+  if (profile?.role !== 'customer' || profile.status !== 'active') throw new ToolError('AUTHORIZATION', 'Customer access required');
+  const { data: customer } = await supabase.from('customers').select('id,status,customer_code,name,company_name').eq('user_id', user.id).single();
+  if (!customer || customer.status !== 'active') throw new ToolError('AUTHORIZATION', 'Customer account is inactive');
+  return { supabase, user, customer };
+}
+
 export async function requireCustomerInquiryAccess(inquiryId: string) {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
