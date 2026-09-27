@@ -106,7 +106,11 @@ export default async function CustomerInquiryPage({ params }: Props) {
                           no_suitable_supplier: 'No suitable supplier was found',
                           closed: 'Request closed',
                         } as Record<string, string>)[status] ?? 'Request status updated'
-                      : 'Request updated';
+                      : event.event_type === 'clarification_sent'
+                      ? 'A question is waiting for your answer'
+                      : event.event_type === 'clarification_answer_applied'
+                        ? 'Your answer was received'
+                        : 'Request updated';
 
                 return (
                   <div className="timeline-item" key={event.id}>
