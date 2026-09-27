@@ -10,18 +10,6 @@ import {
   type WorkflowStage,
 } from './orchestrator';
 
-const STAGE_STATUS: Partial<Record<WorkflowStage, string>> = {
-  intake: 'processing',
-  clarification: 'clarification_required',
-  research: 'researching',
-  supplier_discovery: 'researching',
-  verification: 'researching',
-  rfq: 'rfq',
-  quote_extraction: 'quoting',
-  customer_quote: 'quoting',
-  completed: 'converted',
-};
-
 type RequirementRow = {
   id: string;
   type: string;
@@ -89,7 +77,17 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
   const execution = await enqueueWorkflow(inquiryId, stage);
 
   if (execution.status === 'succeeded') {
-    return { execution, outcome: 'already_succeeded' as const };
+    const output = execution.output_ref as { blocked?: boolean } | null;
+    if (!output?.blocked) return { execution, outcome: 'already_succeeded' as const };
+    const reopened = await createSupabaseAdminClient()
+      .from('ai_executions')
+      .update({ status: 'queued', error_code: null, error_message: null, completed_at: null })
+      .eq('id', execution.id)
+      .eq('status', 'succeeded')
+      .select('*')
+      .single();
+    if (reopened.error || !reopened.data) throw new ToolError('CONFLICT', 'Blocked workflow execution cannot be resumed');
+    execution.status = 'queued';
   }
 
   const running = await markExecutionRunning(execution.id);
