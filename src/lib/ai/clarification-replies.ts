@@ -62,6 +62,7 @@ export async function applyCustomerClarificationAnswer(input: {
   if (!clarification.requirement_id) throw new ToolError('VALIDATION', 'Clarification is not linked to a requirement');
 
   if (clarification.status === 'answered') {
+    await continueInquiryWorkflow(input.inquiryId);
     return { ok: true, duplicate: true, requirementId: clarification.requirement_id };
   }
 
@@ -165,8 +166,11 @@ export async function findCustomerClarificationForEmail(input: {
 
   if (!customer) return { matched: false as const, reason: 'customer_not_found' as const };
 
-  const referenceMatch = input.subject.match(/(?:ARAT needs more information|ARAT)\s*[—-]\s*([^—-\r\n]+)/i);
-  const reference = referenceMatch?.[1]?.trim();
+  const normalizedSubject = input.subject.trim().replace(/^re:\s*/i, '');
+  const prefix = 'ARAT needs more information — ';
+  const reference = normalizedSubject.toLowerCase().startsWith(prefix.toLowerCase())
+    ? normalizedSubject.slice(prefix.length).split(' — ')[0].trim()
+    : null;
 
   let inquiryId: string | null = null;
   if (reference) {
@@ -190,7 +194,6 @@ export async function findCustomerClarificationForEmail(input: {
       .order('created_at', { ascending: false })
       .limit(20);
 
-    const normalizedSubject = input.subject.trim().toLowerCase().replace(/^re:\s*/i, '');
     const candidate = (communications ?? []).find((row) => {
       const subject = (row.subject ?? '').trim().toLowerCase().replace(/^re:\s*/i, '');
       return subject === normalizedSubject;
