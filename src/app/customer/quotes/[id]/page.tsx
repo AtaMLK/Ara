@@ -5,7 +5,7 @@ import CustomerQuoteActions from './quote-actions';
 
 type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ revision?: string }> };
 
-export default async function CustomerQuotePage({ params }: Props) {
+export default async function CustomerQuotePage({ params, searchParams }: Props) {
   const { id } = await params;
   const { revision } = await searchParams;
   const { supabase } = await requireCustomerInquiryAccess(id);
@@ -14,7 +14,7 @@ export default async function CustomerQuotePage({ params }: Props) {
     .from('customer_quotes')
     .select('id,inquiry_id,reference,revision_number,status,currency,valid_until,subject,body,sent_at,decision_reason,decision_text,decided_at')
     .eq('inquiry_id', id)
-    .in('status', ['sent','accepted','rejected','revision_requested'])
+    .in('status', ['sent','accepted','rejected','revision_requested','superseded'])
     .order('revision_number', { ascending: false });
 
   if (error) throw error;
