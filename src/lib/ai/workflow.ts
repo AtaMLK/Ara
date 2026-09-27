@@ -291,6 +291,82 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       return { execution: running, outcome };
     }
 
+    if (stage === 'comparison') {
+      const { data: requirements, error: reqError } = await supabase
+        .from('requirements')
+        .select('id,type,value,status')
+        .eq('inquiry_id', inquiryId)
+        .eq('status', 'confirmed');
+
+      if (reqError) throw new ToolError('TRANSIENT', reqError.message);
+
+      const { data: responses, error: responseError } = await supabase
+        .from('supplier_responses')
+        .select('id,supplier_id,inquiry_id,status,raw_extraction,created_at')
+        .eq('inquiry_id', inquiryId)
+        .in('status', ['received','processed']);
+
+      if (responseError) throw new ToolError('TRANSIENT', responseError.message);
+
+      const responseIds = (responses ?? []).map((r) => r.id);
+      const { data: quotes, error: quoteError } = responseIds.length
+        ? await supabase
+            .from('supplier_quotes')
+            .select('id,supplier_response_id,product_id,match_status,currency,quantity,moq,net_price,valid_until,availability,lead_time_text,payment_terms,incoterm,delivery_method,original_data')
+            .in('supplier_response_id', responseIds)
+        : { data: [], error: null };
+
+      if (quoteError) throw new ToolError('TRANSIENT', quoteError.message);
+
+      const comparisons = (responses ?? []).map((response) => {
+        const supplierQuotes = (quotes ?? []).filter((quote) => quote.supplier_response_id === response.id);
+        const requirementResults = (requirements ?? []).map((requirement) => {
+          const related = supplierQuotes.filter((quote) => quote.product_id === requirement.id);
+          const explicit = related.length > 0;
+          return {
+            requirement_id: requirement.id,
+            requirement_type: requirement.type,
+            requirement_value: requirement.value,
+            quote_count: related.length,
+            status: explicit ? 'matched_evidence_available' : 'no_direct_quote_link',
+          };
+        });
+
+        return {
+          supplier_id: response.supplier_id,
+          supplier_response_id: response.id,
+          requirements: requirementResults,
+          quotes: supplierQuotes.map((quote) => ({
+            quote_id: quote.id,
+            match_status: quote.match_status,
+            currency: quote.currency,
+            quantity: quote.quantity,
+            moq: quote.moq,
+            net_price: quote.net_price,
+            valid_until: quote.valid_until,
+            availability: quote.availability,
+            lead_time_text: quote.lead_time_text,
+            payment_terms: quote.payment_terms,
+            incoterm: quote.incoterm,
+            delivery_method: quote.delivery_method,
+          })),
+        };
+      });
+
+      await markExecutionSuccess(running.id, {
+        comparison_count: comparisons.length,
+        comparisons,
+        policy: 'factual_comparison_only_no_supplier_ranking',
+      });
+
+      await timeline(inquiryId, 'supplier_quote_comparison_completed', {
+        supplier_response_count: responses?.length ?? 0,
+        quote_count: quotes?.length ?? 0,
+      }, 'comparison_agent');
+
+      return { execution: running, outcome: 'completed' };
+    }
+
     if (stage === 'quote_extraction') {
       const { data: communications, error } = await supabase
         .from('communications')
