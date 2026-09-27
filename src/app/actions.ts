@@ -762,6 +762,162 @@ export async function approveRfqAction(rfqId: string) {
   }
 }
 
+export async function createExchangeRateAction(input: {
+  fromCurrency: string;
+  toCurrency: string;
+  rate: number;
+  validFrom: string;
+  validUntil?: string;
+  source?: string;
+}) {
+  try {
+    const parsed = z.object({
+      fromCurrency: z.string().trim().toUpperCase().length(3),
+      toCurrency: z.string().trim().toUpperCase().length(3),
+      rate: z.number().positive(),
+      validFrom: z.string().date(),
+      validUntil: z.string().date().optional(),
+      source: z.string().trim().max(200).optional(),
+    }).refine((v) => v.fromCurrency !== v.toCurrency, {
+      message: 'Currencies must be different',
+      path: ['toCurrency'],
+    }).refine((v) => !v.validUntil || v.validUntil >= v.validFrom, {
+      message: 'Valid until must be on or after valid from',
+      path: ['validUntil'],
+    }).parse(input);
+
+    const { supabase, user } = await requireAdmin();
+    const { data, error } = await supabase
+      .from('exchange_rates')
+      .insert({
+        from_currency: parsed.fromCurrency,
+        to_currency: parsed.toCurrency,
+        rate: parsed.rate,
+        valid_from: parsed.validFrom,
+        valid_until: parsed.validUntil ?? null,
+        source: parsed.source || null,
+        status: 'proposed',
+        approved_by: null,
+        approved_at: null,
+      })
+      .select('id,status')
+      .single();
+
+    if (error || !data) throw new ToolError('CONFLICT', error?.message ?? 'Exchange rate creation failed');
+
+    await supabase.from('audit_logs').insert({
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      action: 'exchange_rate_created',
+      record_type: 'exchange_rate',
+      record_id: data.id,
+      after_data: {
+        from_currency: parsed.fromCurrency,
+        to_currency: parsed.toCurrency,
+        rate: parsed.rate,
+        valid_from: parsed.validFrom,
+        valid_until: parsed.validUntil ?? null,
+        source: parsed.source || null,
+        status: 'proposed',
+      },
+    });
+
+    revalidatePath('/settings');
+    return { ok: true, id: data.id };
+  } catch (error) {
+    fail(error);
+  }
+}
+
+export async function approveExchangeRateAction(rateId: string) {
+  try {
+    const parsed = idSchema.parse(rateId);
+    const { supabase, user } = await requireAdmin();
+
+    const { data: rate, error: readError } = await supabase
+      .from('exchange_rates')
+      .select('id,status,from_currency,to_currency,rate,valid_from,valid_until')
+      .eq('id', parsed)
+      .single();
+
+    if (readError || !rate) throw new ToolError('NOT_FOUND', 'Exchange rate not found');
+    if (rate.status !== 'proposed') throw new ToolError('CONFLICT', 'Only proposed exchange rates can be approved');
+
+    const { data: conflict } = await supabase
+      .from('exchange_rates')
+      .select('id')
+      .eq('status', 'approved')
+      .eq('from_currency', rate.from_currency)
+      .eq('to_currency', rate.to_currency)
+      .lte('valid_from', rate.valid_until ?? rate.valid_from)
+      .or(`valid_until.is.null,valid_until.gte.${rate.valid_from}`)
+      .neq('id', rate.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (conflict) {
+      throw new ToolError('CONFLICT', 'An approved exchange rate overlaps this currency pair and validity period');
+    }
+
+    const { data, error } = await supabase
+      .from('exchange_rates')
+      .update({ status: 'approved', approved_by: user.id, approved_at: new Date().toISOString() })
+      .eq('id', parsed)
+      .eq('status', 'proposed')
+      .select('id,status')
+      .single();
+
+    if (error || !data) throw new ToolError('CONFLICT', 'Exchange rate changed. Refresh and try again.');
+
+    await supabase.from('audit_logs').insert({
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      action: 'exchange_rate_approved',
+      record_type: 'exchange_rate',
+      record_id: rate.id,
+      before_data: { status: rate.status },
+      after_data: { status: 'approved' },
+    });
+
+    revalidatePath('/settings');
+    return { ok: true };
+  } catch (error) {
+    fail(error);
+  }
+}
+
+export async function rejectExchangeRateAction(rateId: string) {
+  try {
+    const parsed = idSchema.parse(rateId);
+    const { supabase, user } = await requireAdmin();
+
+    const { data, error } = await supabase
+      .from('exchange_rates')
+      .update({ status: 'rejected', approved_by: null, approved_at: null })
+      .eq('id', parsed)
+      .eq('status', 'proposed')
+      .select('id,status')
+      .single();
+
+    if (error || !data) throw new ToolError('CONFLICT', 'Exchange rate is not in Proposed state');
+
+    await supabase.from('audit_logs').insert({
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      action: 'exchange_rate_rejected',
+      record_type: 'exchange_rate',
+      record_id: rateId,
+      before_data: { status: 'proposed' },
+      after_data: { status: 'rejected' },
+    });
+
+    revalidatePath('/settings');
+    return { ok: true };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function createCustomerPricingRuleAction(input: {
   name: string;
   markupPercent: number;
