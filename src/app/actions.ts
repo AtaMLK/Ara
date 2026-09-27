@@ -40,6 +40,81 @@ export async function continueInquiryWorkflowAction(inquiryId: string) {
   }
 }
 
+export async function approveSupplierCandidateAction(input: { inquiryId: string; candidateId: string }) {
+  try {
+    const parsed = z.object({ inquiryId: idSchema, candidateId: idSchema }).parse(input);
+    const { supabase, user } = await requireAdmin();
+
+    const { data: candidate, error: readError } = await supabase
+      .from('supplier_candidates')
+      .select('id,status,supplier_id,proposed_name,proposed_country,proposed_website')
+      .eq('id', parsed.candidateId)
+      .eq('inquiry_id', parsed.inquiryId)
+      .single();
+
+    if (readError || !candidate) throw new ToolError('NOT_FOUND', 'Supplier candidate not found');
+    if (candidate.status !== 'finalized') throw new ToolError('CONFLICT', 'Candidate must be finalized before adding a supplier');
+    if (candidate.supplier_id) throw new ToolError('CONFLICT', 'Supplier is already attached to this candidate');
+    if (!candidate.proposed_country) throw new ToolError('VALIDATION', 'Supplier country is required before adding the supplier');
+
+    const { data: supplier, error: supplierError } = await supabase
+      .from('suppliers')
+      .insert({
+        legal_name: candidate.proposed_name,
+        primary_country: candidate.proposed_country,
+        supplier_type: 'unknown',
+        verification_status: 'pending',
+        status: 'active',
+      })
+      .select('id')
+      .single();
+
+    if (supplierError || !supplier) throw new ToolError('CONFLICT', supplierError?.message ?? 'Supplier creation failed');
+
+    const { error: candidateError } = await supabase
+      .from('supplier_candidates')
+      .update({ supplier_id: supplier.id })
+      .eq('id', candidate.id)
+      .eq('status', 'finalized')
+      .is('supplier_id', null);
+
+    if (candidateError) throw new ToolError('CONFLICT', candidateError.message);
+
+    await supabase.from('supplier_sources').insert({
+      supplier_id: supplier.id,
+      source_type: 'AI Research',
+      source_url: candidate.proposed_website,
+      source_name: candidate.proposed_name,
+      evidence: { candidate_id: candidate.id },
+    });
+
+    await supabase.from('supplier_verification_history').insert({
+      supplier_id: supplier.id,
+      old_status: 'unverified',
+      new_status: 'pending',
+      reason: 'Admin approved supplier candidate',
+      changed_by: user.id,
+      agent_id: 'supplier_discovery',
+    });
+
+    await supabase.from('timeline_events').insert({
+      inquiry_id: parsed.inquiryId,
+      event_type: 'supplier_candidate_approved',
+      visibility: 'admin',
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      metadata: { candidate_id: candidate.id, supplier_id: supplier.id },
+    });
+
+    revalidatePath(`/inquiries/${parsed.inquiryId}`);
+    revalidatePath('/suppliers');
+    return { ok: true, supplierId: supplier.id };
+  } catch (error) {
+    fail(error);
+  }
+}
+
+
 export async function finalizeSupplierCandidateAction(input: { inquiryId: string; candidateId: string }) {
   try {
     const parsed = z.object({ inquiryId: idSchema, candidateId: idSchema }).parse(input);
