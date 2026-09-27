@@ -104,15 +104,35 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
     // Supplier replies can arrive after the original quote-extraction stage
     // succeeded. Reopen the stage when there are new supplier responses.
-    if (stage === 'quote_extraction' && !output?.blocked) {
-      const { data: pendingResponses } = await createSupabaseAdminClient()
-        .from('supplier_responses')
-        .select('id')
-        .eq('inquiry_id', inquiryId)
-        .in('status', ['received', 'processing'])
-        .limit(1);
+    if ((stage === 'quote_extraction' || stage === 'comparison') && !output?.blocked) {
+      let needsRerun = false;
 
-      if ((pendingResponses ?? []).length > 0) {
+      if (stage === 'quote_extraction') {
+        const { data: pendingResponses } = await createSupabaseAdminClient()
+          .from('supplier_responses')
+          .select('id')
+          .eq('inquiry_id', inquiryId)
+          .in('status', ['received', 'processing'])
+          .limit(1);
+        needsRerun = (pendingResponses ?? []).length > 0;
+      } else {
+        const { data: processedResponses } = await createSupabaseAdminClient()
+          .from('supplier_responses')
+          .select('id')
+          .eq('inquiry_id', inquiryId)
+          .eq('status', 'processed');
+        const responseIds = (processedResponses ?? []).map((item) => item.id);
+        if (responseIds.length > 0) {
+          const { data: findings } = await createSupabaseAdminClient()
+            .from('supplier_comparison_findings')
+            .select('supplier_response_id')
+            .eq('inquiry_id', inquiryId);
+          const comparedIds = new Set((findings ?? []).map((item) => item.supplier_response_id));
+          needsRerun = responseIds.some((id) => !comparedIds.has(id));
+        }
+      }
+
+      if (needsRerun) {
         const reopened = await createSupabaseAdminClient()
           .from('ai_executions')
           .update({ status: 'queued', error_code: null, error_message: null, completed_at: null })
@@ -122,7 +142,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .single();
 
         if (reopened.error || !reopened.data) {
-          throw new ToolError('CONFLICT', 'Quote extraction execution cannot be reopened');
+          throw new ToolError('CONFLICT', stage + ' execution cannot be reopened');
         }
         execution.status = 'queued';
       } else {
