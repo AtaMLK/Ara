@@ -1005,6 +1005,17 @@ export async function continueInquiryWorkflow(inquiryId: string) {
         .eq('task_key', `inquiry:${inquiryId}:stage:rfq`)
         .maybeSingle();
 
+      const { data: comparisonExecution } = await supabase
+        .from('ai_executions')
+        .select('status')
+        .eq('inquiry_id', inquiryId)
+        .eq('task_key', `inquiry:${inquiryId}:stage:comparison`)
+        .maybeSingle();
+
+      if (comparisonExecution?.status === 'succeeded') {
+        return runStage(inquiryId, 'customer_quote');
+      }
+
       const { data: extractionExecution } = await supabase
         .from('ai_executions')
         .select('status')
