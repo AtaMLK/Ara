@@ -29,11 +29,34 @@ export async function POST(request: NextRequest) {
 
     const { data: existing } = await supabase
       .from('communications')
-      .select('id')
+      .select('id,inquiry_id,customer_id,metadata')
       .eq('provider_message_id', email.id)
       .maybeSingle();
 
-    if (existing) return NextResponse.json({ ok: true, duplicate: true });
+    if (existing) {
+      const clarificationId =
+        typeof existing.metadata?.clarification_id === 'string'
+          ? existing.metadata.clarification_id
+          : null;
+
+      if (existing.inquiry_id && clarificationId) {
+        const { data: customer } = await supabase
+          .from('customers')
+          .select('user_id')
+          .eq('id', existing.customer_id)
+          .maybeSingle();
+
+        await applyCustomerClarificationAnswer({
+          inquiryId: existing.inquiry_id,
+          clarificationId,
+          answer: cleanEmailReply(email.text, email.html),
+          customerUserId: customer?.user_id ?? null,
+          communicationId: existing.id,
+        });
+      }
+
+      return NextResponse.json({ ok: true, duplicate: true });
+    }
 
     const subject = email.subject?.trim() ?? '';
     const senderEmail = extractEmailAddress(email.from);
@@ -60,6 +83,7 @@ export async function POST(request: NextRequest) {
           from: senderEmail,
           matched: match.matched,
           match_reason: match.matched ? null : match.reason,
+          clarification_id: match.matched ? match.clarification.id : null,
         },
       })
       .select('id')
