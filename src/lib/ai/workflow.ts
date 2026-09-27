@@ -4,7 +4,8 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider } from './research/provider';
 import { runAgent } from './agent-runner';
-import { intakeOutputSchema, clarificationOutputSchema } from './agent-schemas';
+import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema } from './agent-schemas';
+import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
   enqueueWorkflow,
   markExecutionRunning,
@@ -105,6 +106,123 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
     if (inquiryError || !inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
 
+    if (stage === 'document') {
+      const { data: files, error: filesError } = await supabase
+        .from('inquiry_files')
+        .select('id,storage_path,original_name,mime_type,status')
+        .eq('inquiry_id', inquiryId)
+        .in('status', ['uploaded', 'processing'])
+        .order('uploaded_at', { ascending: true });
+
+      if (filesError) throw new ToolError('TRANSIENT', filesError.message);
+
+      let processed = 0;
+      let failed = 0;
+      let ocrPending = 0;
+
+      for (const file of files ?? []) {
+        try {
+          const bytes = await downloadInquiryFile(file.storage_path);
+          const parsed = await parseInquiryFile(bytes, file.mime_type, file.original_name);
+
+          let extraction = {
+            extractedText: parsed.extractedText,
+            extractedData: parsed.extractedData,
+            qualityFlags: parsed.qualityFlags,
+            requirements: [] as Array<{type:'product'|'model_part_number'|'quantity'|'specification'|'delivery'|'other';value:string;sourceRef?:string}>,
+          };
+
+          if (parsed.extractedText.trim()) {
+            const ai = await runAgent(
+              { agentId: 'document', executionId: running.id, inquiryId },
+              {
+                file_id: file.id,
+                file_name: file.original_name,
+                mime_type: file.mime_type,
+                extracted_text: parsed.extractedText,
+                instructions: [
+                  'Extract only information explicitly present in the document text.',
+                  'Do not infer missing values.',
+                  'Return requirements only when the document explicitly supports them.',
+                  'Use sourceRef values that identify a useful location such as page number, sheet name, or row range when available.',
+                  'Flag ambiguity or unreadable content in qualityFlags.',
+                ],
+              },
+              documentOutputSchema,
+            );
+            extraction = {
+              extractedText: parsed.extractedText,
+              extractedData: parsed.extractedData,
+              qualityFlags: [...parsed.qualityFlags, ...ai.output.qualityFlags],
+              requirements: ai.output.requirements,
+            };
+          } else {
+            ocrPending++;
+          }
+
+          const { error: processingError } = await supabase
+            .from('document_processing')
+            .update({
+              status: 'processed',
+              extracted_text: extraction.extractedText,
+              extracted_data: extraction.extractedData,
+              quality_flags: extraction.qualityFlags,
+              source_map: { file_name: file.original_name },
+              completed_at: new Date().toISOString(),
+            })
+            .eq('file_id', file.id);
+
+          if (processingError) throw new ToolError('TRANSIENT', processingError.message);
+
+          await supabase.from('inquiry_files')
+            .update({ status: 'processed', processed_at: new Date().toISOString() })
+            .eq('id', file.id);
+
+          processed++;
+          await timeline(inquiryId, 'document_processed', {
+            file_id: file.id,
+            file_name: file.original_name,
+            quality_flags: extraction.qualityFlags,
+            requirement_count: extraction.requirements.length,
+          }, 'document');
+        } catch (error) {
+          failed++;
+          const message = error instanceof Error ? error.message : 'Document processing failed';
+          await supabase.from('document_processing').update({
+            status: 'processing_failed',
+            error_code: error instanceof ToolError ? error.code : 'AI_PROCESSING',
+            error_message: message,
+            attempt_count: 1,
+          }).eq('file_id', file.id);
+          await supabase.from('inquiry_files').update({ status: 'processing_failed' }).eq('id', file.id);
+          await supabase.from('ai_alerts').insert({
+            inquiry_id: inquiryId,
+            agent_id: 'document',
+            alert_type: 'DOCUMENT_PROCESSING_FAILED',
+            message: `${file.original_name}: ${message}`,
+            priority: 'normal',
+          });
+        }
+      }
+
+      await markExecutionSuccess(running.id, {
+        processed,
+        failed,
+        ocr_pending: ocrPending,
+        next_stage: 'intake',
+      });
+
+      const intake = await enqueueWorkflow(inquiryId, 'intake');
+      await timeline(inquiryId, 'workflow_document_completed', {
+        processed,
+        failed,
+        ocr_pending: ocrPending,
+        intake_execution_id: intake.id,
+      }, 'document');
+
+      return { execution: running, outcome: 'intake_queued' as const };
+    }
+
     if (stage === 'intake') {
       const { data: requirements, error } = await supabase
         .from('requirements')
@@ -125,11 +243,28 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (sourceError || !source) throw new ToolError('NOT_FOUND', 'Inquiry source not found');
 
         const originalText = source.original_customer_text?.trim();
-        if (originalText) {
+        const { data: documentRows } = await supabase
+          .from('document_processing')
+          .select('file_id,extracted_text,source_map,quality_flags')
+          .eq('status', 'processed')
+          .in('file_id', (await supabase.from('inquiry_files').select('id').eq('inquiry_id', inquiryId)).data?.map((f) => f.id) ?? []);
+
+        const documentText = (documentRows ?? [])
+          .filter((row) => row.extracted_text?.trim())
+          .map((row) => JSON.stringify({
+            file_id: row.file_id,
+            source_map: row.source_map,
+            quality_flags: row.quality_flags,
+            text: row.extracted_text,
+          }))
+          .join('\n\n');
+
+        if (originalText || documentText) {
           const ai = await runAgent(
             { agentId: 'intake', executionId: running.id, inquiryId },
             {
-              original_customer_text: originalText,
+              original_customer_text: originalText ?? '',
+              document_text: documentText,
               existing_title: source.title,
               existing_description: source.description,
               instructions: [
@@ -137,14 +272,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 'Do not mark material requirements confirmed when ambiguous.',
                 'For unclear quantities, model, brand, or specifications, report ambiguity.',
                 'Do not invent evidence references or document content.',
-                'Return requirements sourced as customer_text only.',
+                'Requirements may be sourced from customer_text, pdf, excel, or image only when explicitly supported by the supplied source text. For document-derived requirements, include sourceRef and preserve the file_id/location provenance.',
               ],
             },
             intakeOutputSchema,
           );
           const result = ai.output;
-          if (result.requirements.some((item) => item.source !== 'customer_text' || item.sourceRef)) {
-            throw new ToolError('AI_PROCESSING', 'Intake returned unsupported source provenance');
+          if (result.requirements.some((item) =>
+            item.source === 'customer_text' ? Boolean(item.sourceRef) : !item.sourceRef
+          )) {
+            throw new ToolError('AI_PROCESSING', 'Intake returned invalid source provenance');
           }
 
           // An execution can be retried after partial persistence; never duplicate
