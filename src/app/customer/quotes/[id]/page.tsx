@@ -3,10 +3,11 @@ import { notFound } from 'next/navigation';
 import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import CustomerQuoteActions from './quote-actions';
 
-type Props = { params: Promise<{ id: string }> };
+type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ revision?: string }> };
 
 export default async function CustomerQuotePage({ params }: Props) {
   const { id } = await params;
+  const { revision } = await searchParams;
   const { supabase } = await requireCustomerInquiryAccess(id);
 
   const { data: quotes, error } = await supabase
@@ -17,15 +18,8 @@ export default async function CustomerQuotePage({ params }: Props) {
     .order('revision_number', { ascending: false });
 
   if (error) throw error;
-  const quote = quotes?.[0];
+  const quote = (revision && quotes?.find((item) => item.id === revision)) || quotes?.[0];
   if (!quote) notFound();
-
-  const { data: allItems, error: allItemsError } = await supabase
-    .from('customer_quote_items')
-    .select('id,customer_quote_id,quantity,unit_price,total,supplier_products(product_name,model_part_number)')
-    .in('customer_quote_id', (quotes ?? []).map((item) => item.id))
-    .order('created_at', { ascending: true });
-  if (allItemsError) throw allItemsError;
 
   const { data: items, error: itemError } = await supabase
     .from('customer_quote_items')
