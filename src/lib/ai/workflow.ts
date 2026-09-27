@@ -3,6 +3,8 @@ import 'server-only';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider } from './research/provider';
+import { runAgent } from './agent-runner';
+import { intakeOutputSchema } from './agent-schemas';
 import {
   enqueueWorkflow,
   markExecutionRunning,
@@ -112,7 +114,98 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       if (error) throw new ToolError('TRANSIENT', error.message);
 
-      const rows = (requirements ?? []) as RequirementRow[];
+      // Intake is append-only on first analysis: existing (especially Admin-edited)
+      // requirements remain authoritative. Never infer requirements from an empty source.
+      if (!(requirements ?? []).length) {
+        const { data: source, error: sourceError } = await supabase
+          .from('inquiries')
+          .select('id,title,description,original_customer_text,current_version')
+          .eq('id', inquiryId)
+          .single();
+        if (sourceError || !source) throw new ToolError('NOT_FOUND', 'Inquiry source not found');
+
+        const originalText = source.original_customer_text?.trim();
+        if (originalText) {
+          const ai = await runAgent(
+            { agentId: 'intake', executionId: running.id, inquiryId },
+            {
+              original_customer_text: originalText,
+              existing_title: source.title,
+              existing_description: source.description,
+              instructions: [
+                'Use only explicitly supported customer text facts.',
+                'Do not mark material requirements confirmed when ambiguous.',
+                'For unclear quantities, model, brand, or specifications, report ambiguity.',
+                'Do not invent evidence references or document content.',
+                'Return requirements sourced as customer_text only.',
+              ],
+            },
+            intakeOutputSchema,
+          );
+          const result = ai.output;
+          if (result.requirements.some((item) => item.source !== 'customer_text' || item.sourceRef)) {
+            throw new ToolError('AI_PROCESSING', 'Intake returned unsupported source provenance');
+          }
+
+          // An execution can be retried after partial persistence; never duplicate
+          // the first extraction or overwrite changes made after the model call.
+          const { data: latest, error: latestError } = await supabase
+            .from('requirements')
+            .select('id')
+            .eq('inquiry_id', inquiryId)
+            .limit(1);
+          if (latestError) throw new ToolError('TRANSIENT', latestError.message);
+          if (!latest?.length) {
+            const ambiguityTypes = new Set(result.ambiguities.map((a) => a.requirementType));
+            const inserts = result.requirements.map((item) => ({
+              inquiry_id: inquiryId,
+              type: item.type,
+              value: item.value,
+              source: 'customer_text',
+              status: ambiguityTypes.has(item.type) ? 'clarification_required' : 'open',
+              admin_edited: false,
+            }));
+            if (inserts.length) {
+              const { error: insertError } = await supabase.from('requirements').insert(inserts);
+              if (insertError) throw new ToolError('CONFLICT', insertError.message);
+            }
+            // Only update AI-generated title/description while the source version
+            // remains unchanged. Preserve existing human-authored values.
+            await supabase.from('inquiries')
+              .update({
+                normalized_information: {
+                  intake: {
+                    title: result.title,
+                    description: result.description,
+                    ambiguities: result.ambiguities,
+                    model: ai.model,
+                    provider: ai.provider,
+                    execution_id: running.id,
+                  },
+                },
+              })
+              .eq('id', inquiryId)
+              .eq('current_version', source.current_version);
+            await timeline(inquiryId, 'intake_ai_extracted', {
+              execution_id: running.id,
+              extracted_requirements: inserts.length,
+              ambiguity_count: result.ambiguities.length,
+              provider: ai.provider,
+              model: ai.model,
+            }, 'intake');
+          }
+        }
+      }
+
+      // Re-read after extraction so the existing clarification gate handles
+      // newly extracted requirements in the same workflow execution.
+      const { data: currentRequirements, error: currentError } = await supabase
+        .from('requirements')
+        .select('id,type,value,status')
+        .eq('inquiry_id', inquiryId)
+        .order('created_at', { ascending: true });
+      if (currentError) throw new ToolError('TRANSIENT', currentError.message);
+      const rows = (currentRequirements ?? []) as RequirementRow[];
       const unresolved = rows.filter(
         (r) => r.status === 'open' || r.status === 'clarification_required',
       );
