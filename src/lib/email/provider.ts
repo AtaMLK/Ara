@@ -16,7 +16,10 @@ async function resolveAttachments(attachments: EmailAttachment[] = []) {
   }> = [];
 
   for (const attachment of attachments) {
-    const { data, error } = await supabase.storage.from('supplier-email-attachments').download(attachment.storagePath);
+    const { data, error } = await supabase.storage
+      .from('supplier-email-attachments')
+      .download(attachment.storagePath);
+
     if (error || !data) {
       throw new ToolError('NOT_FOUND', `Email attachment could not be loaded: ${attachment.fileName}`);
     }
@@ -31,54 +34,6 @@ async function resolveAttachments(attachments: EmailAttachment[] = []) {
   return resolved;
 }
 
-class ResendEmailProvider implements EmailProvider {
-  async send(input: SendEmailInput): Promise<SendEmailResult> {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) throw new ToolError('TRANSIENT', 'RESEND_API_KEY is not configured');
-
-    const attachments = await resolveAttachments(input.attachments);
-
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        ...(input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : {}),
-      },
-      body: JSON.stringify({
-        from: input.from,
-        to: input.to,
-        subject: input.subject,
-        html: input.html,
-        ...(input.text ? { text: input.text } : {}),
-        ...(attachments.length
-          ? {
-              attachments: attachments.map((attachment) => ({
-                filename: attachment.filename,
-                content: attachment.content.toString('base64'),
-              })),
-            }
-          : {}),
-      }),
-      cache: 'no-store',
-    });
-
-    const payload = await response.json().catch(() => ({})) as { id?: string; message?: string; error?: string };
-
-    if (!response.ok || !payload.id) {
-      throw new ToolError(
-        response.status >= 500 ? 'TRANSIENT' : 'CONFLICT',
-        payload.message || payload.error || 'Email provider rejected the message',
-      );
-    }
-
-    return {
-      providerMessageId: payload.id,
-      sentAt: new Date().toISOString(),
-    };
-  }
-}
-
 class SmtpEmailProvider implements EmailProvider {
   async send(input: SendEmailInput): Promise<SendEmailResult> {
     const host = process.env.SMTP_HOST;
@@ -88,7 +43,10 @@ class SmtpEmailProvider implements EmailProvider {
     const password = process.env.SMTP_PASSWORD;
 
     if (!host || !user || !password) {
-      throw new ToolError('TRANSIENT', 'SMTP_HOST, SMTP_USER and SMTP_PASSWORD are required');
+      throw new ToolError(
+        'TRANSIENT',
+        'SMTP_HOST, SMTP_USER and SMTP_PASSWORD are required',
+      );
     }
 
     const transport = nodemailer.createTransport({
@@ -121,10 +79,5 @@ class SmtpEmailProvider implements EmailProvider {
 }
 
 export function getEmailProvider(): EmailProvider {
-  const provider = (process.env.EMAIL_PROVIDER ?? 'smtp').toLowerCase();
-
-  if (provider === 'resend') return new ResendEmailProvider();
-  if (provider === 'smtp') return new SmtpEmailProvider();
-
-  throw new ToolError('VALIDATION', `Unsupported email provider: ${provider}`);
+  return new SmtpEmailProvider();
 }
