@@ -551,7 +551,17 @@ export async function continueInquiryWorkflow(inquiryId: string) {
         .maybeSingle();
 
       if (discovery?.status === 'succeeded') {
-        throw new ToolError('APPROVAL_REQUIRED', 'Supplier candidates require Admin finalization and approval before verification');
+        const { data: finalized } = await supabase
+          .from('supplier_candidates')
+          .select('id,supplier_id')
+          .eq('inquiry_id', inquiryId)
+          .eq('status', 'finalized');
+
+        if ((finalized ?? []).some((candidate) => candidate.supplier_id)) {
+          return runStage(inquiryId, 'verification');
+        }
+
+        throw new ToolError('APPROVAL_REQUIRED', 'Supplier candidates require Admin finalization and supplier approval before verification');
       }
 
       return runStage(inquiryId, 'supplier_discovery');
