@@ -477,7 +477,7 @@ export async function sendClarificationAction(input: { inquiryId: string; clarif
     }
 
     const inquiryUrl = `${appUrl.replace(/\/$/, '')}/customer/inquiries/${inquiry.id}`;
-    const subject = `ARAT needs more information — ${inquiry.reference}`;
+    const subject = `ARAT needs more information — ${inquiry.reference} — ${clarification.id.slice(0, 8)}`;
     const safeQuestion = clarification.question
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
@@ -518,6 +518,7 @@ Request reference: ${inquiry.reference}`;
       subject,
       html,
       text,
+      idempotencyKey: `clarification-${clarification.id}`,
     });
 
     const adminSupabase = createSupabaseAdminClient();
