@@ -291,6 +291,41 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       return { execution: running, outcome };
     }
 
+    if (stage === 'customer_response') {
+      const { data: quotes, error } = await supabase
+        .from('customer_quotes')
+        .select('id,inquiry_id,status,reference,decision_reason,decision_text,revision_number')
+        .eq('inquiry_id', inquiryId)
+        .in('status', ['rejected','revision_requested']);
+
+      if (error) throw new ToolError('TRANSIENT', error.message);
+
+      if (!quotes?.length) {
+        await markExecutionSuccess(running.id, { processed_count: 0 });
+        return { execution: running, outcome: 'no_customer_response' };
+      }
+
+      await createAlert(
+        inquiryId,
+        'customer_response',
+        'CUSTOMER_RESPONSE_REVIEW_REQUIRED',
+        `${quotes.length} customer quote response(s) require Admin review before a revision is created.`,
+        'normal',
+      );
+
+      await timeline(inquiryId, 'customer_quote_response_detected', {
+        quote_ids: quotes.map((quote) => quote.id),
+        count: quotes.length,
+      }, 'customer_response_agent');
+
+      await markExecutionSuccess(running.id, {
+        processed_count: quotes.length,
+        action: 'admin_review_required',
+      });
+
+      return { execution: running, outcome: 'admin_review_required' };
+    }
+
     if (stage === 'customer_quote') {
       const { data: inquiry, error: inquiryError } = await supabase
         .from('inquiries')
