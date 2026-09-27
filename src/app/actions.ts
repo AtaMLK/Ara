@@ -6,6 +6,8 @@ import { requireAdmin, requireCustomerAccess, requireCustomerInquiryAccess } fro
 import { ToolError } from '@/lib/errors';
 import { continueInquiryWorkflow, startInquiryWorkflow } from '@/lib/ai/workflow';
 import { getEmailProvider } from '@/lib/email/provider';
+import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { applyCustomerClarificationAnswer } from '@/lib/ai/clarification-replies';
 
 const idSchema = z.string().uuid();
 
@@ -518,27 +520,12 @@ Request reference: ${inquiry.reference}`;
       text,
     });
 
-    const { data, error } = await supabase
-      .from('clarifications')
-      .update({ status: 'sent', sent_at: result.sentAt })
-      .eq('id', clarification.id)
-      .eq('inquiry_id', parsed.inquiryId)
-      .eq('status', 'pending_approval')
-      .select('id')
-      .single();
+    const adminSupabase = createSupabaseAdminClient();
 
-    if (error || !data) {
-      await supabase.from('ai_alerts').insert({
-        inquiry_id: parsed.inquiryId,
-        agent_id: 'orchestrator',
-        alert_type: 'CLARIFICATION_EMAIL_STATE_CONFLICT',
-        message: `Clarification email was accepted by the provider but the clarification state could not be updated. Provider message: ${result.providerMessageId}`,
-        priority: 'urgent',
-      });
-      throw new ToolError('CONFLICT', 'Email was sent, but the clarification state could not be updated. Check the inquiry before retrying.');
-    }
-
-    await supabase.from('communications').insert({
+    // Persist the provider message before changing the clarification state.
+    // If the state update fails after the provider accepted the message, a retry
+    // will still see this communication and cannot send the same email again.
+    const { error: communicationError } = await adminSupabase.from('communications').insert({
       inquiry_id: parsed.inquiryId,
       customer_id: customer.id,
       direction: 'outgoing',
@@ -554,8 +541,39 @@ Request reference: ${inquiry.reference}`;
       },
     });
 
+    if (communicationError) {
+      await adminSupabase.from('ai_alerts').insert({
+        inquiry_id: parsed.inquiryId,
+        agent_id: 'orchestrator',
+        alert_type: 'CLARIFICATION_EMAIL_LOG_CONFLICT',
+        message: `Clarification email was accepted by the provider but could not be recorded. Provider message: ${result.providerMessageId}`,
+        priority: 'urgent',
+      });
+      throw new ToolError('CONFLICT', 'Email was sent, but could not be recorded. Check the inquiry before retrying.');
+    }
+
+    const { data, error } = await adminSupabase
+      .from('clarifications')
+      .update({ status: 'sent', sent_at: result.sentAt })
+      .eq('id', clarification.id)
+      .eq('inquiry_id', parsed.inquiryId)
+      .eq('status', 'pending_approval')
+      .select('id')
+      .single();
+
+    if (error || !data) {
+      await adminSupabase.from('ai_alerts').insert({
+        inquiry_id: parsed.inquiryId,
+        agent_id: 'orchestrator',
+        alert_type: 'CLARIFICATION_EMAIL_STATE_CONFLICT',
+        message: `Clarification email was accepted by the provider and recorded, but the clarification state could not be updated. Provider message: ${result.providerMessageId}`,
+        priority: 'urgent',
+      });
+      throw new ToolError('CONFLICT', 'Email was sent and recorded, but the clarification state could not be updated. Check the inquiry.');
+    }
+
     if (customer.user_id) {
-      await supabase.from('notifications').insert({
+      await adminSupabase.from('notifications').insert({
         user_id: customer.user_id,
         category: 'customer',
         priority: 'normal',
@@ -592,87 +610,34 @@ export async function answerClarificationAction(input: { inquiryId: string; clar
       clarificationId: idSchema,
       answer: z.string().trim().min(1),
     }).parse(input);
-    const { supabase, user } = await requireCustomerInquiryAccess(parsed.inquiryId);
 
-    const { data: clarification, error: clarificationError } = await supabase
-      .from('clarifications')
-      .select('id,inquiry_id,requirement_id,status')
-      .eq('id', parsed.clarificationId)
-      .eq('inquiry_id', parsed.inquiryId)
-      .single();
-
-    if (clarificationError || !clarification) throw new ToolError('NOT_FOUND', 'Clarification not found');
-    if (!clarification.requirement_id) throw new ToolError('VALIDATION', 'Clarification is not linked to a requirement');
-    if (!['sent'].includes(clarification.status)) throw new ToolError('CONFLICT', 'Only sent clarifications can be answered');
-
-    const { data: requirement, error: requirementError } = await supabase
-      .from('requirements')
-      .select('id,value,status,current_version,admin_edited')
-      .eq('id', clarification.requirement_id)
-      .eq('inquiry_id', parsed.inquiryId)
-      .single();
-
-    if (requirementError || !requirement) throw new ToolError('NOT_FOUND', 'Requirement not found');
-    if (requirement.admin_edited) throw new ToolError('AUTHORIZATION', 'Admin-edited Requirement is authoritative');
-
-    const { data: updated, error: updateError } = await supabase
-      .from('requirements')
-      .update({
-        value: parsed.answer,
-        source: 'clarification',
-        source_ref: clarification.id,
-        status: 'confirmed',
-        current_version: requirement.current_version + 1,
-      })
-      .eq('id', requirement.id)
-      .eq('current_version', requirement.current_version)
-      .eq('admin_edited', false)
-      .select('id,status,current_version')
-      .single();
-
-    if (updateError || !updated) throw new ToolError('CONFLICT', 'Requirement changed before the customer answer was applied');
-
-    const { error: clarificationUpdateError } = await supabase
-      .from('clarifications')
-      .update({
-        answer: parsed.answer,
-        status: 'answered',
-        answered_at: new Date().toISOString(),
-      })
-      .eq('id', clarification.id)
-      .eq('status', 'sent');
-
-    if (clarificationUpdateError) throw new ToolError('CONFLICT', clarificationUpdateError.message);
-
-    await supabase.from('requirement_history').insert({
-      requirement_id: requirement.id,
-      old_value: requirement.value,
-      new_value: parsed.answer,
-      old_status: requirement.status,
-      new_status: 'confirmed',
-      actor_type: 'customer',
-      actor_user_id: user.id,
-      reason: 'Customer clarification answer applied',
+    const { customer, user } = await requireCustomerInquiryAccess(parsed.inquiryId);
+    const result = await applyCustomerClarificationAnswer({
+      inquiryId: parsed.inquiryId,
+      clarificationId: parsed.clarificationId,
+      answer: parsed.answer,
+      customerUserId: user.id,
     });
 
-    await supabase.from('timeline_events').insert({
-      inquiry_id: parsed.inquiryId,
-      event_type: 'clarification_answer_applied',
-      visibility: 'customer',
-      actor_type: 'customer',
-      actor_user_id: user.id,
-      metadata: {
-        clarification_id: clarification.id,
-        requirement_id: requirement.id,
-      },
-    });
+    if (result.duplicate) {
+      throw new ToolError('CONFLICT', 'This clarification has already been answered');
+    }
 
-    await continueInquiryWorkflow(parsed.inquiryId);
+    await createSupabaseAdminClient().from('notifications').insert({
+      user_id: customer.user_id ?? user.id,
+      category: 'customer',
+      priority: 'normal',
+      title: 'Clarification answer received',
+      message: 'Your clarification answer was received and processing has resumed.',
+      record_type: 'inquiry',
+      record_id: parsed.inquiryId,
+      action_url: `/customer/inquiries/${parsed.inquiryId}`,
+    });
 
     revalidatePath('/inquiries');
     revalidatePath(`/inquiries/${parsed.inquiryId}`);
     revalidatePath(`/customer/inquiries/${parsed.inquiryId}`);
-    return { ok: true, requirementId: requirement.id };
+    return { ok: true, requirementId: result.requirementId };
   } catch (error) {
     fail(error);
   }
