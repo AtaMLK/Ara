@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
@@ -107,5 +108,5 @@ export async function GET(request: Request) {
 }
 
 function cryptoHash(value: Buffer) {
-  return require('node:crypto').createHash('sha256').update(value).digest('hex');
+  return createHash('sha256').update(value).digest('hex');
 }
