@@ -452,6 +452,28 @@ export async function sendClarificationAction(input: { inquiryId: string; clarif
     }
 
     const customerName = customer.company_name || customer.name;
+    const safeCustomerName = customerName
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+
+    const { data: previousSend } = await supabase
+      .from('communications')
+      .select('id,provider_message_id')
+      .eq('inquiry_id', inquiry.id)
+      .eq('customer_id', customer.id)
+      .eq('direction', 'outgoing')
+      .eq('channel', 'email')
+      .contains('metadata', { type: 'clarification', clarification_id: clarification.id })
+      .limit(1)
+      .maybeSingle();
+
+    if (previousSend?.provider_message_id) {
+      throw new ToolError('CONFLICT', 'This clarification email has already been sent');
+    }
+
     const inquiryUrl = `${appUrl.replace(/\/$/, '')}/customer/inquiries/${inquiry.id}`;
     const subject = `ARAT needs more information — ${inquiry.reference}`;
     const safeQuestion = clarification.question
@@ -465,7 +487,7 @@ export async function sendClarificationAction(input: { inquiryId: string; clarif
 <html>
   <body style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
     <h2>More information is required</h2>
-    <p>Hello ${customerName},</p>
+    <p>Hello ${safeCustomerName},</p>
     <p>We need one clarification before we can continue processing your procurement request.</p>
     <div style="padding:16px;border:1px solid #e5e7eb;border-radius:8px;margin:20px 0">
       <strong>${safeQuestion}</strong>
@@ -475,7 +497,7 @@ export async function sendClarificationAction(input: { inquiryId: string; clarif
   </body>
 </html>`;
 
-    const text = `Hello ${customerName},
+    const text = `Hello ${safeCustomerName},
 
 We need one clarification before we can continue processing your procurement request.
 
