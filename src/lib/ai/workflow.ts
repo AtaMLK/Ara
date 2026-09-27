@@ -827,6 +827,25 @@ export async function continueInquiryWorkflow(inquiryId: string) {
         .eq('task_key', `inquiry:${inquiryId}:stage:supplier_discovery`)
         .maybeSingle();
 
+      const { data: rfqExecution } = await supabase
+        .from('ai_executions')
+        .select('status')
+        .eq('inquiry_id', inquiryId)
+        .eq('task_key', `inquiry:${inquiryId}:stage:rfq`)
+        .maybeSingle();
+
+      if (rfqExecution?.status === 'succeeded') {
+        const { data: matchedEmails } = await supabase
+          .from('communications')
+          .select('id')
+          .eq('inquiry_id', inquiryId)
+          .eq('direction', 'incoming')
+          .not('rfq_id', 'is', null)
+          .limit(1);
+
+        if ((matchedEmails ?? []).length) return runStage(inquiryId, 'quote_extraction');
+      }
+
       if (discovery?.status === 'succeeded') {
         const { data: finalized } = await supabase
           .from('supplier_candidates')
