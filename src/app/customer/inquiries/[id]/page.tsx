@@ -7,11 +7,11 @@ type Props = { params: Promise<{ id: string }> };
 
 export default async function CustomerInquiryPage({ params }: Props) {
   const { id } = await params;
-  const { supabase, inquiry } = await requireCustomerInquiryAccess(id);
+  const { supabase } = await requireCustomerInquiryAccess(id);
 
   const [inquiryResult, requirementsResult, clarificationsResult, filesResult] = await Promise.all([
     supabase.from('inquiries').select('id,reference,title,description,original_customer_text,status,updated_at').eq('id', id).single(),
-    supabase.from('requirements').select('id,type,value,status,source,source_ref,admin_edited').eq('inquiry_id', id).order('created_at'),
+    supabase.from('requirements').select('id,type,value,status,source,source_ref').eq('inquiry_id', id).order('created_at'),
     supabase.from('clarifications').select('id,requirement_id,question,answer,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at'),
   ]);
@@ -57,7 +57,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
         </div>
       </section>
 
-      <section className="section">
+      <section className="section detail-grid">
         <div className="detail-card">
           <div className="section-head"><h2>Request</h2></div>
           <p>{inquiryResult.data.description || 'No additional description.'}</p>
