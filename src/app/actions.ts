@@ -1109,6 +1109,108 @@ export async function requestCustomerQuoteRevisionAction(input: {
   }
 }
 
+
+export async function reviewCustomerQuoteRevisionAction(input: {
+  requestId: string;
+  decision: 'approve' | 'reject';
+}) {
+  try {
+    const parsed = z.object({ requestId: idSchema, decision: z.enum(['approve','reject']) }).parse(input);
+    const { supabase, user } = await requireAdmin();
+
+    const { data: request, error: requestError } = await supabase
+      .from('quote_revision_requests')
+      .select('id,quote_id,reason,free_text,status,quote:customer_quotes(id,inquiry_id,customer_id,reference,revision_number,status,currency,valid_until,subject,body)')
+      .eq('id', parsed.requestId).single();
+    if (requestError || !request) throw new ToolError('NOT_FOUND', 'Revision request not found');
+    if (request.status !== 'pending_approval') throw new ToolError('CONFLICT', 'Revision request has already been reviewed');
+
+    const quote = Array.isArray(request.quote) ? request.quote[0] : request.quote;
+    if (!quote) throw new ToolError('NOT_FOUND', 'Original quotation not found');
+
+    if (parsed.decision === 'reject') {
+      const { error } = await supabase.from('quote_revision_requests')
+        .update({ status:'rejected', reviewed_by:user.id, reviewed_at:new Date().toISOString() })
+        .eq('id', request.id).eq('status','pending_approval');
+      if (error) throw new ToolError('CONFLICT','Revision request could not be rejected');
+
+      await supabase.from('customer_quotes').update({ status:'sent', decision_text:null, decided_at:null })
+        .eq('id',quote.id).eq('status','revision_requested');
+
+      await supabase.from('timeline_events').insert({
+        inquiry_id:quote.inquiry_id,event_type:'customer_quote_revision_rejected',visibility:'customer',
+        actor_type:'admin',actor_user_id:user.id,metadata:{quote_id:quote.id,request_id:request.id,reference:quote.reference}
+      });
+      const customer = await supabase.from('customers').select('user_id').eq('id',quote.customer_id).single();
+      if (customer.data?.user_id) await supabase.from('notifications').insert({
+        user_id:customer.data.user_id,category:'customer',priority:'normal',
+        title:'Revision request reviewed',message:'Your revision request for quotation '+quote.reference+' was not approved.',
+        record_type:'customer_quote',record_id:quote.id,action_url:'/customer/inquiries/'+quote.inquiry_id
+      });
+      revalidatePath('/quotes/revisions'); revalidatePath('/quotes');
+      revalidatePath('/customer/inquiries/'+quote.inquiry_id); revalidatePath('/customer/quotes/'+quote.inquiry_id);
+      return {ok:true,decision:'rejected'};
+    }
+
+    if (quote.status !== 'revision_requested') throw new ToolError('CONFLICT','Quotation is not awaiting revision');
+
+    const { data: oldItems, error: itemError } = await supabase.from('customer_quote_items')
+      .select('product_id,supplier_quote_id,quantity,unit_price,supplier_cost,supplier_currency,exchange_rate_id,price_status,pricing_rule_id,price_calculation')
+      .eq('customer_quote_id',quote.id).order('created_at',{ascending:true});
+    if (itemError) throw itemError;
+
+    const nextRevision = quote.revision_number + 1;
+    const baseReference = quote.reference.replace(/-R\d+$/i,'');
+    const reference = baseReference+'-R'+nextRevision;
+
+    const { data:newQuote,error:quoteInsertError } = await supabase.from('customer_quotes').insert({
+      inquiry_id:quote.inquiry_id,customer_id:quote.customer_id,parent_quote_id:quote.id,
+      reference,revision_number:nextRevision,status:'draft',currency:quote.currency,
+      valid_until:quote.valid_until,subject:quote.subject,body:quote.body
+    }).select('id,reference').single();
+    if (quoteInsertError || !newQuote) throw new ToolError('CONFLICT','Could not create quotation revision');
+
+    if (oldItems?.length) {
+      const { error:insertItemsError } = await supabase.from('customer_quote_items').insert(
+        oldItems.map(item => ({...item,customer_quote_id:newQuote.id}))
+      );
+      if (insertItemsError) throw new ToolError('CONFLICT','Quotation revision was created but items could not be copied');
+    }
+
+    const { error:requestUpdateError } = await supabase.from('quote_revision_requests')
+      .update({status:'approved',reviewed_by:user.id,reviewed_at:new Date().toISOString()})
+      .eq('id',request.id).eq('status','pending_approval');
+    if (requestUpdateError) throw new ToolError('CONFLICT','Revision request could not be approved');
+
+    await supabase.from('customer_quotes').update({
+      status:'superseded',
+      decision_reason: request.reason==='price'?'price_too_high':request.reason==='delivery_time'?'delivery_too_long':
+        request.reason==='quantity'?'quantity_moq_issue':request.reason==='product_specification'?'product_specification_not_suitable':
+        request.reason==='payment_terms'?'terms_not_suitable':'other',
+      decision_text:request.free_text || 'Revision approved',decided_at:new Date().toISOString()
+    }).eq('id',quote.id).eq('status','revision_requested');
+
+    await supabase.from('timeline_events').insert({
+      inquiry_id:quote.inquiry_id,event_type:'customer_quote_revision_created',visibility:'customer',
+      actor_type:'admin',actor_user_id:user.id,
+      metadata:{old_quote_id:quote.id,new_quote_id:newQuote.id,reference:newQuote.reference,request_id:request.id}
+    });
+
+    const customer = await supabase.from('customers').select('user_id').eq('id',quote.customer_id).single();
+    if (customer.data?.user_id) await supabase.from('notifications').insert({
+      user_id:customer.data.user_id,category:'customer',priority:'normal',
+      title:'Quotation revision in progress',
+      message:'A new revision of quotation '+quote.reference+' is being prepared.',
+      record_type:'customer_quote',record_id:newQuote.id,action_url:'/customer/inquiries/'+quote.inquiry_id
+    });
+
+    revalidatePath('/quotes/revisions'); revalidatePath('/quotes');
+    revalidatePath('/quotes/'+quote.id); revalidatePath('/quotes/'+newQuote.id);
+    revalidatePath('/customer/inquiries/'+quote.inquiry_id); revalidatePath('/customer/quotes/'+quote.inquiry_id);
+    return {ok:true,decision:'approved',newQuoteId:newQuote.id,reference:newQuote.reference};
+  } catch (error) { fail(error); }
+}
+
 export async function confirmCustomerQuoteItemPriceAction(itemId: string, unitPrice: number) {
   try {
     const parsed = idSchema.parse(itemId);
