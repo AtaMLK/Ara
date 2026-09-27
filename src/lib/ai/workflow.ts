@@ -1914,3 +1914,78 @@ export async function setClarificationPendingApproval(inquiryId: string, clarifi
   await timeline(inquiryId, 'clarification_pending_approval', { clarification_id: clarificationId });
   return data;
 }
+
+export async function processQueuedWorkflow(limit = 5) {
+  const supabase = createSupabaseAdminClient();
+  const { data: queued, error } = await supabase
+    .from('ai_executions')
+    .select('id,inquiry_id,task_key,status,created_at')
+    .eq('status', 'queued')
+    .order('created_at', { ascending: true })
+    .limit(Math.max(1, Math.min(limit, 20)));
+
+  if (error) throw new ToolError('TRANSIENT', error.message);
+
+  const results: Array<{
+    executionId: string;
+    inquiryId: string;
+    stage: WorkflowStage | null;
+    outcome?: string;
+    error?: string;
+  }> = [];
+
+  for (const execution of queued ?? []) {
+    const match = execution.task_key.match(/^inquiry:[^:]+:stage:(.+)$/);
+    const stage = match?.[1] as WorkflowStage | undefined;
+
+    if (!stage || !stageAgentExists(stage)) {
+      results.push({
+        executionId: execution.id,
+        inquiryId: execution.inquiry_id,
+        stage: null,
+        error: 'Invalid workflow stage in task key',
+      });
+      continue;
+    }
+
+    try {
+      const result = await runStage(execution.inquiry_id, stage);
+      results.push({
+        executionId: execution.id,
+        inquiryId: execution.inquiry_id,
+        stage,
+        outcome: result.outcome,
+      });
+    } catch (error) {
+      results.push({
+        executionId: execution.id,
+        inquiryId: execution.inquiry_id,
+        stage,
+        error: error instanceof Error ? error.message : 'Workflow stage failed',
+      });
+    }
+  }
+
+  return {
+    processed: results.length,
+    results,
+  };
+}
+
+function stageAgentExists(stage: WorkflowStage) {
+  return [
+    'document',
+    'intake',
+    'clarification',
+    'research',
+    'supplier_discovery',
+    'verification',
+    'rfq',
+    'quote_extraction',
+    'comparison',
+    'customer_quote',
+    'customer_response',
+    'reporting',
+    'completed',
+  ].includes(stage);
+}
