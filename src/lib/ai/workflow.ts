@@ -279,7 +279,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           );
           const result = ai.output;
           if (result.requirements.some((item) =>
-            item.source === 'customer_text' ? Boolean(item.sourceRef) : !item.sourceRef
+            item.source === 'customer_text' ? Boolean(!item.sourceRef) : Boolean(item.sourceRef)
           )) {
             throw new ToolError('AI_PROCESSING', 'Intake returned invalid source provenance');
           }
@@ -1378,7 +1378,7 @@ export async function startInquiryWorkflow(inquiryId: string) {
   }
 
   await timeline(inquiryId, 'workflow_started', { previous_status: inquiry.status });
-  return runStage(inquiryId, 'intake');
+  return runStage(inquiryId, 'document');
 }
 
 export async function continueInquiryWorkflow(inquiryId: string) {
