@@ -3,6 +3,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { findCustomerClarificationForEmail, applyCustomerClarificationAnswer, cleanEmailReply, extractEmailAddress as extractCustomerEmail } from '@/lib/ai/clarification-replies';
 import { findSupplierRFQForEmail } from '@/lib/ai/supplier-email-matching';
+import { continueInquiryWorkflow } from '@/lib/ai/workflow';
 import { getResendReceivedEmail, parseResendReceivedEvent, verifyResendWebhook } from '@/lib/email/resend-inbound';
 
 export const runtime = 'nodejs';
@@ -69,6 +70,9 @@ export async function POST(request: NextRequest) {
     });
     if (responseError) throw new ToolError('CONFLICT', responseError.message);
     await supabase.from('timeline_events').insert({ inquiry_id: supplierMatch.inquiryId, event_type: 'supplier_email_received', visibility: 'admin', actor_type: 'system', metadata: { communication_id: communication.id, supplier_id: supplierMatch.supplierId, rfq_id: supplierMatch.rfq.id } });
+    try { await continueInquiryWorkflow(supplierMatch.inquiryId); } catch (workflowError) {
+      await supabase.from('ai_alerts').insert({ inquiry_id: supplierMatch.inquiryId, agent_id: 'orchestrator', alert_type: 'SUPPLIER_EMAIL_WORKFLOW_CONTINUATION_FAILED', message: workflowError instanceof Error ? workflowError.message : 'Workflow continuation failed after supplier email', priority: 'normal' });
+    }
     return NextResponse.json({ ok: true, matched: true, type: 'supplier_rfq_reply', inquiryId: supplierMatch.inquiryId, rfqId: supplierMatch.rfq.id, communicationId: communication.id });
   } catch (error) {
     if (error instanceof ToolError) { const status = error.code === 'AUTHORIZATION' ? 401 : error.code === 'VALIDATION' ? 400 : 500; return NextResponse.json({ error: error.message }, { status }); }
