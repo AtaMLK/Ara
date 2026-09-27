@@ -1127,13 +1127,20 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         status: 'completed',
       });
 
+      let comparisonExecutionId: string | null = null;
+      if (processed > 0) {
+        const comparison = await enqueueWorkflow(inquiryId, 'comparison');
+        comparisonExecutionId = comparison.id;
+      }
+
       await timeline(inquiryId, 'quote_extraction_completed', {
         processed_count: processed,
         skipped_count: skipped,
         alert_count: alerts,
+        comparison_execution_id: comparisonExecutionId,
       }, 'quote_extraction');
 
-      return { execution: running, outcome: 'completed' };
+      return { execution: running, outcome: processed > 0 ? 'comparison_queued' : 'completed' };
     }
 
     if (stage === 'comparison') {
