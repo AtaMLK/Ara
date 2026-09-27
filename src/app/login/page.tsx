@@ -26,7 +26,9 @@ export default function LoginPage() {
       return;
     }
 
-    window.location.href = '/';
+    const roleCheck = await fetch('/api/auth/role', { cache: 'no-store' });
+    const destination = roleCheck.ok ? await roleCheck.json() : { destination: '/' };
+    window.location.href = destination.destination;
   }
 
   return (
