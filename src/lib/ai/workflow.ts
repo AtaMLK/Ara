@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider } from './research/provider';
 import { runAgent } from './agent-runner';
-import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema } from './agent-schemas';
+import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
   enqueueWorkflow,
@@ -816,93 +816,103 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
     if (stage === 'customer_quote') {
       const { data: inquiry, error: inquiryError } = await supabase
-        .from('inquiries')
-        .select('id,customer_id,reference,title,description')
-        .eq('id', inquiryId)
-        .single();
-
+        .from('inquiries').select('id,customer_id,reference,title,description').eq('id', inquiryId).single();
       if (inquiryError || !inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
 
-      const { data: existing } = await supabase
-        .from('customer_quotes')
-        .select('id,status,revision_number')
-        .eq('inquiry_id', inquiryId)
-        .in('status', ['draft','pending_approval','sent'])
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const { data: customer } = await supabase.from('customers').select('id,default_currency,name,company_name').eq('id', inquiry.customer_id).single();
+      if (!customer) throw new ToolError('NOT_FOUND', 'Customer not found');
+      const customerCurrency = customer.default_currency ?? 'EUR';
 
+      const { data: existing } = await supabase.from('customer_quotes').select('id,status,revision_number').eq('inquiry_id', inquiryId).in('status', ['draft','pending_approval','sent']).order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (existing) {
-        await markExecutionSuccess(running.id, {
-          customer_quote_id: existing.id,
-          status: existing.status,
-          reused_existing_quote: true,
-        });
+        await markExecutionSuccess(running.id, { customer_quote_id: existing.id, status: existing.status, reused_existing_quote: true });
         return { execution: running, outcome: 'existing_quote' };
       }
 
-      const { data: comparisons } = await supabase
-        .from('ai_executions')
-        .select('output_ref,status')
-        .eq('inquiry_id', inquiryId)
-        .eq('task_key', `inquiry:${inquiryId}:stage:comparison`)
-        .eq('status', 'succeeded')
-        .maybeSingle();
+      const { data: requirements, error: requirementsError } = await supabase.from('requirements').select('id,type,value,status,source,admin_edited').eq('inquiry_id', inquiryId).eq('status', 'confirmed').order('created_at', { ascending: true });
+      if (requirementsError) throw new ToolError('TRANSIENT', requirementsError.message);
+      const { data: findings } = await supabase.from('supplier_comparison_findings').select('id,supplier_response_id,supplier_quote_id,requirement_id,status,evidence').eq('inquiry_id', inquiryId).order('created_at', { ascending: true });
+      const quoteIds = [...new Set((findings ?? []).map((item) => item.supplier_quote_id).filter((id): id is string => Boolean(id)))];
+      if (!quoteIds.length) {
+        await markExecutionSuccess(running.id, { blocked: true, reason: 'no_comparable_supplier_quotes' });
+        await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_NO_COMPARABLE_QUOTES', 'No comparable supplier quote is available.', 'normal');
+        return { execution: running, outcome: 'blocked' };
+      }
 
-      const { data: customer } = await supabase
-        .from('customers')
-        .select('id,default_currency')
-        .eq('id', inquiry.customer_id)
-        .single();
+      const { data: supplierQuotes, error: quotesError } = await supabase.from('supplier_quotes').select('id,supplier_response_id,product_id,match_status,currency,quantity,moq,net_price,valid_until,availability,lead_time_text,payment_terms,incoterm,delivery_method,additional_conditions').in('id', quoteIds);
+      if (quotesError) throw new ToolError('TRANSIENT', quotesError.message);
+      const { data: pricingRule } = await supabase.from('customer_pricing_rules').select('id,name,markup_percent,rounding_increment,status').eq('status', 'approved').maybeSingle();
+      if (!pricingRule) {
+        await markExecutionSuccess(running.id, { blocked: true, reason: 'approved_pricing_rule_required' });
+        await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_PRICING_RULE_REQUIRED', 'Customer quote is waiting for an Admin-approved pricing rule.', 'normal');
+        return { execution: running, outcome: 'blocked' };
+      }
 
-      if (!customer) throw new ToolError('NOT_FOUND', 'Customer not found');
+      const ai = await runAgent(
+        { agentId: 'customer_quote', executionId: running.id, inquiryId, customerId: inquiry.customer_id },
+        { customer: { id: customer.id, currency: customerCurrency, name: customer.name, company_name: customer.company_name }, requirements: requirements ?? [], comparison_findings: findings ?? [], supplier_quotes: supplierQuotes ?? [], instructions: [
+          'Return every supplier quote that can be factually associated with at least one confirmed requirement and is not an explicit mismatch.',
+          'Do not rank, score, or choose a supplier. If multiple supplier quotes can satisfy a requirement, include all of them as separate line proposals.',
+          'Use supplier quote quantity only when explicitly present; otherwise use an explicitly confirmed requirement quantity when available.',
+          'Never produce unitPrice, customerPrice, margin, markup, exchange rate, or currency conversion.',
+          'Do not invent product identity or technical data.',
+          'If quantity or product identity is unresolved, omit that quote and explain the warning.',
+        ] },
+        customerQuoteOutputSchema,
+      );
 
-      const currency = customer.default_currency ?? 'EUR';
-      const reference = `DRAFT-${inquiry.reference ?? inquiryId}-${crypto.randomUUID().slice(0, 8)}`;
+      if (!ai.output.lines.length) {
+        await markExecutionSuccess(running.id, { blocked: true, reason: 'no_quote_lines_proposed', warnings: ai.output.warnings });
+        await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_NO_LINES', 'No customer quote lines could be prepared: ' + ai.output.warnings.join(' '), 'normal');
+        return { execution: running, outcome: 'blocked' };
+      }
 
-      const { data: quote, error: quoteError } = await supabase
-        .from('customer_quotes')
-        .insert({
-          inquiry_id: inquiryId,
-          customer_id: inquiry.customer_id,
-          reference,
-          revision_number: 0,
-          status: 'draft',
-          currency,
-          subject: `Quotation — ${inquiry.reference ?? inquiryId}`,
-          body: [
-            `Dear Customer,`,
-            '',
-            `Please find our quotation regarding inquiry ${inquiry.reference ?? inquiryId}.`,
-            '',
-            'Final customer pricing and commercial terms require Admin review and approval.',
-            '',
-            'Regards,',
-            'Purchase Department',
-          ].join('\n'),
-        })
-        .select('*')
-        .single();
-
+      const reference = 'DRAFT-' + (inquiry.reference ?? inquiryId) + '-' + crypto.randomUUID().slice(0, 8);
+      const validUntilValues = ai.output.lines.map((line) => supplierQuotes?.find((quote) => quote.id === line.supplierQuoteId)?.valid_until).filter((value): value is string => Boolean(value)).sort();
+      const { data: quote, error: quoteError } = await supabase.from('customer_quotes').insert({ inquiry_id: inquiryId, customer_id: inquiry.customer_id, reference, revision_number: 0, status: 'draft', currency: customerCurrency, valid_until: validUntilValues[0] ?? null, subject: 'Quotation — ' + (inquiry.reference ?? inquiryId), body: 'Dear ' + (customer.name || 'Customer') + ',\n\nPlease find our quotation regarding inquiry ' + (inquiry.reference ?? inquiryId) + '.\n\nThis quotation is a draft and requires Admin price confirmation and approval before it can be sent.\n\nRegards,\nPurchase Department' }).select('id').single();
       if (quoteError || !quote) throw new ToolError('CONFLICT', quoteError?.message ?? 'Customer quote creation failed');
 
-      await markExecutionSuccess(running.id, {
-        customer_quote_id: quote.id,
-        comparison_execution: comparisons?.output_ref ?? null,
-        customer_price_policy: 'ADMIN_ONLY',
-      });
+      let createdItems = 0;
+      let blockedItems = 0;
+      const today = new Date().toISOString().slice(0, 10);
+      for (const line of ai.output.lines) {
+        const supplierQuote = supplierQuotes?.find((item) => item.id === line.supplierQuoteId);
+        if (!supplierQuote || supplierQuote.match_status === 'mismatch' || supplierQuote.net_price == null || !supplierQuote.currency) {
+          blockedItems++;
+          await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_LINE_BLOCKED', 'Supplier quote ' + line.supplierQuoteId + ' lacks a usable explicit price/currency or is mismatched.', 'normal');
+          continue;
+        }
+        let exchangeRateId: string | null = null;
+        let exchangeRate = 1;
+        if (supplierQuote.currency !== customerCurrency) {
+          const { data: rate } = await supabase.from('exchange_rates').select('id,rate').eq('from_currency', supplierQuote.currency).eq('to_currency', customerCurrency).eq('status', 'approved').lte('valid_from', today).or('valid_until.is.null,valid_until.gte.' + today).order('valid_from', { ascending: false }).limit(1).maybeSingle();
+          if (!rate) {
+            blockedItems++;
+            await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_EXCHANGE_RATE_REQUIRED', 'Approved exchange rate required: ' + supplierQuote.currency + ' → ' + customerCurrency + ' for supplier quote ' + supplierQuote.id + '.', 'normal');
+            continue;
+          }
+          exchangeRateId = rate.id;
+          exchangeRate = Number(rate.rate);
+        }
+        const rawPrice = Number(supplierQuote.net_price) * exchangeRate * (1 + Number(pricingRule.markup_percent) / 100);
+        const increment = pricingRule.rounding_increment ? Number(pricingRule.rounding_increment) : 0;
+        const suggestedPrice = increment > 0 ? Math.ceil(rawPrice / increment) * increment : rawPrice;
+        const { error: itemError } = await supabase.from('customer_quote_items').insert({ customer_quote_id: quote.id, supplier_quote_id: supplierQuote.id, product_id: supplierQuote.product_id, quantity: line.quantity, unit_price: suggestedPrice, supplier_cost: supplierQuote.net_price, supplier_currency: supplierQuote.currency, exchange_rate_id: exchangeRateId, price_status: 'suggested', pricing_rule_id: pricingRule.id, price_calculation: { source: 'approved_pricing_rule', pricing_rule_id: pricingRule.id, markup_percent: pricingRule.markup_percent, rounding_increment: pricingRule.rounding_increment, exchange_rate_id: exchangeRateId, exchange_rate: exchangeRate, source_supplier_quote_id: supplierQuote.id, ai_provider: ai.provider, ai_model: ai.model } });
+        if (itemError) throw new ToolError('CONFLICT', itemError.message);
+        createdItems++;
+      }
 
-      await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_REVIEW_REQUIRED', 'Customer quote draft created. Admin must set final customer prices and approve before sending.', 'normal');
-
-      await timeline(inquiryId, 'customer_quote_draft_created', {
-        customer_quote_id: quote.id,
-        currency,
-        customer_price_policy: 'ADMIN_ONLY',
-      }, 'customer_quote_agent');
-
+      if (createdItems === 0) {
+        await supabase.from('customer_quotes').delete().eq('id', quote.id).eq('status', 'draft');
+        await markExecutionSuccess(running.id, { blocked: true, reason: 'all_quote_lines_blocked' });
+        await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_BLOCKED', 'No customer quote line could be safely priced. Admin review is required.', 'normal');
+        return { execution: running, outcome: 'blocked' };
+      }
+      await markExecutionSuccess(running.id, { customer_quote_id: quote.id, line_count: createdItems, blocked_line_count: blockedItems, pricing_rule_id: pricingRule.id, customer_currency: customerCurrency, customer_price_policy: 'SUGGESTED_BY_APPROVED_RULE_ADMIN_CONFIRMATION_REQUIRED', ai_provider: ai.provider, ai_model: ai.model });
+      await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_REVIEW_REQUIRED', 'Customer quote draft created with ' + createdItems + ' suggested line(s). Admin must confirm each customer price and approve before sending.', 'normal');
+      await timeline(inquiryId, 'customer_quote_draft_created', { customer_quote_id: quote.id, line_count: createdItems, blocked_line_count: blockedItems, currency: customerCurrency, pricing_rule_id: pricingRule.id }, 'customer_quote');
       return { execution: running, outcome: 'draft_created' };
     }
-
     if (stage === 'quote_extraction') {
       const { data: responses, error: responseError } = await supabase
         .from('supplier_responses')
