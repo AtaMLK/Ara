@@ -10,7 +10,7 @@ export async function createSupplierResponse(ctx:AIContext,input:unknown){
   const {supabase}=await requireAdmin();
   const {data,error}=await supabase.from('supplier_responses').insert({
     communication_id:value.communicationId,supplier_id:value.supplierId,inquiry_id:value.inquiryId,
-    status:'processed',raw_extraction:value.rawExtraction,attachments:value.attachments
+    status:'received',raw_extraction:value.rawExtraction,attachments:value.attachments
   }).select('*').single();
   if(error) throw new ToolError('CONFLICT',error.message);
   return data;
@@ -22,6 +22,8 @@ export async function createSupplierQuote(ctx:AIContext,input:unknown){
   const value=quoteSchema.parse(input);
   const {supabase}=await requireAdmin();
   if(value.netPrice!==undefined && !value.currency) throw new ToolError('VALIDATION','Price requires currency');
+  if(value.netPrice!==undefined && value.matchStatus==='mismatch') throw new ToolError('VALIDATION','A mismatched quote cannot carry a final price');
+  if(value.currency && value.currency.length!==3) throw new ToolError('VALIDATION','Currency must be a 3-letter code');
   const {data,error}=await supabase.from('supplier_quotes').insert({
     supplier_response_id:value.supplierResponseId,product_id:value.productId,match_status:value.matchStatus,
     currency:value.currency,quantity:value.quantity,moq:value.moq,net_price:value.netPrice,
