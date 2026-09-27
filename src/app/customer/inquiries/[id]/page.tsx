@@ -10,16 +10,18 @@ export default async function CustomerInquiryPage({ params }: Props) {
   const { id } = await params;
   const { supabase } = await requireCustomerInquiryAccess(id);
 
-  const [inquiryResult, requirementsResult, clarificationsResult, filesResult] = await Promise.all([
+  const [inquiryResult, requirementsResult, clarificationsResult, filesResult, timelineResult] = await Promise.all([
     supabase.from('inquiries').select('id,reference,title,description,original_customer_text,status,updated_at').eq('id', id).single(),
     supabase.from('requirements').select('id,type,value,status,source,source_ref').eq('inquiry_id', id).order('created_at'),
     supabase.from('clarifications').select('id,requirement_id,question,answer,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at'),
+    supabase.from('timeline_events').select('id,event_type,metadata,created_at').eq('inquiry_id', id).eq('visibility', 'customer').order('created_at', { ascending: true }),
   ]);
 
   if (inquiryResult.error || !inquiryResult.data) notFound();
 
   const clarifications = (clarificationsResult.data ?? []).filter((item) => ['sent'].includes(item.status));
+  const timelineEvents = timelineResult.data ?? [];
 
   return (
     <>
@@ -76,6 +78,48 @@ export default async function CustomerInquiryPage({ params }: Props) {
               </span>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-head"><h2>Activity</h2></div>
+        <div className="detail-card">
+          {(timelineEvents.length === 0) ? (
+            <div className="empty">No activity yet.</div>
+          ) : (
+            <div className="timeline">
+              {timelineEvents.map((event) => {
+                const status = typeof event.metadata?.status === 'string' ? event.metadata.status : '';
+                const label = event.event_type === 'customer_inquiry_created'
+                  ? 'Request submitted'
+                  : event.event_type === 'customer_file_uploaded'
+                    ? 'Attachment uploaded'
+                    : event.event_type === 'customer_status_changed'
+                      ? ({
+                          processing: 'Request is being processed',
+                          open: 'Request is ready for review',
+                          clarification_required: 'More information is required',
+                          researching: 'Supplier research is in progress',
+                          rfq: 'Supplier quotation requests are in progress',
+                          quoting: 'Your quotation is being prepared',
+                          converted: 'Request completed',
+                          no_suitable_supplier: 'No suitable supplier was found',
+                          closed: 'Request closed',
+                        } as Record<string, string>)[status] ?? 'Request status updated'
+                      : 'Request updated';
+
+                return (
+                  <div className="timeline-item" key={event.id}>
+                    <span className="timeline-dot" />
+                    <div>
+                      <strong>{label}</strong>
+                      <div className="muted">{new Date(event.created_at).toLocaleString()}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
 
