@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/ai/guards';
 import { ToolError } from '@/lib/errors';
+import { continueInquiryWorkflow, startInquiryWorkflow } from '@/lib/ai/workflow';
 
 const idSchema = z.string().uuid();
 
@@ -11,6 +12,32 @@ function fail(error: unknown): never {
   if (error instanceof ToolError) throw new Error(error.message);
   if (error instanceof z.ZodError) throw new Error('Invalid input');
   throw error instanceof Error ? error : new Error('Action failed');
+}
+
+export async function startInquiryWorkflowAction(inquiryId: string) {
+  try {
+    const parsed = idSchema.parse(inquiryId);
+    await requireAdmin();
+    const result = await startInquiryWorkflow(parsed);
+    revalidatePath('/inquiries');
+    revalidatePath(`/inquiries/${parsed}`);
+    return { ok: true, outcome: result.outcome };
+  } catch (error) {
+    fail(error);
+  }
+}
+
+export async function continueInquiryWorkflowAction(inquiryId: string) {
+  try {
+    const parsed = idSchema.parse(inquiryId);
+    await requireAdmin();
+    const result = await continueInquiryWorkflow(parsed);
+    revalidatePath('/inquiries');
+    revalidatePath(`/inquiries/${parsed}`);
+    return { ok: true, outcome: result.outcome };
+  } catch (error) {
+    fail(error);
+  }
 }
 
 export async function updateInquiryAction(input: {
