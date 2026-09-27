@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireAdminPage } from '@/lib/data/admin';
+import { InquiryEditForm } from './edit-form';
+import { RequirementEdit } from './requirement-edit';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -34,7 +36,7 @@ export default async function InquiryDetailPage({ params }: Props) {
           <h1 className="title">{inquiry.reference}</h1>
           <div className="muted">{inquiry.title}</div>
         </div>
-        <span className="badge">{label(inquiry.status)}</span>
+        <div className="topbar-actions"><span className="badge">{label(inquiry.status)}</span><InquiryEditForm inquiryId={inquiry.id} title={inquiry.title} description={inquiry.description ?? ""} version={inquiry.current_version} /></div>
       </header>
 
       <section className="detail-grid">
@@ -65,7 +67,7 @@ export default async function InquiryDetailPage({ params }: Props) {
           <div className="row header"><div>Type</div><div>Value</div><div>Status</div><div>Source</div></div>
           {requirementsResult.data.length === 0 ? <div className="empty">No requirements extracted.</div> : requirementsResult.data.map((item) => (
             <div className="row" key={item.id}>
-              <div>{label(item.type)}</div><div>{item.value}</div>
+              <div>{label(item.type)}</div><div>{item.value}<div><RequirementEdit inquiryId={inquiry.id} requirement={{ id: item.id, value: item.value, status: item.status }} /></div></div>
               <div><span className="badge">{label(item.status)}</span></div>
               <div>{label(item.source)}{item.admin_edited ? ' · Admin edited' : ''}</div>
             </div>
