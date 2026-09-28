@@ -1544,7 +1544,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           continue;
         }
 
-        const subject = `RFQ — ${inquiry?.reference ?? inquiryId}`;
+        const rfqToken = `ARAT-${crypto.randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase()}`;
+        const subject = `RFQ — ${inquiry?.reference ?? inquiryId} — ${rfqToken}`;
         const body = [
           `Dear ${supplier.legal_name} team,`,
           '',
