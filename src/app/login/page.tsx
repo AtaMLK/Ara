@@ -19,9 +19,13 @@ export default function LoginPage() {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     );
 
-    const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-    if (authError) {
-      setError(authError.message);
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (authError || !authData.session?.access_token) {
+      setError(authError?.message ?? 'Sign-in succeeded but no session was returned.');
       setLoading(false);
       return;
     }
@@ -29,16 +33,22 @@ export default function LoginPage() {
     const roleCheck = await fetch('/api/auth/role', {
       cache: 'no-store',
       credentials: 'same-origin',
-      headers: { 'Cache-Control': 'no-cache' },
+      headers: {
+        Authorization: `Bearer ${authData.session.access_token}`,
+        'Cache-Control': 'no-cache',
+      },
     });
+
     const roleResult = await roleCheck.json().catch(() => null);
 
     if (!roleCheck.ok || !roleResult?.destination || roleResult.destination === '/login') {
       await supabase.auth.signOut();
       setError(
-        roleResult?.reason
-          ? `Account routing failed: ${roleResult.reason}`
-          : 'Account routing failed. Please try signing in again.',
+        roleResult?.detail
+          ? `Account routing failed: ${roleResult.reason ?? 'unknown_error'} — ${roleResult.detail}`
+          : roleResult?.reason
+            ? `Account routing failed: ${roleResult.reason}`
+            : 'Account routing failed. Please try signing in again.',
       );
       setLoading(false);
       return;
