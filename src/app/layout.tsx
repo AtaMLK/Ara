@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import './globals.css';
 import Link from 'next/link';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import SignOutButton from '@/components/SignOutButton';
 
 const links=[['/','Dashboard'],['/inquiries','Inquiries'],['/suppliers','Suppliers'],['/rfqs','RFQs'],['/quotes','Quotes'],['/quotes/revisions','Quote Revisions'],['/notifications','Notifications'],['/settings','Settings']];
 
@@ -19,7 +20,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       <body>
         {isAdmin ? (
           <div className="admin-layout">
-            <aside className="sidebar"><div className="brand">ARAT</div><div className="eyebrow">ADMIN</div><nav className="nav">{links.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav></aside>
+            <aside className="sidebar"><div className="brand">ARAT</div><div className="eyebrow">ADMIN</div><nav className="nav">{links.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav><div className="sidebar-footer"><SignOutButton /></div></aside>
             <main className="main">{children}</main>
           </div>
         ) : children}
