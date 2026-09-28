@@ -55,7 +55,7 @@ export async function createCustomerInquiryAction(input: {
 
     if (!inquiry) throw new ToolError('CONFLICT', 'Inquiry creation failed');
 
-    await supabase.from('timeline_events').insert({
+    await createSupabaseAdminClient().from('timeline_events').insert({
       inquiry_id: inquiry.id,
       event_type: 'customer_inquiry_created',
       visibility: 'customer',
@@ -165,7 +165,8 @@ export async function uploadInquiryFilesAction(input: {
         throw new ToolError('CONFLICT', `Could not register file: ${file.name}`);
       }
 
-      const { error: processingError } = await supabase
+      const adminSupabase = createSupabaseAdminClient();
+      const { error: processingError } = await adminSupabase
         .from('document_processing')
         .insert({
           file_id: row.id,
@@ -184,7 +185,7 @@ export async function uploadInquiryFilesAction(input: {
         .update({ status: 'processing' })
         .eq('id', row.id);
 
-      await supabase.from('timeline_events').insert({
+      await adminSupabase.from('timeline_events').insert({
         inquiry_id: inquiry.id,
         event_type: 'customer_file_uploaded',
         visibility: 'customer',
@@ -1126,7 +1127,7 @@ export async function acceptCustomerQuoteAction(quoteId: string) {
 
     if (updateError || !data) throw new ToolError('CONFLICT', 'Quotation changed. Refresh and try again.');
 
-    await supabase.from('timeline_events').insert({
+    await createSupabaseAdminClient().from('timeline_events').insert({
       inquiry_id: quote.inquiry_id,
       event_type: 'customer_quote_accepted',
       visibility: 'customer',
@@ -1203,7 +1204,7 @@ export async function requestCustomerQuoteRevisionAction(input: {
 
     if (updateError || !updated) throw new ToolError('CONFLICT', 'Quotation changed. Refresh and try again.');
 
-    await supabase.from('timeline_events').insert({
+    await createSupabaseAdminClient().from('timeline_events').insert({
       inquiry_id: quote.inquiry_id,
       event_type: 'customer_quote_revision_requested',
       visibility: 'customer',
