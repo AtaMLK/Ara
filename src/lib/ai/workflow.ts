@@ -1014,7 +1014,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             instructions: [
               'Extract only values explicitly present in the supplier response or supplied attachment text.',
               'Do not infer currency from supplier country, symbol alone, prior quotes, or general knowledge.',
-              'Do not calculate net/gross/list prices, discounts, VAT, or conversions unless the response explicitly states the resulting value.',
+              'Do not calculate net/gross/list prices, discounts, VAT, or conversions unless the response explicitly states the resulting value. Exception: if list price and an explicitly stated percentage discount are present but net price is absent, return discountType=percent so the system can calculate the net price and flag it as AI Calculated. If the discount is a fixed amount, return discountType=amount and do not calculate the net price.',
               'Match each quoted product independently against the inquiry requirements, RFQ items, and supplied supplier product records.',
               'Use productId only when the supplied supplier product record is clearly the quoted product.',
               'If a product cannot be reliably matched, leave productId empty and use partial_match, mismatch, or unknown.',
@@ -1046,6 +1046,17 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             throw new ToolError('AI_PROCESSING', 'Quote extraction returned a productId outside the supplier product set');
           }
 
+          const calculatedNetPrice =
+            quote.netPrice ??
+            (quote.listPrice != null &&
+            quote.discount != null &&
+            quote.discountType === 'percent' &&
+            quote.discount >= 0 &&
+            quote.discount <= 100
+              ? quote.listPrice * (1 - quote.discount / 100)
+              : undefined);
+          const aiCalculatedNetPrice = quote.netPrice == null && calculatedNetPrice != null;
+
           const { data: createdQuote, error: quoteError } = await supabase
             .from('supplier_quotes')
             .insert({
@@ -1057,7 +1068,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               moq: quote.moq,
               list_price: quote.listPrice,
               discount: quote.discount,
-              net_price: quote.netPrice,
+              net_price: calculatedNetPrice,
               vat: quote.vat,
               gross_price: quote.grossPrice,
               validity_from: quote.validityFrom || null,
@@ -1067,10 +1078,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               payment_terms: quote.paymentTerms,
               incoterm: quote.incoterm,
               delivery_method: quote.deliveryMethod,
-              ai_calculated: false,
+              ai_calculated: aiCalculatedNetPrice,
               additional_conditions: quote.conditions,
               original_data: {
                 ...quote.originalData,
+                discount_type: quote.discountType ?? null,
                 extraction: {
                   provider: ai.provider,
                   model: ai.model,
@@ -1084,6 +1096,17 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
           if (quoteError || !createdQuote) {
             throw new ToolError('CONFLICT', quoteError?.message ?? 'Supplier quote creation failed');
+          }
+
+          if (aiCalculatedNetPrice) {
+            await createAlert(
+              inquiryId,
+              'quote_extraction',
+              'QUOTE_NET_PRICE_AI_CALCULATED',
+              `Supplier quote ${createdQuote.id}: net price was calculated from explicit list price and percentage discount.`,
+              'normal',
+            );
+            alerts++;
           }
 
           if (quote.priceTiers.length > 0) {
