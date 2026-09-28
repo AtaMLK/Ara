@@ -6,18 +6,28 @@ import { requireAdmin } from '@/lib/ai/guards';
 import { ToolError } from '@/lib/errors';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 
-const createSchema = z.object({
-  email: z.string().trim().email().max(320),
-  password: z.string().min(8).max(128),
-  name: z.string().trim().min(1).max(160),
-  customerType: z.enum(['company', 'individual']),
-  companyName: z.string().trim().max(200).optional(),
-  country: z.string().trim().min(1).max(120),
-  phone: z.string().trim().max(80).optional(),
-  address: z.string().trim().max(500).optional(),
-  taxRegistration: z.string().trim().max(160).optional(),
-  notes: z.string().trim().max(2000).optional(),
-});
+const createSchema = z
+  .object({
+    email: z.string().trim().email().max(320),
+    password: z.string().min(8).max(128),
+    name: z.string().trim().min(1).max(160),
+    customerType: z.enum(['company', 'individual']),
+    companyName: z.string().trim().max(200).optional(),
+    country: z.string().trim().min(1).max(120),
+    phone: z.string().trim().max(80).optional(),
+    address: z.string().trim().max(500).optional(),
+    taxRegistration: z.string().trim().max(160).optional(),
+    notes: z.string().trim().max(2000).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.customerType === 'company' && !value.companyName?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['companyName'],
+        message: 'Company name is required for company customers',
+      });
+    }
+  });
 
 const passwordSchema = z.object({
   customerId: z.string().uuid(),
