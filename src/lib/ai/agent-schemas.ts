@@ -59,6 +59,7 @@ export const quoteExtractionOutputSchema = z.object({
     moq: z.number().nonnegative().optional(),
     listPrice: z.number().nonnegative().optional(),
     discount: z.number().nonnegative().optional(),
+    discountType: z.enum(['percent','amount']).optional(),
     netPrice: z.number().nonnegative().optional(),
     vat: z.number().nonnegative().optional(),
     grossPrice: z.number().nonnegative().optional(),
