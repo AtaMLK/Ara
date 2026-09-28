@@ -27,8 +27,19 @@ export default function LoginPage() {
     }
 
     const roleCheck = await fetch('/api/auth/role', { cache: 'no-store' });
-    const destination = roleCheck.ok ? await roleCheck.json() : { destination: '/login?error=account_not_configured' };
-    window.location.href = destination.destination;
+    const roleResult = await roleCheck.json().catch(() => null);
+
+    if (!roleCheck.ok || !roleResult?.destination || roleResult.destination === '/login') {
+      setError(
+        roleResult?.reason
+          ? `Account routing failed: ${roleResult.reason}`
+          : 'Account routing failed. Check the server logs.',
+      );
+      setLoading(false);
+      return;
+    }
+
+    window.location.href = roleResult.destination;
   }
 
   return (
