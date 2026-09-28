@@ -29,7 +29,7 @@ export async function requestQuoteApproval(quoteId:string){
  const {data:items,error:itemError}=await supabase.from('customer_quote_items').select('id,price_status').eq('customer_quote_id',quoteId);
  if(itemError) throw new ToolError('TRANSIENT',itemError.message);
  if(!items?.length || items.some((item)=>item.price_status!=='admin_confirmed')) throw new ToolError('APPROVAL_REQUIRED','Every customer quote item price must be confirmed by Admin');
- const {supabase}=await requireAdmin(); const {data,error}=await supabase.from('customer_quotes').update({status:'pending_approval'}).eq('id',quoteId).eq('status','draft').select('*').single();
+ const {data,error}=await supabase.from('customer_quotes').update({status:'pending_approval'}).eq('id',quoteId).eq('status','draft').select('*').single();
  if(error||!data) throw new ToolError('CONFLICT','Quote is not in Draft state'); return data;
 }
 export async function approveCustomerQuote(quoteId:string){
