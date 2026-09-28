@@ -438,7 +438,6 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               model: ai.model,
             }, 'intake');
           }
-        }
 
       // Re-read after extraction so the existing clarification gate handles
       // newly extracted requirements in the same workflow execution.
