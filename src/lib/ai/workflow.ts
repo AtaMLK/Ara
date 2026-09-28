@@ -841,6 +841,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       const { data: supplierQuotes, error: quotesError } = await supabase.from('supplier_quotes').select('id,supplier_response_id,product_id,match_status,currency,quantity,moq,net_price,valid_until,availability,lead_time_text,payment_terms,incoterm,delivery_method,additional_conditions').in('id', quoteIds);
       if (quotesError) throw new ToolError('TRANSIENT', quotesError.message);
+
+      const { data: priceTiers, error: priceTiersError } = await supabase
+        .from('supplier_quote_price_tiers')
+        .select('id,supplier_quote_id,min_quantity,max_quantity,unit_price,currency,condition_text')
+        .in('supplier_quote_id', quoteIds)
+        .order('min_quantity', { ascending: true, nullsFirst: true });
+      if (priceTiersError) throw new ToolError('TRANSIENT', priceTiersError.message);
+
       const { data: pricingRule } = await supabase.from('customer_pricing_rules').select('id,name,markup_percent,rounding_increment,status').eq('status', 'approved').maybeSingle();
       if (!pricingRule) {
         await markExecutionSuccess(running.id, { blocked: true, reason: 'approved_pricing_rule_required' });
@@ -877,27 +885,95 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       const today = new Date().toISOString().slice(0, 10);
       for (const line of ai.output.lines) {
         const supplierQuote = supplierQuotes?.find((item) => item.id === line.supplierQuoteId);
-        if (!supplierQuote || supplierQuote.match_status === 'mismatch' || supplierQuote.net_price == null || !supplierQuote.currency) {
+        if (!supplierQuote || supplierQuote.match_status === 'mismatch') {
           blockedItems++;
-          await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_LINE_BLOCKED', 'Supplier quote ' + line.supplierQuoteId + ' lacks a usable explicit price/currency or is mismatched.', 'normal');
+          await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_LINE_BLOCKED', 'Supplier quote ' + line.supplierQuoteId + ' is missing or explicitly mismatched.', 'normal');
           continue;
         }
+
+        const tiers = (priceTiers ?? []).filter((tier) => tier.supplier_quote_id === supplierQuote.id);
+        const applicableTiers = tiers.filter((tier) =>
+          (tier.min_quantity == null || line.quantity >= Number(tier.min_quantity)) &&
+          (tier.max_quantity == null || line.quantity <= Number(tier.max_quantity))
+        );
+
+        if (applicableTiers.length > 1) {
+          blockedItems++;
+          await createAlert(
+            inquiryId,
+            'customer_quote',
+            'CUSTOMER_QUOTE_MULTIPLE_APPLICABLE_PRICE_TIERS',
+            'Multiple supplier price tiers apply to quantity ' + line.quantity + ' for quote ' + supplierQuote.id + '. Admin review is required; no tier was selected automatically.',
+            'normal',
+          );
+          continue;
+        }
+
+        if (tiers.length > 0 && applicableTiers.length === 0) {
+          blockedItems++;
+          await createAlert(
+            inquiryId,
+            'customer_quote',
+            'CUSTOMER_QUOTE_NO_APPLICABLE_PRICE_TIER',
+            'No supplier price tier applies to quantity ' + line.quantity + ' for quote ' + supplierQuote.id + '.',
+            'normal',
+          );
+          continue;
+        }
+
+        const selectedTier = applicableTiers[0] ?? null;
+        const supplierCost = selectedTier ? Number(selectedTier.unit_price) : supplierQuote.net_price;
+        const supplierCurrency = selectedTier?.currency ?? supplierQuote.currency;
+
+        if (supplierCost == null || !supplierCurrency) {
+          blockedItems++;
+          await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_LINE_BLOCKED', 'Supplier quote ' + line.supplierQuoteId + ' lacks a usable explicit price/currency.', 'normal');
+          continue;
+        }
+
         let exchangeRateId: string | null = null;
         let exchangeRate = 1;
-        if (supplierQuote.currency !== customerCurrency) {
-          const { data: rate } = await supabase.from('exchange_rates').select('id,rate').eq('from_currency', supplierQuote.currency).eq('to_currency', customerCurrency).eq('status', 'approved').lte('valid_from', today).or('valid_until.is.null,valid_until.gte.' + today).order('valid_from', { ascending: false }).limit(1).maybeSingle();
+        if (supplierCurrency !== customerCurrency) {
+          const { data: rate } = await supabase.from('exchange_rates').select('id,rate').eq('from_currency', supplierCurrency).eq('to_currency', customerCurrency).eq('status', 'approved').lte('valid_from', today).or('valid_until.is.null,valid_until.gte.' + today).order('valid_from', { ascending: false }).limit(1).maybeSingle();
           if (!rate) {
             blockedItems++;
-            await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_EXCHANGE_RATE_REQUIRED', 'Approved exchange rate required: ' + supplierQuote.currency + ' → ' + customerCurrency + ' for supplier quote ' + supplierQuote.id + '.', 'normal');
+            await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_EXCHANGE_RATE_REQUIRED', 'Approved exchange rate required: ' + supplierCurrency + ' → ' + customerCurrency + ' for supplier quote ' + supplierQuote.id + '.', 'normal');
             continue;
           }
           exchangeRateId = rate.id;
           exchangeRate = Number(rate.rate);
         }
-        const rawPrice = Number(supplierQuote.net_price) * exchangeRate * (1 + Number(pricingRule.markup_percent) / 100);
+
+        const rawPrice = supplierCost * exchangeRate * (1 + Number(pricingRule.markup_percent) / 100);
         const increment = pricingRule.rounding_increment ? Number(pricingRule.rounding_increment) : 0;
         const suggestedPrice = increment > 0 ? Math.ceil(rawPrice / increment) * increment : rawPrice;
-        const { error: itemError } = await supabase.from('customer_quote_items').insert({ customer_quote_id: quote.id, supplier_quote_id: supplierQuote.id, product_id: supplierQuote.product_id, quantity: line.quantity, unit_price: suggestedPrice, supplier_cost: supplierQuote.net_price, supplier_currency: supplierQuote.currency, exchange_rate_id: exchangeRateId, price_status: 'suggested', pricing_rule_id: pricingRule.id, price_calculation: { source: 'approved_pricing_rule', pricing_rule_id: pricingRule.id, markup_percent: pricingRule.markup_percent, rounding_increment: pricingRule.rounding_increment, exchange_rate_id: exchangeRateId, exchange_rate: exchangeRate, source_supplier_quote_id: supplierQuote.id, ai_provider: ai.provider, ai_model: ai.model } });
+        const { error: itemError } = await supabase.from('customer_quote_items').insert({
+          customer_quote_id: quote.id,
+          supplier_quote_id: supplierQuote.id,
+          product_id: supplierQuote.product_id,
+          quantity: line.quantity,
+          unit_price: suggestedPrice,
+          supplier_cost: supplierCost,
+          supplier_currency: supplierCurrency,
+          exchange_rate_id: exchangeRateId,
+          price_status: 'suggested',
+          pricing_rule_id: pricingRule.id,
+          price_calculation: {
+            source: selectedTier ? 'supplier_price_tier_and_approved_pricing_rule' : 'approved_pricing_rule',
+            pricing_rule_id: pricingRule.id,
+            markup_percent: pricingRule.markup_percent,
+            rounding_increment: pricingRule.rounding_increment,
+            exchange_rate_id: exchangeRateId,
+            exchange_rate: exchangeRate,
+            source_supplier_quote_id: supplierQuote.id,
+            selected_price_tier_id: selectedTier?.id ?? null,
+            selected_price_tier_condition: selectedTier?.condition_text ?? null,
+            source_supplier_unit_price: supplierCost,
+            source_supplier_currency: supplierCurrency,
+            ai_provider: ai.provider,
+            ai_model: ai.model,
+          },
+        });
         if (itemError) throw new ToolError('CONFLICT', itemError.message);
         createdItems++;
       }
