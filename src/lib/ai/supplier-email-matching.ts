@@ -50,6 +50,19 @@ export async function findSupplierRFQForEmail(input: { sender: string; subject: 
     .order('created_at', { ascending: false })
     .limit(50);
 
+  const tokenMatch = input.subject.match(/\\bARAT-[A-Z0-9]{8,16}\\b/i);
+  if (tokenMatch) {
+    const token = tokenMatch[0].toLowerCase();
+    const tokenMatches = (rfqs ?? []).filter((rfq) => normalizeSubject(rfq.subject ?? '').includes(token));
+    if (tokenMatches.length === 1) {
+      const rfq = tokenMatches[0];
+      return { matched: true as const, supplierId, inquiryId: rfq.inquiry_id, rfq };
+    }
+    if (tokenMatches.length > 1) {
+      return { matched: false as const, reason: 'multiple_rfq_token_matches' as const };
+    }
+  }
+
   const matches = (rfqs ?? []).filter((rfq) => normalizeSubject(rfq.subject ?? '') === subject);
 
   if (matches.length !== 1) {
