@@ -27,7 +27,7 @@ export default function LoginPage() {
     }
 
     const roleCheck = await fetch('/api/auth/role', { cache: 'no-store' });
-    const destination = roleCheck.ok ? await roleCheck.json() : { destination: '/' };
+    const destination = roleCheck.ok ? await roleCheck.json() : { destination: '/login?error=account_not_configured' };
     window.location.href = destination.destination;
   }
 
