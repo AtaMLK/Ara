@@ -150,3 +150,5 @@ create policy app_settings_admin_all
 
 -- Service-role/server workers bypass RLS by design. Customer actions that need
 -- internal writes use the server-side admin client after customer authorization.
+
+-- Audit note: run this migration once on the current Supabase project; do not rerun the original migration set.
