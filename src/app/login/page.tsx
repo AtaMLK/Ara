@@ -43,7 +43,8 @@ export default function LoginPage() {
         <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" /></label>
 
         {error && <div className="error-box">{error}</div>}
-        <button className="primary-button" disabled={loading}>{loading ? 'Signing in…' : 'Sign in'}</button>\n        <p><a href="/forgot-password">Forgot password?</a></p>
+        <button className="primary-button" disabled={loading}>{loading ? 'Signing in…' : 'Sign in'}</button>
+        <p><a href="/forgot-password">Forgot password?</a></p>
       </form>
     </main>
   );
