@@ -1,14 +1,8 @@
 import Link from 'next/link';
-import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { requireCustomerAccess } from '@/lib/ai/guards';
 
 export default async function CustomerPortalPage() {
-  const supabase = await createSupabaseServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return <main className="auth-page"><div className="auth-card"><div className="brand">ARAT</div><h1 className="title">Sign in required</h1><Link className="primary-button" href="/login">Sign in</Link></div></main>;
-
-  const { data: customer } = await supabase.from('customers').select('id,name,company_name').eq('user_id', user.id).single();
-  if (!customer) return <main className="section"><div className="error-box">Customer account not found.</div></main>;
+  const { supabase, customer } = await requireCustomerAccess();
 
   const { data: inquiries } = await supabase
     .from('inquiries')
