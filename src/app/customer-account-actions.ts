@@ -36,7 +36,7 @@ const passwordSchema = z.object({
 
 function fail(error: unknown): never {
   if (error instanceof ToolError) throw new Error(error.message);
-  if (error instanceof z.ZodError) throw new Error('Invalid input');
+  if (error instanceof z.ZodError) throw new Error(error.issues[0]?.message ?? 'Invalid input');
   throw error instanceof Error ? error : new Error('Action failed');
 }
 
@@ -68,7 +68,11 @@ export async function createCustomerAccountAction(input: {
     });
 
     if (authError || !authData.user) {
-      throw new ToolError('CONFLICT', authError?.message ?? 'Could not create customer login');
+      const message = authError?.message ?? 'Could not create customer login';
+      if (/already been registered|already registered|already exists/i.test(message)) {
+        throw new ToolError('CONFLICT', 'A user with this email already exists. Use another email or repair the existing customer account.');
+      }
+      throw new ToolError('CONFLICT', message);
     }
 
     const userId = authData.user.id;
@@ -92,8 +96,13 @@ export async function createCustomerAccountAction(input: {
           customer_code: customerCode,
           name: parsed.name,
           company_name: parsed.companyName || null,
-          customer_type: 'company',
+          customer_type: parsed.customerType,
           email: parsed.email,
+          country: parsed.country,
+          phone: parsed.phone || null,
+          address: parsed.address || null,
+          tax_registration: parsed.taxRegistration || null,
+          notes: parsed.notes || null,
           status: 'active',
         })
         .select('id,customer_code')
