@@ -10,7 +10,13 @@ const createSchema = z.object({
   email: z.string().trim().email().max(320),
   password: z.string().min(8).max(128),
   name: z.string().trim().min(1).max(160),
+  customerType: z.enum(['company', 'individual']),
   companyName: z.string().trim().max(200).optional(),
+  country: z.string().trim().min(1).max(120),
+  phone: z.string().trim().max(80).optional(),
+  address: z.string().trim().max(500).optional(),
+  taxRegistration: z.string().trim().max(160).optional(),
+  notes: z.string().trim().max(2000).optional(),
 });
 
 const passwordSchema = z.object({
@@ -28,7 +34,13 @@ export async function createCustomerAccountAction(input: {
   email: string;
   password: string;
   name: string;
+  customerType: 'company' | 'individual';
   companyName?: string;
+  country: string;
+  phone?: string;
+  address?: string;
+  taxRegistration?: string;
+  notes?: string;
 }) {
   try {
     const parsed = createSchema.parse(input);
