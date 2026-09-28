@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { acceptCustomerQuoteAction, requestCustomerQuoteRevisionAction } from '@/app/actions';
+import { acceptCustomerQuoteAction, rejectCustomerQuoteAction, requestCustomerQuoteRevisionAction } from '@/app/actions';
 
 export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
-  const [mode, setMode] = useState<'idle' | 'revision'>('idle');
+  const [mode, setMode] = useState<'idle' | 'revision' | 'reject'>('idle');
   const [reason, setReason] = useState('price');
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -24,7 +24,18 @@ export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
         <>
           <button className="primary-button" disabled={pending} onClick={() => run(() => acceptCustomerQuoteAction(quoteId))}>Accept quotation</button>
           <button className="secondary-button" disabled={pending} onClick={() => setMode('revision')}>Request revision</button>
+          <button className="text-button" disabled={pending} onClick={() => setMode('reject')}>Reject quotation</button>
         </>
+      ) : mode === 'reject' ? (
+        <div className="revision-form">
+          <label>Reason <small>Optional</small>
+            <textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={2000} placeholder="Optional reason for rejecting this quotation." />
+          </label>
+          <div className="settings-actions">
+            <button className="primary-button" disabled={pending} onClick={() => run(() => rejectCustomerQuoteAction({ quoteId, reason: text }))}>Confirm rejection</button>
+            <button className="text-button" disabled={pending} onClick={() => { setText(''); setMode('idle'); }}>Cancel</button>
+          </div>
+        </div>
       ) : (
         <div className="revision-form">
           <label>What needs to change?
