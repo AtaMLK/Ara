@@ -70,6 +70,7 @@ export async function createCustomerAccountAction(input: {
           customer_code: customerCode,
           name: parsed.name,
           company_name: parsed.companyName || null,
+          customer_type: 'company',
           email: parsed.email,
           status: 'active',
         })
