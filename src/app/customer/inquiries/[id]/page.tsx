@@ -100,7 +100,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
               <h3>{latestQuote.reference}</h3>
               <p className="muted">Revision R{latestQuote.revision_number} · {latestQuote.status.replaceAll('_', ' ')}</p>
             </div>
-            <Link className="secondary-button" href={`/customer/quotes/\${id}`}>View quotation</Link>
+            <Link className="secondary-button" href={`/customer/quotes/${id}`}>View quotation</Link>
           </div>
         ) : <div className="empty">No quotation is available yet.</div>}
       </section>
