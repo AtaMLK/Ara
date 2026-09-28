@@ -1145,6 +1145,60 @@ export async function acceptCustomerQuoteAction(quoteId: string) {
   }
 }
 
+
+export async function rejectCustomerQuoteAction(input: { quoteId: string; reason?: string }) {
+  try {
+    const parsed = z.object({
+      quoteId: idSchema,
+      reason: z.string().trim().max(2000).optional(),
+    }).parse(input);
+
+    const { supabase, user, customer } = await requireCustomerAccess();
+
+    const { data: quote, error } = await supabase
+      .from('customer_quotes')
+      .select('id,inquiry_id,reference,status')
+      .eq('id', parsed.quoteId)
+      .eq('customer_id', customer.id)
+      .single();
+
+    if (error || !quote) throw new ToolError('NOT_FOUND', 'Quotation not found');
+    if (quote.status !== 'sent') throw new ToolError('CONFLICT', 'Only a sent quotation can be rejected');
+
+    const { data, error: updateError } = await supabase
+      .from('customer_quotes')
+      .update({
+        status: 'rejected',
+        decision_reason: 'other',
+        decision_text: parsed.reason || 'Rejected by customer',
+        decided_at: new Date().toISOString(),
+      })
+      .eq('id', quote.id)
+      .eq('customer_id', customer.id)
+      .eq('status', 'sent')
+      .select('id')
+      .single();
+
+    if (updateError || !data) throw new ToolError('CONFLICT', 'Quotation changed. Refresh and try again.');
+
+    await createSupabaseAdminClient().from('timeline_events').insert({
+      inquiry_id: quote.inquiry_id,
+      event_type: 'customer_quote_rejected',
+      visibility: 'customer',
+      actor_type: 'customer',
+      actor_user_id: user.id,
+      metadata: { quote_id: quote.id, reference: quote.reference },
+    });
+
+    revalidatePath(`/customer/inquiries/${quote.inquiry_id}`);
+    revalidatePath(`/customer/quotes/${quote.inquiry_id}`);
+    revalidatePath('/customer');
+    return { ok: true };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function requestCustomerQuoteRevisionAction(input: {
   quoteId: string;
   reason: 'price' | 'quantity' | 'delivery_time' | 'product_specification' | 'payment_terms' | 'other';
