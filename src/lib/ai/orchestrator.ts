@@ -24,7 +24,7 @@ export async function markExecutionSuccess(executionId:string,outputRef:unknown=
 export async function markExecutionFailure(executionId:string,errorCode:string,errorMessage:string){
  const supabase=createSupabaseAdminClient(); const {data:current}=await supabase.from('ai_executions').select('*').eq('id',executionId).single();
  if(!current) throw new ToolError('NOT_FOUND','Execution not found');
- const terminal=current.attempt_count>=3;
+ const terminal=current.attempt_count+1>=3;
  const {data,error}=await supabase.from('ai_executions').update({status:terminal?'failed':'queued',attempt_count:current.attempt_count+1,error_code:errorCode,error_message:errorMessage,completed_at:terminal?new Date().toISOString():null}).eq('id',executionId).select('*').single();
  if(error) throw new ToolError('TRANSIENT',error.message);
  if(terminal) await supabase.from('ai_alerts').insert({inquiry_id:current.inquiry_id,agent_id:current.agent_id,alert_type:'AI_PROCESSING_FAILED',message:errorMessage,priority:'urgent'});
