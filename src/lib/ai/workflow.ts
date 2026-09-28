@@ -1547,6 +1547,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         const rfqToken = `ARAT-${crypto.randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase()}`;
         const subject = `RFQ — ${inquiry?.reference ?? inquiryId} — ${rfqToken}`;
         const body = [
+          `RFQ Reference: ${inquiry?.reference ?? inquiryId}`,
+          `RFQ Correlation Token: ${rfqToken}`,
           `Dear ${supplier.legal_name} team,`,
           '',
           'We would like to request your quotation for the following requirements:',
