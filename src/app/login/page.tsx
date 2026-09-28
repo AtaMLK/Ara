@@ -35,15 +35,15 @@ export default function LoginPage() {
     <main className="auth-page">
       <form className="auth-card" onSubmit={submit}>
         <div className="brand">ARAT</div>
-        <div className="eyebrow">ADMIN PORTAL</div>
+        <div className="eyebrow">ARAT PORTAL</div>
         <h1 className="title">Sign in</h1>
-        <p className="muted">Use your authorized ARAT admin account.</p>
+        <p className="muted">Sign in with your authorized Admin or Customer account.</p>
 
         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" /></label>
         <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" /></label>
 
         {error && <div className="error-box">{error}</div>}
-        <button className="primary-button" disabled={loading}>{loading ? 'Signing in…' : 'Sign in'}</button>
+        <button className="primary-button" disabled={loading}>{loading ? 'Signing in…' : 'Sign in'}</button>\n        <p><a href="/forgot-password">Forgot password?</a></p>
       </form>
     </main>
   );
