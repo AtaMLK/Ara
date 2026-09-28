@@ -1285,7 +1285,7 @@ export async function reviewCustomerQuoteRevisionAction(input: {
 
     if (oldItems?.length) {
       const { error:insertItemsError } = await supabase.from('customer_quote_items').insert(
-        oldItems.map(item => ({...item,customer_quote_id:newQuote.id}))
+        oldItems.map(item => ({...item,customer_quote_id:newQuote.id,price_status:'suggested'}))
       );
       if (insertItemsError) throw new ToolError('CONFLICT','Quotation revision was created but items could not be copied');
     }
