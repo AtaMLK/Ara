@@ -33,7 +33,10 @@ export async function requestQuoteApproval(quoteId:string){
  if(error||!data) throw new ToolError('CONFLICT','Quote is not in Draft state'); return data;
 }
 export async function approveCustomerQuote(quoteId:string){
- const {supabase,user}=await requireAdmin(); const {data,error}=await supabase.from('customer_quotes').update({status:'sent',approved_by:user.id,approved_at:new Date().toISOString()}).eq('id',quoteId).eq('status','pending_approval').select('*').single();
+ const {supabase,user}=await requireAdmin();
+ const {data:items,error:itemError}=await supabase.from('customer_quote_items').select('id,price_status').eq('customer_quote_id',quoteId);
+ if(itemError) throw new ToolError('TRANSIENT',itemError.message);
+ if(!items?.length || items.some((item)=>item.price_status!=='admin_confirmed')) throw new ToolError('APPROVAL_REQUIRED','Every customer quote item price must be confirmed by Admin'); const {data,error}=await supabase.from('customer_quotes').update({status:'sent',approved_by:user.id,approved_at:new Date().toISOString()}).eq('id',quoteId).eq('status','pending_approval').select('*').single();
  if(error||!data) throw new ToolError('CONFLICT','Quote is not awaiting approval'); return data;
 }
 
