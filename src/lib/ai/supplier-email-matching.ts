@@ -8,7 +8,7 @@ function extractEmailAddress(value: string) {
 }
 
 function normalizeSubject(value: string) {
-  return value.trim().replace(/^(re|fw|fwd):\s*/i, '').replace(/^(re|fw|fwd):\s*/i, '').trim().toLowerCase();
+  return value.trim().replace(/^(re|fw|fwd):\s*/i, '').trim().toLowerCase();
 }
 
 export async function findSupplierRFQForEmail(input: { sender: string; subject: string }) {
