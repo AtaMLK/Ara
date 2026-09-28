@@ -50,7 +50,7 @@ export async function findSupplierRFQForEmail(input: { sender: string; subject: 
     .order('created_at', { ascending: false })
     .limit(50);
 
-  const tokenMatch = input.subject.match(/\\bARAT-[A-Z0-9]{8,16}\\b/i);
+  const tokenMatch = input.subject.match(/\bARAT-[A-Z0-9]{8,16}\b/i);
   if (tokenMatch) {
     const token = tokenMatch[0].toLowerCase();
     const tokenMatches = (rfqs ?? []).filter((rfq) => normalizeSubject(rfq.subject ?? '').includes(token));
