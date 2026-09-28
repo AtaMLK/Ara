@@ -36,7 +36,7 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
     <>
       <header className="topbar">
         <div>
-          <Link className="back-link" href={`/customer/inquiries/\${id}`}>← Request</Link>
+          <Link className="back-link" href={`/customer/inquiries/${id}`}>← Request</Link>
           <div className="eyebrow">CUSTOMER QUOTE</div>
           <h1 className="title">{quote.reference}</h1>
           <div className="muted">Revision R{quote.revision_number} · {quote.currency}</div>
