@@ -26,20 +26,25 @@ export default function LoginPage() {
       return;
     }
 
-    const roleCheck = await fetch('/api/auth/role', { cache: 'no-store' });
+    const roleCheck = await fetch('/api/auth/role', {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { 'Cache-Control': 'no-cache' },
+    });
     const roleResult = await roleCheck.json().catch(() => null);
 
     if (!roleCheck.ok || !roleResult?.destination || roleResult.destination === '/login') {
+      await supabase.auth.signOut();
       setError(
         roleResult?.reason
           ? `Account routing failed: ${roleResult.reason}`
-          : 'Account routing failed. Check the server logs.',
+          : 'Account routing failed. Please try signing in again.',
       );
       setLoading(false);
       return;
     }
 
-    window.location.href = roleResult.destination;
+    window.location.assign(roleResult.destination);
   }
 
   return (
