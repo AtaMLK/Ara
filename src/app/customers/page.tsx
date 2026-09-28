@@ -5,7 +5,7 @@ export default async function CustomersPage() {
   const { supabase } = await requireAdminPage();
   const { data: customers, error } = await supabase
     .from('customers')
-    .select('id,customer_code,name,company_name,email,status,created_at')
+    .select('id,customer_code,name,customer_type,company_name,email,country,status,created_at')
     .order('created_at', { ascending: false })
     .limit(100);
 
@@ -36,7 +36,7 @@ export default async function CustomersPage() {
 
       <section className="section">
         <div className="table">
-          <div className="row header"><div>Customer</div><div>Email</div><div>Status</div><div>Access</div></div>
+          <div className="row header"><div>Customer</div><div>Type / Country</div><div>Email</div><div>Status</div><div>Access</div></div>
           {(customers ?? []).length === 0 ? (
             <div className="empty">No customers yet.</div>
           ) : (customers ?? []).map((customer) => (
@@ -44,6 +44,9 @@ export default async function CustomersPage() {
               <div>
                 <strong>{customer.company_name || customer.name}</strong>
                 <div className="muted">{customer.customer_code} · {customer.name}</div>
+              </div>
+              <div>
+                {customer.customer_type === 'company' ? 'Company' : 'Individual'} · {customer.country}
               </div>
               <div>{customer.email}</div>
               <div><span className={`badge ${customer.status === 'active' ? 'status-approved' : 'status-rejected'}`}>{customer.status}</span></div>
