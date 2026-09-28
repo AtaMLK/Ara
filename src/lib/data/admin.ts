@@ -173,6 +173,35 @@ export async function getCustomerQuote(id: string) {
   };
 }
 
+export async function listQuoteRevisionRequests() {
+  const { supabase } = await requireAdminPage();
+
+  const { data, error } = await supabase
+    .from('quote_revision_requests')
+    .select(`
+      id,
+      quote_id,
+      reason,
+      free_text,
+      status,
+      requested_by,
+      created_at,
+      customer_quotes(
+        id,
+        reference,
+        revision_number,
+        status,
+        customers(name,company_name)
+      )
+    `)
+    .eq('status', 'pending_approval')
+    .order('created_at', { ascending: true })
+    .limit(100);
+
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function listNotifications() {
   const { supabase, user } = await requireAdminPage();
   const { data, error } = await supabase
