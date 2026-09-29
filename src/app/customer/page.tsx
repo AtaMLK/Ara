@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import SignOutButton from '@/components/SignOutButton';
 
 export default async function CustomerPortalPage() {
@@ -8,16 +7,15 @@ export default async function CustomerPortalPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return <main className="auth-page"><div className="auth-card"><div className="brand">ARAT</div><h1 className="title">Sign in required</h1><Link className="primary-button" href="/login">Sign in</Link></div></main>;
 
-  const admin = createSupabaseAdminClient();
-  const { data: profile } = await admin.from('profiles').select('role,status').eq('user_id', user.id).single();
+  const { data: profile } = await supabase.from('profiles').select('role,status').eq('user_id', user.id).single();
   if (profile?.role !== 'customer' || profile.status !== 'active') {
     return <main className="section"><div className="error-box">Customer portal access is not available for this account.</div></main>;
   }
 
-  const { data: customer } = await admin.from('customers').select('id,name,company_name,status').eq('user_id', user.id).single();
+  const { data: customer } = await supabase.from('customers').select('id,name,company_name,status').eq('user_id', user.id).single();
   if (!customer || customer.status !== 'active') return <main className="section"><div className="error-box">Customer account not found or inactive.</div></main>;
 
-  const { data: inquiries } = await admin
+  const { data: inquiries } = await supabase
     .from('inquiries')
     .select('id,reference,title,status,updated_at')
     .eq('customer_id', customer.id)
