@@ -205,6 +205,102 @@ export async function uploadInquiryFilesAction(input: {
   }
 }
 
+export async function retryCustomerInquiryDocumentAction(inquiryId: string) {
+  try {
+    const parsedId = idSchema.parse(inquiryId);
+    const { supabase } = await requireCustomerInquiryAccess(parsedId);
+    const admin = createSupabaseAdminClient();
+
+    const { data: files, error: filesError } = await supabase
+      .from('inquiry_files')
+      .select('id,status')
+      .eq('inquiry_id', parsedId);
+
+    if (filesError) throw new ToolError('TRANSIENT', filesError.message);
+
+    const failedFiles = (files ?? []).filter((file) => file.status === 'processing_failed');
+    if (failedFiles.length === 0) {
+      throw new ToolError('CONFLICT', 'There are no failed document files to retry.');
+    }
+
+    const fileIds = failedFiles.map((file) => file.id);
+
+    const { error: fileResetError } = await supabase
+      .from('inquiry_files')
+      .update({
+        status: 'uploaded',
+        processed_at: null,
+      })
+      .in('id', fileIds)
+      .eq('inquiry_id', parsedId);
+
+    if (fileResetError) throw new ToolError('TRANSIENT', fileResetError.message);
+
+    const { error: processingResetError } = await admin
+      .from('document_processing')
+      .update({
+        status: 'processing',
+        error_code: null,
+        error_message: null,
+        completed_at: null,
+        attempt_count: 0,
+      })
+      .in('file_id', fileIds);
+
+    if (processingResetError) throw new ToolError('TRANSIENT', processingResetError.message);
+
+    const { data: execution, error: executionError } = await admin
+      .from('ai_executions')
+      .select('id,status')
+      .eq('inquiry_id', parsedId)
+      .eq('task_key', `inquiry:${parsedId}:stage:document`)
+      .maybeSingle();
+
+    if (executionError) throw new ToolError('TRANSIENT', executionError.message);
+
+    if (execution) {
+      const { error } = await admin
+        .from('ai_executions')
+        .update({
+          status: 'queued',
+          error_code: null,
+          error_message: null,
+          completed_at: null,
+          started_at: null,
+          attempt_count: 0,
+        })
+        .eq('id', execution.id);
+
+      if (error) throw new ToolError('TRANSIENT', error.message);
+    } else {
+      await admin.from('ai_executions').insert({
+        task_key: `inquiry:${parsedId}:stage:document`,
+        agent_id: 'document',
+        inquiry_id: parsedId,
+        status: 'queued',
+        attempt_count: 0,
+      });
+    }
+
+    await admin.from('timeline_events').insert({
+      inquiry_id: parsedId,
+      event_type: 'document_processing_retry_requested',
+      visibility: 'customer',
+      actor_type: 'customer',
+      metadata: { file_ids: fileIds },
+    });
+
+    await startInquiryWorkflow(parsedId);
+    revalidatePath(`/customer/inquiries/${parsedId}`);
+    revalidatePath('/customer');
+    revalidatePath('/inquiries');
+
+    return { ok: true };
+  } catch (error) {
+    fail(error);
+  }
+}
+
 export async function getCustomerInquiryFileUrlAction(input: { inquiryId: string; fileId: string }) {
   try {
     const parsed = z.object({ inquiryId: idSchema, fileId: idSchema }).parse(input);
