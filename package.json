@@ -16,7 +16,7 @@
     "mailparser": "latest",
     "next": "latest",
     "nodemailer": "latest",
-    "pdf-parse": "latest",
+    "pdf-parse": "2.4.5",
     "react": "latest",
     "react-dom": "latest",
     "xlsx": "latest",
