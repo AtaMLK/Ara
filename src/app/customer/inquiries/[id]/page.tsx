@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import AnswerClarificationForm from './answer-form';
 import CustomerFileLink from './file-link';
+import { retryCustomerInquiryDocumentAction } from '@/app/actions';
 
 
 type Props = { params: Promise<{ id: string }> };
@@ -63,6 +64,14 @@ export default async function CustomerInquiryPage({ params }: Props) {
                   </div>
                   <span className="badge">{file.status.replaceAll('_', ' ')}</span>
                   {file.status !== 'processing_failed' && <CustomerFileLink inquiryId={id} fileId={file.id} />}
+                  {file.status === 'processing_failed' && (
+                    <form action={async () => {
+                      'use server';
+                      await retryCustomerInquiryDocumentAction(id);
+                    }}>
+                      <button className="secondary-button compact-button" type="submit">Retry processing</button>
+                    </form>
+                  )}
                 </div>
               ))}
             </div>
