@@ -1,6 +1,6 @@
 import 'server-only';
 
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 import * as XLSX from 'xlsx';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
@@ -109,21 +109,29 @@ export async function parseInquiryFile(
   originalName: string,
 ): Promise<ParsedDocument> {
   if (mimeType === 'application/pdf' || originalName.toLowerCase().endsWith('.pdf')) {
-    const result = await pdfParse(Buffer.from(bytes));
-    if (result.text.trim()) {
-      return {
-        extractedText: result.text.slice(0, 120000),
-        extractedData: { pages: result.numpages },
-        qualityFlags: [],
-      };
-    }
+    const parser = new PDFParse({ data: Buffer.from(bytes) });
+    try {
+      const result = await parser.getText();
+      const extractedText = typeof result.text === 'string' ? result.text : '';
+      const pages = typeof result.total === 'number' ? result.total : undefined;
 
-    const ocr = await runVisionOcr(bytes, 'application/pdf', originalName);
-    return {
-      extractedText: ocr.extractedText,
-      extractedData: { pages: result.numpages, ocr: true },
-      qualityFlags: ['OCR_USED', ...ocr.qualityFlags],
-    };
+      if (extractedText.trim()) {
+        return {
+          extractedText: extractedText.slice(0, 120000),
+          extractedData: { ...(pages !== undefined ? { pages } : {}) },
+          qualityFlags: [],
+        };
+      }
+
+      const ocr = await runVisionOcr(bytes, 'application/pdf', originalName);
+      return {
+        extractedText: ocr.extractedText,
+        extractedData: { ...(pages !== undefined ? { pages } : {}), ocr: true },
+        qualityFlags: ['OCR_USED', ...ocr.qualityFlags],
+      };
+    } finally {
+      await parser.destroy();
+    }
   }
 
   if (
