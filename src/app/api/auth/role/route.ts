@@ -87,7 +87,7 @@ export async function GET(request: Request) {
   }
 
   if (profile.role === 'customer') {
-    const { data: customer, error: customerError } = await admin
+    const { data: customer, error: customerError } = await db
       .from('customers')
       .select('id,status')
       .eq('user_id', user.id)
