@@ -147,6 +147,16 @@ export async function parseInquiryFile(
   }
 
   if (mimeType.startsWith('image/')) {
+    // Images require vision OCR. Without an AI provider, keep the attachment
+    // in a completed-but-pending state instead of marking the workflow failed.
+    if (!process.env.OPENAI_API_KEY) {
+      return {
+        extractedText: '',
+        extractedData: { ocr: false },
+        qualityFlags: ['OCR_PENDING', 'AI_EXTRACTION_PENDING'],
+      };
+    }
+
     const ocr = await runVisionOcr(bytes, mimeType, originalName);
     return {
       extractedText: ocr.extractedText,
