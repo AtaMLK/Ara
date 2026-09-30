@@ -705,3 +705,9 @@ html[data-theme="dark"] .modal-card{box-shadow:0 24px 70px rgba(0,0,0,.35)}
 .dashboard-kpi-card:hover .dashboard-kpi-icon{transform:translateY(-1px) rotate(-2deg)}
 .dashboard-inquiry-link{text-decoration:none}
 .dashboard-inquiry-link:hover{text-decoration:underline;color:var(--arat-text)}
+
+.new-request-button{white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.new-request-button span{font-size:16px;line-height:1}
+.inquiry-reference-full{display:block;margin-top:2px}
+.portal-shell .back-icon-button{margin-bottom:8px}
+.inquiry-detail-page .title{max-width:100%;overflow-wrap:anywhere}
