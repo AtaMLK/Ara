@@ -16,11 +16,11 @@
     "mailparser": "latest",
     "next": "latest",
     "nodemailer": "latest",
-    "pdf-parse": "2.4.5",
     "react": "latest",
     "react-dom": "latest",
     "xlsx": "latest",
-    "zod": "latest"
+    "zod": "latest",
+    "unpdf": "1.8.1"
   },
   "devDependencies": {
     "@types/node": "latest",
