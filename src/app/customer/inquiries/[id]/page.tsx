@@ -5,6 +5,7 @@ import AnswerClarificationForm from './answer-form';
 import CustomerFileLink from './file-link';
 import RetryProcessingButton from './retry-processing-button';
 import ActivityTimeline from './activity-timeline';
+import { getInquiryDisplayReference } from '@/lib/ui/inquiry-reference';
 
 
 type Props = { params: Promise<{ id: string }> };
@@ -40,7 +41,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
         <div>
           <Link className="back-icon-button" href="/customer" aria-label="Back to My Requests" title="Back to My Requests"><span aria-hidden="true">←</span></Link>
           <div className="eyebrow">CUSTOMER PORTAL</div>
-          <h1 className="title">{inquiryResult.data.reference}</h1>
+          <h1 className="title inquiry-display-reference" title={inquiryResult.data.reference}>{getInquiryDisplayReference(inquiryResult.data.reference, inquiryResult.data.title, undefined, 1, inquiryResult.data.updated_at)}</h1><div className="muted inquiry-reference-full">{inquiryResult.data.reference}</div>
           <div className="muted">{inquiryResult.data.title}</div>
         </div>
         <span className={`badge status-badge status-${inquiryResult.data.status}`}>{inquiryResult.data.status.replaceAll('_',' ')}</span>
@@ -60,7 +61,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
               {(filesResult.data ?? []).map((file) => (
                 <div className="list-item" key={file.id}>
                   <div>
-                    <strong>{file.original_name}</strong>
+                    <strong>{file.original_name.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')}</strong>
                     <div className="muted">{Math.round(file.file_size / 1024)} KB · {file.mime_type}</div>
                   </div>
                   <span className={`badge status-badge status-${file.status}`}>{file.status.replaceAll('_', ' ')}</span>
@@ -89,8 +90,8 @@ export default async function CustomerInquiryPage({ params }: Props) {
 
       <section className="section detail-grid">
         <div className="detail-card">
-          <div className="section-head"><h2>Request</h2></div>
-          <p>{inquiryResult.data.description || 'No additional description.'}</p>
+          <div className="section-head"><h2>Additional notes</h2></div>
+          <p className="detail-text">{inquiryResult.data.description || 'No additional notes.'}</p>
         </div>
         <div className="detail-card">
           <div className="section-head"><h2>Requirements</h2></div>
