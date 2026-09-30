@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import AdminActivityTimeline from './admin-activity-timeline';
+import { getInquiryDisplayReference } from '@/lib/ui/inquiry-reference';
 import { notFound } from 'next/navigation';
 import { requireAdminPage } from '@/lib/data/admin';
 import { InquiryEditForm } from './edit-form';
@@ -33,17 +35,19 @@ export default async function InquiryDetailPage({ params }: Props) {
 
   const inquiry = inquiryResult.data;
   const customer = inquiry.customers;
+  const customerName = customer?.company_name || customer?.name || 'Customer';
+  const displayReference = getInquiryDisplayReference(inquiry.reference, customerName, inquiry.created_at, inquiry.current_version, inquiry.updated_at);
 
   return (
     <>
       <header className="topbar">
         <div>
-          <Link className="back-link" href="/inquiries">← Inquiries</Link>
+          <Link className="back-icon-button" href="/inquiries" aria-label="Back to Inquiries" title="Back to Inquiries"><span aria-hidden="true">←</span></Link>
           <div className="eyebrow">INQUIRY</div>
-          <h1 className="title">{inquiry.reference}</h1>
+          <h1 className="title inquiry-display-reference" title={inquiry.reference}>{displayReference}</h1><div className="muted inquiry-reference-full">{inquiry.reference}</div>
           <div className="muted">{inquiry.title}</div>
         </div>
-        <div className="topbar-actions"><span className="badge">{label(inquiry.status)}</span><InquiryEditForm inquiryId={inquiry.id} title={inquiry.title} description={inquiry.description ?? ""} version={inquiry.current_version} /></div>
+        <div className="topbar-actions"><span className={`badge status-badge status-${inquiry.status}`}>{label(inquiry.status)}</span><InquiryEditForm inquiryId={inquiry.id} title={inquiry.title} description={inquiry.description ?? ""} version={inquiry.current_version} /></div>
       </header>
 
       <CandidatePanel inquiryId={inquiry.id} candidates={candidatesResult.data ?? []} />
@@ -58,6 +62,11 @@ export default async function InquiryDetailPage({ params }: Props) {
       />
 
       <section className="detail-grid">
+        <div className="detail-card">
+          <div className="section-head"><h2>Customer request</h2></div>
+          <div className="original-request">{inquiry.original_customer_text || inquiry.description || 'No original customer request recorded.'}</div>
+        </div>
+
         <div className="detail-card">
           <div className="section-head"><h2>Overview</h2></div>
           <dl className="details">
@@ -100,22 +109,20 @@ export default async function InquiryDetailPage({ params }: Props) {
             {filesResult.data.map((file) => (
               <div className="list-item" key={file.id}>
                 <div><strong>{file.original_name}</strong><div className="muted">{file.mime_type} · {Math.round(file.file_size / 1024)} KB</div></div>
-                <span className="badge">{label(file.status)}</span>
+                <span className={`badge status-badge status-${file.status}`}>{label(file.status)}</span>
               </div>
             ))}
           </div>}
         </div>
 
         <div className="detail-card">
-          <div className="section-head"><h2>Timeline</h2></div>
-          {timelineResult.data.length === 0 ? <div className="empty">No timeline events.</div> : <div className="list">
-            {timelineResult.data.map((event) => (
-              <div className="list-item" key={event.id}>
-                <div><strong>{label(event.event_type)}</strong><div className="muted">{label(event.actor_type)}{event.agent_id ? ` · ${event.agent_id}` : ''}</div></div>
-                <span className="muted">{new Date(event.created_at).toLocaleString('en-GB')}</span>
-              </div>
-            ))}
-          </div>}
+          <div className="section-head">
+            <div>
+              <h2>Timeline</h2>
+              <div className="muted">Latest activity</div>
+            </div>
+          </div>
+          <AdminActivityTimeline events={timelineResult.data ?? []} />
         </div>
       </section>
     </>
