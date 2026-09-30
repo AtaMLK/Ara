@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import AnswerClarificationForm from './answer-form';
 import CustomerFileLink from './file-link';
-import { retryCustomerInquiryDocumentAction } from '@/app/actions';
+import RetryProcessingButton from './retry-processing-button';
 
 
 type Props = { params: Promise<{ id: string }> };
@@ -65,12 +65,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
                   <span className="badge">{file.status.replaceAll('_', ' ')}</span>
                   {file.status !== 'processing_failed' && <CustomerFileLink inquiryId={id} fileId={file.id} />}
                   {file.status === 'processing_failed' && (
-                    <form action={async () => {
-                      'use server';
-                      await retryCustomerInquiryDocumentAction(id);
-                    }}>
-                      <button className="secondary-button compact-button" type="submit">Retry processing</button>
-                    </form>
+                    <RetryProcessingButton inquiryId={id} />
                   )}
                 </div>
               ))}
@@ -78,6 +73,19 @@ export default async function CustomerInquiryPage({ params }: Props) {
           )}
         </div>
       </section>
+
+      {timelineEvents.some((event) => event.event_type === 'workflow_document_waiting_for_ai_provider') && (
+        <section className="processing-notice" aria-live="polite">
+          <div className="processing-notice-icon">AI</div>
+          <div>
+            <strong>Document received and text extraction is complete.</strong>
+            <p>
+              AI requirement extraction is waiting for the OpenAI API key. You do not need to upload the file again.
+              Once the key is configured, retry processing to continue the workflow.
+            </p>
+          </div>
+        </section>
+      )}
 
       <section className="section detail-grid">
         <div className="detail-card">
