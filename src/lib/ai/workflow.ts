@@ -287,9 +287,19 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         } catch (error) {
           failed++;
           const message = error instanceof Error ? error.message : 'Document processing failed';
+          const errorCode = error instanceof ToolError ? error.code : 'AI_PROCESSING';
+          console.error('[ARAT][document-processing] failed', {
+            inquiryId,
+            fileId: file.id,
+            fileName: file.original_name,
+            mimeType: file.mime_type,
+            errorCode,
+            message,
+            error,
+          });
           await supabase.from('document_processing').update({
             status: 'processing_failed',
-            error_code: error instanceof ToolError ? error.code : 'AI_PROCESSING',
+            error_code: errorCode,
             error_message: message,
             attempt_count: 1,
           }).eq('file_id', file.id);
