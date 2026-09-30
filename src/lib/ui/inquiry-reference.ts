@@ -7,7 +7,7 @@ export function getInquiryDisplayReference(
 ) {
   const source = (customerName ?? '').trim();
   const initials = source
-    ? source.split(/\s+/).filter(Boolean).slice(0, 3).map((part) => part[0]).join('').toUpperCase()
+    ? (() => { const parts = source.split(/\s+/).filter(Boolean); return (parts.length > 1 ? parts.map((part) => part[0]).join('') : parts[0].slice(0, 2)).toUpperCase(); })()
     : reference.split('-')[0] || 'REQ';
 
   const dateSource = createdAt ? new Date(createdAt) : null;
