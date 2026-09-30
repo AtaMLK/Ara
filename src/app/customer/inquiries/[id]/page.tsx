@@ -34,7 +34,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
   const timelineEvents = timelineResult.data ?? [];
 
   return (
-    <>
+    <main className="portal-shell inquiry-detail-page">
       <header className="topbar">
         <div>
           <Link className="back-link" href="/customer">← My Requests</Link>
@@ -181,6 +181,6 @@ export default async function CustomerInquiryPage({ params }: Props) {
           ))
         )}
       </section>
-    </>
+    </main>
   );
 }
