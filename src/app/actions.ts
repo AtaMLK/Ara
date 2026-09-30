@@ -290,7 +290,18 @@ export async function retryCustomerInquiryDocumentAction(inquiryId: string) {
       metadata: { file_ids: fileIds },
     });
 
-    await startInquiryWorkflow(parsedId);
+    try {
+      await startInquiryWorkflow(parsedId);
+    } catch (workflowError) {
+      const message = workflowError instanceof Error
+        ? workflowError.message
+        : 'Document processing could not be restarted.';
+      revalidatePath(`/customer/inquiries/${parsedId}`);
+      revalidatePath('/customer');
+      revalidatePath('/inquiries');
+      return { ok: false, error: message };
+    }
+
     revalidatePath(`/customer/inquiries/${parsedId}`);
     revalidatePath('/customer');
     revalidatePath('/inquiries');
