@@ -15,7 +15,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
   const { supabase } = await requireCustomerInquiryAccess(id);
 
   const [inquiryResult, requirementsResult, clarificationsResult, filesResult, timelineResult] = await Promise.all([
-    supabase.from('inquiries').select('id,reference,title,description,original_customer_text,status,updated_at').eq('id', id).single(),
+    supabase.from('inquiries').select('id,reference,title,description,original_customer_text,status,updated_at,customers(name,company_name)').eq('id', id).single(),
     supabase.from('requirements').select('id,type,value,status,source,source_ref').eq('inquiry_id', id).order('created_at'),
     supabase.from('clarifications').select('id,requirement_id,question,answer,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at'),
@@ -41,7 +41,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
         <div>
           <Link className="back-icon-button" href="/customer" aria-label="Back to My Requests" title="Back to My Requests"><span aria-hidden="true">←</span></Link>
           <div className="eyebrow">CUSTOMER PORTAL</div>
-          <h1 className="title inquiry-display-reference" title={inquiryResult.data.reference}>{getInquiryDisplayReference(inquiryResult.data.reference, inquiryResult.data.title, undefined, 1, inquiryResult.data.updated_at)}</h1><div className="muted inquiry-reference-full">{inquiryResult.data.reference}</div>
+          <h1 className="title inquiry-display-reference" title={inquiryResult.data.reference}>{getInquiryDisplayReference(inquiryResult.data.reference, inquiryResult.data.customers?.company_name || inquiryResult.data.customers?.name, undefined, 1, inquiryResult.data.updated_at)}</h1><div className="muted inquiry-reference-full">{inquiryResult.data.reference}</div>
           <div className="muted">{inquiryResult.data.title}</div>
         </div>
         <span className={`badge status-badge status-${inquiryResult.data.status}`}>{inquiryResult.data.status.replaceAll('_',' ')}</span>
