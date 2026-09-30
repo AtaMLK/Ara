@@ -123,6 +123,14 @@ export async function parseInquiryFile(
         };
       }
 
+      if (!process.env.OPENAI_API_KEY) {
+        return {
+          extractedText: '',
+          extractedData: { ...(pages !== undefined ? { pages } : {}), ocr: false },
+          qualityFlags: ['OCR_PENDING', 'AI_EXTRACTION_PENDING'],
+        };
+      }
+
       const ocr = await runVisionOcr(bytes, 'application/pdf', originalName);
       return {
         extractedText: ocr.extractedText,
