@@ -543,3 +543,67 @@ html[data-theme="dark"] .timeline-item:not(:last-child)::before{background:var(-
   .customer-brand small{display:none}
   .customer-nav-actions .theme-toggle span:last-child{display:none}
 }
+
+/* Refined ARAT shell */
+.admin-brand{
+  display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--arat-text);
+  margin:0 8px 22px;
+}
+.admin-brand-mark{
+  display:grid;place-items:center;width:34px;height:34px;border-radius:10px;
+  background:#334a5f;color:#fff;font-size:15px;font-weight:800;
+  box-shadow:0 6px 16px rgba(51,74,95,.13);
+}
+.admin-brand strong{display:block;font-size:15px;letter-spacing:-.025em}
+.admin-brand small{display:block;margin-top:2px;color:var(--arat-muted);font-size:10px}
+.admin-eyebrow{margin:0 10px 8px}
+.admin-nav a{
+  display:flex;align-items:center;gap:10px;
+}
+.admin-nav a svg{flex:0 0 auto;color:#84919d;transition:color .18s ease,transform .18s ease}
+.admin-nav a:hover svg{color:#536d84;transform:translateX(1px)}
+.admin-nav a.active svg{color:#58728a}
+
+/* One compact back control shared by customer detail */
+.back-icon-button{
+  display:inline-grid;place-items:center;width:34px;height:34px;
+  border:1px solid var(--arat-border-strong);border-radius:9px;
+  background:var(--arat-surface);color:var(--arat-text-soft);
+  text-decoration:none;font-size:17px;line-height:1;
+  box-shadow:0 3px 12px rgba(25,40,55,.035);
+  transition:transform .18s ease,background .18s ease,border-color .18s ease;
+  margin-bottom:10px;
+}
+.back-icon-button:hover{
+  background:var(--arat-surface-soft);border-color:#cbd5dd;transform:translateX(-2px);
+}
+html[data-theme="dark"] .back-icon-button{background:var(--arat-surface);color:var(--arat-text-soft)}
+
+html[data-theme="dark"] .admin-brand-mark{background:#89a2b7;color:#10161b}
+html[data-theme="dark"] .admin-nav a svg{color:#7f8e9b}
+html[data-theme="dark"] .admin-nav a:hover svg,
+html[data-theme="dark"] .admin-nav a.active svg{color:#9db8cb}
+
+/* Keep semantic state colors restrained and consistent across both portals */
+.status-processing,.status-researching,.status-rfq,.status-quoting{
+  background:var(--arat-info-soft)!important;border-color:color-mix(in srgb,var(--arat-info) 18%,transparent)!important;color:var(--arat-info)!important;
+}
+.status-open,.status-confirmed,.status-accepted,.status-completed,.status-converted,.status-processed{
+  background:var(--arat-success-soft)!important;border-color:color-mix(in srgb,var(--arat-success) 18%,transparent)!important;color:var(--arat-success)!important;
+}
+.status-clarification_required,.status-processing_pending,.status-pending_approval,.status-proposed{
+  background:var(--arat-warning-soft)!important;border-color:color-mix(in srgb,var(--arat-warning) 18%,transparent)!important;color:var(--arat-warning)!important;
+}
+.status-processing_failed,.status-rejected,.status-closed,.status-canceled{
+  background:var(--arat-danger-soft)!important;border-color:color-mix(in srgb,var(--arat-danger) 18%,transparent)!important;color:var(--arat-danger)!important;
+}
+.status-uploaded{background:var(--arat-neutral-soft)!important;color:var(--arat-neutral)!important}
+
+/* AI is intentionally distinct but very soft */
+.status-ai,.status-ai_pending,.status-waiting_ai,.ai-badge{
+  background:var(--arat-ai-soft)!important;border-color:color-mix(in srgb,var(--arat-ai) 18%,transparent)!important;color:var(--arat-ai)!important;
+}
+
+@media(max-width:600px){
+  .admin-brand{margin-bottom:16px}
+}
