@@ -1,7 +1,6 @@
 import 'server-only';
 
-import { CanvasFactory } from 'pdf-parse/worker';
-import { PDFParse } from 'pdf-parse';
+import { extractText, getDocumentProxy } from 'unpdf';
 import * as XLSX from 'xlsx';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
@@ -110,37 +109,32 @@ export async function parseInquiryFile(
   originalName: string,
 ): Promise<ParsedDocument> {
   if (mimeType === 'application/pdf' || originalName.toLowerCase().endsWith('.pdf')) {
-    const parser = new PDFParse({ data: Buffer.from(bytes), CanvasFactory });
-    try {
-      const result = await parser.getText();
-      const extractedText = typeof result.text === 'string' ? result.text : '';
-      const pages = typeof result.total === 'number' ? result.total : undefined;
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { totalPages, text } = await extractText(pdf, { mergePages: true });
+    const extractedText = typeof text === 'string' ? text : '';
 
-      if (extractedText.trim()) {
-        return {
-          extractedText: extractedText.slice(0, 120000),
-          extractedData: { ...(pages !== undefined ? { pages } : {}) },
-          qualityFlags: [],
-        };
-      }
-
-      if (!process.env.OPENAI_API_KEY) {
-        return {
-          extractedText: '',
-          extractedData: { ...(pages !== undefined ? { pages } : {}), ocr: false },
-          qualityFlags: ['OCR_PENDING', 'AI_EXTRACTION_PENDING'],
-        };
-      }
-
-      const ocr = await runVisionOcr(bytes, 'application/pdf', originalName);
+    if (extractedText.trim()) {
       return {
-        extractedText: ocr.extractedText,
-        extractedData: { ...(pages !== undefined ? { pages } : {}), ocr: true },
-        qualityFlags: ['OCR_USED', ...ocr.qualityFlags],
+        extractedText: extractedText.slice(0, 120000),
+        extractedData: { pages: totalPages },
+        qualityFlags: [],
       };
-    } finally {
-      await parser.destroy();
     }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return {
+        extractedText: '',
+        extractedData: { pages: totalPages, ocr: false },
+        qualityFlags: ['OCR_PENDING', 'AI_EXTRACTION_PENDING'],
+      };
+    }
+
+    const ocr = await runVisionOcr(bytes, 'application/pdf', originalName);
+    return {
+      extractedText: ocr.extractedText,
+      extractedData: { pages: totalPages, ocr: true },
+      qualityFlags: ['OCR_USED', ...ocr.qualityFlags],
+    };
   }
 
   if (
