@@ -292,21 +292,65 @@ export async function retryCustomerInquiryDocumentAction(inquiryId: string) {
 
     try {
       const workflowResult = await startInquiryWorkflow(parsedId);
-      const { data: processingRows } = await admin
-        .from('document_processing')
-        .select('file_id,status,error_code,error_message,quality_flags,extracted_text')
-        .in('file_id', fileIds);
+      const [{ data: processingRows, error: processingReadError }, { data: fileRows, error: fileReadError }] = await Promise.all([
+        admin
+          .from('document_processing')
+          .select('file_id,status,error_code,error_message,quality_flags,extracted_text')
+          .in('file_id', fileIds),
+        admin
+          .from('inquiry_files')
+          .select('id,original_name,status,storage_path')
+          .in('id', fileIds),
+      ]);
+
+      if (processingReadError) {
+        console.error('[ARAT][document-processing] could not read processing state', {
+          inquiryId: parsedId,
+          fileIds,
+          error: processingReadError,
+        });
+      }
+      if (fileReadError) {
+        console.error('[ARAT][document-processing] could not read file state', {
+          inquiryId: parsedId,
+          fileIds,
+          error: fileReadError,
+        });
+      }
 
       const failedRows = (processingRows ?? []).filter((row) => row.status === 'processing_failed');
-      if (failedRows.length > 0) {
+      const failedFiles = (fileRows ?? []).filter((row) => row.status === 'processing_failed');
+      const missingProcessingRows = fileIds.filter(
+        (fileId) => !(processingRows ?? []).some((row) => row.file_id === fileId),
+      );
+
+      if (failedRows.length > 0 || failedFiles.length > 0 || missingProcessingRows.length > 0) {
         const firstFailure = failedRows[0];
-        const detail = firstFailure.error_message || firstFailure.error_code || 'Document processing failed.';
+        const firstFailedFile = failedFiles[0];
+        const detail =
+          firstFailure?.error_message ||
+          firstFailure?.error_code ||
+          (firstFailedFile ? `Attachment "${firstFailedFile.original_name}" is still marked processing_failed.` : null) ||
+          (missingProcessingRows.length > 0 ? 'Document processing state is missing for the attachment.' : null) ||
+          'Document processing failed.';
+
+        console.error('[ARAT][document-processing] retry finished with failed state', {
+          inquiryId: parsedId,
+          fileIds,
+          processingRows,
+          fileRows,
+          missingProcessingRows,
+          detail,
+        });
+
         revalidatePath(`/customer/inquiries/${parsedId}`);
         revalidatePath('/customer');
         return {
           ok: false,
           error: detail,
           outcome: workflowResult.outcome,
+          processing: processingRows ?? [],
+          files: fileRows ?? [],
         };
       }
 
