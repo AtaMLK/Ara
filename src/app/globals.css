@@ -694,3 +694,14 @@ html[data-theme="dark"] .admin-nav a.active svg{color:#9db8cb}
 }
 html[data-theme="dark"] .modal-backdrop{background:rgba(0,0,0,.5)}
 html[data-theme="dark"] .modal-card{box-shadow:0 24px 70px rgba(0,0,0,.35)}
+
+.dashboard-kpi-card{position:relative;overflow:hidden}
+.dashboard-kpi-top{display:flex;align-items:center;gap:9px}
+.dashboard-kpi-icon{
+  display:grid;place-items:center;width:30px;height:30px;border-radius:8px;
+  background:var(--arat-accent-soft);color:var(--arat-accent);
+  transition:transform .2s ease,background .2s ease;
+}
+.dashboard-kpi-card:hover .dashboard-kpi-icon{transform:translateY(-1px) rotate(-2deg)}
+.dashboard-inquiry-link{text-decoration:none}
+.dashboard-inquiry-link:hover{text-decoration:underline;color:var(--arat-text)}
