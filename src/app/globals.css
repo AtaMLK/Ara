@@ -1110,3 +1110,30 @@ html[data-theme="dark"] .nav a.active{
   color:#b9d5e8;
   border-color:#345063;
 }
+
+/* Dark mode readability for customer inquiry content */
+html[data-theme="dark"] .portal-shell .detail-text,
+html[data-theme="dark"] .portal-shell .detail-card p,
+html[data-theme="dark"] .portal-shell .detail-card .original-request{
+  color:#c4d0da!important;
+}
+html[data-theme="dark"] .portal-shell .detail-card .muted{
+  color:#94a6b5!important;
+}
+html[data-theme="dark"] .portal-shell .detail-card h2,
+html[data-theme="dark"] .portal-shell .detail-card h3{
+  color:#eef4f8!important;
+}
+html[data-theme="dark"] .portal-shell .detail-card{
+  color:#c4d0da;
+}
+html[data-theme="dark"] .portal-shell .detail-card strong{
+  color:#e5edf2;
+}
+html[data-theme="dark"] .portal-shell .detail-card a{
+  color:#a9c9df;
+}
+.portal-shell .detail-text{
+  margin-top:16px;
+  line-height:1.8;
+}
