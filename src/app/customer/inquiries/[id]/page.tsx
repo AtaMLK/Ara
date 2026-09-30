@@ -4,6 +4,7 @@ import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import AnswerClarificationForm from './answer-form';
 import CustomerFileLink from './file-link';
 import RetryProcessingButton from './retry-processing-button';
+import ActivityTimeline from './activity-timeline';
 
 
 type Props = { params: Promise<{ id: string }> };
@@ -42,7 +43,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
           <h1 className="title">{inquiryResult.data.reference}</h1>
           <div className="muted">{inquiryResult.data.title}</div>
         </div>
-        <span className="badge">{inquiryResult.data.status.replaceAll('_',' ')}</span>
+        <span className={`badge status-badge status-${inquiryResult.data.status}`}>{inquiryResult.data.status.replaceAll('_',' ')}</span>
       </header>
 
       <section className="detail-grid">
@@ -62,7 +63,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
                     <strong>{file.original_name}</strong>
                     <div className="muted">{Math.round(file.file_size / 1024)} KB · {file.mime_type}</div>
                   </div>
-                  <span className="badge">{file.status.replaceAll('_', ' ')}</span>
+                  <span className={`badge status-badge status-${file.status}`}>{file.status.replaceAll('_', ' ')}</span>
                   {file.status !== 'processing_failed' && <CustomerFileLink inquiryId={id} fileId={file.id} />}
                   {file.status === 'processing_failed' && (
                     <RetryProcessingButton inquiryId={id} />
@@ -78,10 +79,9 @@ export default async function CustomerInquiryPage({ params }: Props) {
         <section className="processing-notice" aria-live="polite">
           <div className="processing-notice-icon">AI</div>
           <div>
-            <strong>Document received and text extraction is complete.</strong>
+            <strong>AI document processing is waiting for setup.</strong>
             <p>
-              AI requirement extraction is waiting for the OpenAI API key. You do not need to upload the file again.
-              Once the key is configured, retry processing to continue the workflow.
+              This attachment is safely stored and does not need to be uploaded again. Image and scanned-document extraction requires the AI provider. Once it is configured, retry processing to continue the workflow.
             </p>
           </div>
         </section>
@@ -122,48 +122,14 @@ export default async function CustomerInquiryPage({ params }: Props) {
         ) : <div className="empty">No quotation is available yet.</div>}
       </section>
       <section className="section">
-        <div className="section-head"><h2>Activity</h2></div>
+        <div className="section-head">
+          <div>
+            <h2>Activity</h2>
+            <p className="section-caption">The latest steps are shown first. Open the timeline to see the full history.</p>
+          </div>
+        </div>
         <div className="detail-card">
-          {(timelineEvents.length === 0) ? (
-            <div className="empty">No activity yet.</div>
-          ) : (
-            <div className="timeline">
-              {timelineEvents.map((event) => {
-                const status = typeof event.metadata?.status === 'string' ? event.metadata.status : '';
-                const label = event.event_type === 'customer_inquiry_created'
-                  ? 'Request submitted'
-                  : event.event_type === 'customer_file_uploaded'
-                    ? 'Attachment uploaded'
-                    : event.event_type === 'customer_status_changed'
-                      ? ({
-                          processing: 'Request is being processed',
-                          open: 'Request is ready for review',
-                          clarification_required: 'More information is required',
-                          researching: 'Supplier research is in progress',
-                          rfq: 'Supplier quotation requests are in progress',
-                          quoting: 'Your quotation is being prepared',
-                          converted: 'Request completed',
-                          no_suitable_supplier: 'No suitable supplier was found',
-                          closed: 'Request closed',
-                        } as Record<string, string>)[status] ?? 'Request status updated'
-                      : event.event_type === 'clarification_sent'
-                      ? 'A question is waiting for your answer'
-                      : event.event_type === 'clarification_answer_applied'
-                        ? 'Your answer was received'
-                        : 'Request updated';
-
-                return (
-                  <div className="timeline-item" key={event.id}>
-                    <span className="timeline-dot" />
-                    <div>
-                      <strong>{label}</strong>
-                      <div className="muted">{new Date(event.created_at).toLocaleString()}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <ActivityTimeline events={timelineEvents} />
         </div>
       </section>
 
