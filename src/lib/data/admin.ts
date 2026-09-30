@@ -73,7 +73,7 @@ export async function listInquiries(search?: string, status?: string) {
   const { supabase } = await requireAdminPage();
   let query = supabase
     .from('inquiries')
-    .select('id,reference,title,status,priority,created_at,updated_at,customers(name,company_name)')
+    .select('id,reference,title,status,priority,current_version,created_at,updated_at,customers(name,company_name)')
     .order('updated_at', { ascending: false })
     .limit(100);
 
