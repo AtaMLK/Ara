@@ -204,29 +204,33 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           };
 
           if (parsed.extractedText.trim()) {
-            const ai = await runAgent(
-              { agentId: 'document', executionId: running.id, inquiryId },
-              {
-                file_id: file.id,
-                file_name: file.original_name,
-                mime_type: file.mime_type,
-                extracted_text: parsed.extractedText,
-                instructions: [
-                  'Extract only information explicitly present in the document text.',
-                  'Do not infer missing values.',
-                  'Return requirements only when the document explicitly supports them.',
-                  'Use sourceRef values that identify a useful location such as page number, sheet name, or row range when available.',
-                  'Flag ambiguity or unreadable content in qualityFlags.',
-                ],
-              },
-              documentOutputSchema,
-            );
-            extraction = {
-              extractedText: parsed.extractedText,
-              extractedData: parsed.extractedData,
-              qualityFlags: [...parsed.qualityFlags, ...ai.output.qualityFlags],
-              requirements: ai.output.requirements,
-            };
+            if (process.env.OPENAI_API_KEY) {
+              const ai = await runAgent(
+                { agentId: 'document', executionId: running.id, inquiryId },
+                {
+                  file_id: file.id,
+                  file_name: file.original_name,
+                  mime_type: file.mime_type,
+                  extracted_text: parsed.extractedText,
+                  instructions: [
+                    'Extract only information explicitly present in the document text.',
+                    'Do not infer missing values.',
+                    'Return requirements only when the document explicitly supports them.',
+                    'Use sourceRef values that identify a useful location such as page number, sheet name, or row range when available.',
+                    'Flag ambiguity or unreadable content in qualityFlags.',
+                  ],
+                },
+                documentOutputSchema,
+              );
+              extraction = {
+                extractedText: parsed.extractedText,
+                extractedData: parsed.extractedData,
+                qualityFlags: [...parsed.qualityFlags, ...ai.output.qualityFlags],
+                requirements: ai.output.requirements,
+              };
+            } else {
+              extraction.qualityFlags = [...parsed.qualityFlags, 'AI_EXTRACTION_PENDING'];
+            }
           } else {
             ocrPending++;
           }
@@ -300,12 +304,33 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
       }
 
+      const aiReady = Boolean(process.env.OPENAI_API_KEY);
+
       await markExecutionSuccess(running.id, {
         processed,
         failed,
         ocr_pending: ocrPending,
-        next_stage: 'intake',
+        next_stage: aiReady ? 'intake' : null,
+        blocked: !aiReady,
+        reason: aiReady ? undefined : 'OPENAI_API_KEY_REQUIRED_FOR_AI_EXTRACTION',
       });
+
+      if (!aiReady) {
+        await supabase.from('ai_alerts').insert({
+          inquiry_id: inquiryId,
+          agent_id: 'document',
+          alert_type: 'AI_PROVIDER_NOT_CONFIGURED',
+          message: 'Document text extraction completed, but AI requirement extraction is waiting for OPENAI_API_KEY.',
+          priority: 'normal',
+        });
+        await timeline(inquiryId, 'workflow_document_waiting_for_ai_provider', {
+          processed,
+          failed,
+          ocr_pending: ocrPending,
+        }, 'document');
+
+        return { execution: running, outcome: 'ai_provider_required' as const };
+      }
 
       const intake = await enqueueWorkflow(inquiryId, 'intake');
       await timeline(inquiryId, 'workflow_document_completed', {
