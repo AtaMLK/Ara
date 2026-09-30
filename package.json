@@ -20,7 +20,8 @@
     "react-dom": "latest",
     "xlsx": "latest",
     "zod": "latest",
-    "unpdf": "1.8.1"
+    "unpdf": "1.8.1",
+    "lucide-react": "latest"
   },
   "devDependencies": {
     "@types/node": "latest",
