@@ -13,7 +13,7 @@ export default async function CustomersPage() {
 
   return (
     <>
-      <header className="topbar">
+      <header className="topbar customers-topbar">
         <div>
           <div className="eyebrow">ADMIN</div>
           <h1 className="title">Customers</h1>
@@ -21,18 +21,7 @@ export default async function CustomersPage() {
         </div>
       </header>
 
-      <section className="detail-grid">
-        <CreateCustomerForm />
-        <div className="detail-card">
-          <h2>Account rules</h2>
-          <div className="list">
-            <div className="list-item"><span>Public sign up</span><span className="badge status-rejected">Disabled</span></div>
-            <div className="list-item"><span>Account creation</span><span className="badge">Admin only</span></div>
-            <div className="list-item"><span>Customer password reset</span><span className="badge">Customer</span></div>
-            <div className="list-item"><span>Admin password change</span><span className="badge">Admin</span></div>
-          </div>
-        </div>
-      </section>
+      <section className="section customer-create-section"><CreateCustomerForm /></section>
 
       <section className="section">
         <div className="table">
