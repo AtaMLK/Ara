@@ -291,7 +291,33 @@ export async function retryCustomerInquiryDocumentAction(inquiryId: string) {
     });
 
     try {
-      await startInquiryWorkflow(parsedId);
+      const workflowResult = await startInquiryWorkflow(parsedId);
+      const { data: processingRows } = await admin
+        .from('document_processing')
+        .select('file_id,status,error_code,error_message,quality_flags,extracted_text')
+        .in('file_id', fileIds);
+
+      const failedRows = (processingRows ?? []).filter((row) => row.status === 'processing_failed');
+      if (failedRows.length > 0) {
+        const firstFailure = failedRows[0];
+        const detail = firstFailure.error_message || firstFailure.error_code || 'Document processing failed.';
+        revalidatePath(`/customer/inquiries/${parsedId}`);
+        revalidatePath('/customer');
+        return {
+          ok: false,
+          error: detail,
+          outcome: workflowResult.outcome,
+        };
+      }
+
+      revalidatePath(`/customer/inquiries/${parsedId}`);
+      revalidatePath('/customer');
+      revalidatePath('/inquiries');
+      return {
+        ok: true,
+        outcome: workflowResult.outcome,
+        processing: processingRows ?? [],
+      };
     } catch (workflowError) {
       const message = workflowError instanceof Error
         ? workflowError.message
