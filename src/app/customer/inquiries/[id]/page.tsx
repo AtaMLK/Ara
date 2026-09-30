@@ -38,7 +38,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
     <main className="portal-shell inquiry-detail-page">
       <header className="topbar">
         <div>
-          <Link className="back-link" href="/customer">← My Requests</Link>
+          <Link className="back-icon-button" href="/customer" aria-label="Back to My Requests" title="Back to My Requests"><span aria-hidden="true">←</span></Link>
           <div className="eyebrow">CUSTOMER PORTAL</div>
           <h1 className="title">{inquiryResult.data.reference}</h1>
           <div className="muted">{inquiryResult.data.title}</div>
