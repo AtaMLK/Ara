@@ -29,11 +29,11 @@ export default async function CustomerPortalPage() {
         <div className="topbar-actions"><Link className="primary-button new-request-button" href="/customer/inquiries/new"><span aria-hidden="true">+</span> New Request</Link><SignOutButton /></div>
       </header>
       <section className="section">
-        <div className="table">
+        <div className="table customer-requests-table">
           <div className="row header"><div>Reference</div><div>Request</div><div>Status</div><div>Updated</div></div>
           {(inquiries ?? []).length === 0 ? <div className="empty">No procurement requests yet.</div> : (inquiries ?? []).map((item) => (
             <Link className="row row-link" href={`/customer/inquiries/${item.id}`} key={item.id}>
-              <div><strong>{getInquiryDisplayReference(item.reference, customer.company_name || customer.name, undefined, 1, item.updated_at)}</strong><div className="inquiry-reference-full">{item.reference}</div></div><div>{item.title}</div><div><span className="badge">{item.status.replaceAll('_',' ')}</span></div><div>{new Date(item.updated_at).toLocaleDateString('en-GB')}</div>
+              <div><strong>{getInquiryDisplayReference(item.reference, customer.company_name || customer.name, undefined, 1, item.updated_at)}</strong><div className="inquiry-reference-full">{item.reference}</div></div><div>{item.title}</div><div className="status-cell"><span className={`badge status-badge status-${item.status}`}>{item.status.replaceAll('_',' ')}</span></div><div>{new Date(item.updated_at).toLocaleDateString('en-GB')}</div>
             </Link>
           ))}
         </div>
