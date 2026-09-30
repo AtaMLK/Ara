@@ -225,16 +225,22 @@ export async function retryCustomerInquiryDocumentAction(inquiryId: string) {
 
     const fileIds = failedFiles.map((file) => file.id);
 
-    const { error: fileResetError } = await supabase
+    // Access was already verified above. Use the service client for the state reset
+    // so the retry cannot be silently blocked by customer-facing RLS.
+    const { data: resetFiles, error: fileResetError } = await admin
       .from('inquiry_files')
       .update({
         status: 'uploaded',
         processed_at: null,
       })
       .in('id', fileIds)
-      .eq('inquiry_id', parsedId);
+      .eq('inquiry_id', parsedId)
+      .select('id,status');
 
     if (fileResetError) throw new ToolError('TRANSIENT', fileResetError.message);
+    if ((resetFiles ?? []).length !== fileIds.length) {
+      throw new ToolError('CONFLICT', 'Document retry could not reset all failed attachments.');
+    }
 
     const { error: processingResetError } = await admin
       .from('document_processing')
