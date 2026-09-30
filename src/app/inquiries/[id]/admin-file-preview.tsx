@@ -1,8 +1,47 @@
 'use client';
 
 import { useState } from 'react';
-import { Download, Eye, X } from 'lucide-react';
 import { getAdminInquiryFileUrlAction } from '@/app/actions';
+
+function Icon({ name, size = 16 }: { name: 'download' | 'eye' | 'close'; size?: number }) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true,
+  };
+
+  if (name === 'download') {
+    return (
+      <svg {...common}>
+        <path d="M12 3v12" />
+        <path d="m7 10 5 5 5-5" />
+        <path d="M5 21h14" />
+      </svg>
+    );
+  }
+
+  if (name === 'eye') {
+    return (
+      <svg {...common}>
+        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
+        <circle cx="12" cy="12" r="2.5" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...common}>
+      <path d="m6 6 12 12" />
+      <path d="m18 6-12 12" />
+    </svg>
+  );
+}
 
 type Props = {
   inquiryId: string;
@@ -61,12 +100,12 @@ export default function AdminFilePreview({ inquiryId, fileId, fileName, mimeType
       <div className="file-actions">
         {canPreview && (
           <button className="inline-button" type="button" onClick={loadFile} disabled={loading}>
-            <Eye size={14} aria-hidden="true" />
+            <Icon name="eye" size={14} />
             {loading ? 'Opening…' : 'Preview'}
           </button>
         )}
         <button className="inline-button" type="button" onClick={downloadFile} disabled={loading}>
-          <Download size={14} aria-hidden="true" />
+          <Icon name="download" size={14} />
           Download
         </button>
       </div>
@@ -88,7 +127,7 @@ export default function AdminFilePreview({ inquiryId, fileId, fileName, mimeType
                 aria-label="Close preview"
                 title="Close preview"
               >
-                <X size={17} aria-hidden="true" />
+                <Icon name="close" size={17} />
               </button>
             </div>
 
