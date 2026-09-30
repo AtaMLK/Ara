@@ -50,7 +50,7 @@ function getTone(event: TimelineEvent) {
 
 export default function ActivityTimeline({ events }: { events: TimelineEvent[] }) {
   const [expanded, setExpanded] = useState(false);
-  const visibleEvents = expanded ? events : events.slice(-3);
+  const visibleEvents = expanded ? [...events].reverse() : [...events].slice(-3).reverse();
   const hasOlder = events.length > 3;
 
   return (
