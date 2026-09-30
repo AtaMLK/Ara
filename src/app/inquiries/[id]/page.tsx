@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import AdminActivityTimeline from './admin-activity-timeline';
+import AdminFilePreview from './admin-file-preview';
 import { getInquiryDisplayReference } from '@/lib/ui/inquiry-reference';
 import { notFound } from 'next/navigation';
 import { requireAdminPage } from '@/lib/data/admin';
@@ -108,8 +109,17 @@ export default async function InquiryDetailPage({ params }: Props) {
           {filesResult.data.length === 0 ? <div className="empty">No files.</div> : <div className="list">
             {filesResult.data.map((file) => (
               <div className="list-item" key={file.id}>
-                <div><strong>{file.original_name}</strong><div className="muted">{file.mime_type} · {Math.round(file.file_size / 1024)} KB</div></div>
+                <div>
+                  <strong>{file.original_name.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')}</strong>
+                  <div className="muted">{file.mime_type} · {Math.round(file.file_size / 1024)} KB</div>
+                </div>
                 <span className={`badge status-badge status-${file.status}`}>{label(file.status)}</span>
+                <AdminFilePreview
+                  inquiryId={inquiry.id}
+                  fileId={file.id}
+                  fileName={file.original_name.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')}
+                  mimeType={file.mime_type}
+                />
               </div>
             ))}
           </div>}
