@@ -1,6 +1,7 @@
 import Link from 'next/link';
-import { AlertCircle, Inbox, Send, Receipt } from 'lucide-react';
 import { getDashboardData } from '@/lib/data/admin';
+
+function MetricIcon({ kind }: { kind: string }) { return <span aria-hidden="true">{kind === 'alert' ? '!' : kind === 'inbox' ? '□' : kind === 'send' ? '↗' : '▣'}</span>; }
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
@@ -25,13 +26,13 @@ export default async function Dashboard() {
 
       <section className="cards">
         {[
-          ['Needs Attention', data.needsAttention, AlertCircle],
-          ['Open Inquiries', data.openInquiries, Inbox],
-          ['Pending RFQs', data.pendingRfqs, Send],
-          ['Quotes Awaiting Approval', data.quotesAwaitingApproval, Receipt],
-        ].map(([labelText, value, Icon]) => (
+          ['Needs Attention', data.needsAttention, 'alert'],
+          ['Open Inquiries', data.openInquiries, 'inbox'],
+          ['Pending RFQs', data.pendingRfqs, 'send'],
+          ['Quotes Awaiting Approval', data.quotesAwaitingApproval, 'receipt'],
+        ].map(([labelText, value, iconKind]) => (
           <div className="card dashboard-kpi-card" key={String(labelText)}>
-            <div className="dashboard-kpi-top"><span className="dashboard-kpi-icon"><Icon size={17} strokeWidth={1.8} /></span><span className="muted">{labelText}</span></div>
+            <div className="dashboard-kpi-top"><span className="dashboard-kpi-icon"><MetricIcon kind={String(iconKind)} /></span><span className="muted">{labelText}</span></div>
             <div className="kpi">{value}</div>
             <div className="eyebrow">Current</div>
           </div>
