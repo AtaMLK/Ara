@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { CanvasFactory } from 'pdf-parse/worker';
 import { PDFParse } from 'pdf-parse';
 import * as XLSX from 'xlsx';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
@@ -109,7 +110,7 @@ export async function parseInquiryFile(
   originalName: string,
 ): Promise<ParsedDocument> {
   if (mimeType === 'application/pdf' || originalName.toLowerCase().endsWith('.pdf')) {
-    const parser = new PDFParse({ data: Buffer.from(bytes) });
+    const parser = new PDFParse({ data: Buffer.from(bytes), CanvasFactory });
     try {
       const result = await parser.getText();
       const extractedText = typeof result.text === 'string' ? result.text : '';
