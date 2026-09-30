@@ -1,3 +1,5 @@
+import Link from 'next/link';
+import { AlertCircle, Inbox, Send, Receipt } from 'lucide-react';
 import { getDashboardData } from '@/lib/data/admin';
 
 function formatDate(value: string) {
@@ -23,13 +25,13 @@ export default async function Dashboard() {
 
       <section className="cards">
         {[
-          ['Needs Attention', data.needsAttention],
-          ['Open Inquiries', data.openInquiries],
-          ['Pending RFQs', data.pendingRfqs],
-          ['Quotes Awaiting Approval', data.quotesAwaitingApproval],
-        ].map(([labelText, value]) => (
-          <div className="card" key={String(labelText)}>
-            <div className="muted">{labelText}</div>
+          ['Needs Attention', data.needsAttention, AlertCircle],
+          ['Open Inquiries', data.openInquiries, Inbox],
+          ['Pending RFQs', data.pendingRfqs, Send],
+          ['Quotes Awaiting Approval', data.quotesAwaitingApproval, Receipt],
+        ].map(([labelText, value, Icon]) => (
+          <div className="card dashboard-kpi-card" key={String(labelText)}>
+            <div className="dashboard-kpi-top"><span className="dashboard-kpi-icon"><Icon size={17} strokeWidth={1.8} /></span><span className="muted">{labelText}</span></div>
             <div className="kpi">{value}</div>
             <div className="eyebrow">Current</div>
           </div>
@@ -51,7 +53,7 @@ export default async function Dashboard() {
               <div>{label(item.eventType)}</div>
               <div><span className="badge">{label(item.actorType)}</span></div>
               <div>{formatDate(item.createdAt)}</div>
-              <div className="muted">{item.inquiryId.slice(0, 8)}…</div>
+              <Link className="muted dashboard-inquiry-link" href={`/inquiries/${item.inquiryId}`}>{item.inquiryId.slice(0, 8)}…</Link>
             </div>
           ))}
         </div>
