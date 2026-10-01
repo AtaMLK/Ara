@@ -2336,6 +2336,7 @@ function stageAgentExists(stage: WorkflowStage) {
     'comparison',
     'customer_quote',
     'customer_response',
+    'email_response',
     'reporting',
     'completed',
   ].includes(stage);
