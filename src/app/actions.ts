@@ -71,12 +71,22 @@ export async function createCustomerInquiryAction(input: {
     try {
       await startInquiryWorkflow(inquiry.id);
     } catch (workflowError) {
-      await supabase.from('timeline_events').insert({
+      const message = workflowError instanceof Error ? workflowError.message : 'Workflow start failed';
+
+      await createSupabaseAdminClient().from('timeline_events').insert({
         inquiry_id: inquiry.id,
         event_type: 'workflow_start_failed',
         visibility: 'admin',
         actor_type: 'system',
-        metadata: { message: workflowError instanceof Error ? workflowError.message : 'Workflow start failed' },
+        metadata: { message },
+      });
+
+      await createSupabaseAdminClient().from('ai_alerts').insert({
+        inquiry_id: inquiry.id,
+        agent_id: 'orchestrator',
+        alert_type: 'WORKFLOW_START_FAILED',
+        message: `Automatic workflow start failed: ${message}. Admin action is required.`,
+        priority: 'urgent',
       });
     }
 
