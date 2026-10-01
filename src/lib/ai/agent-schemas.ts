@@ -14,7 +14,7 @@ const documentQualityFlagSchema = z.union([
 ]);
 
 const documentRequirementSchema = z.object({
-  type: z.string().transform((value) => {
+  type: z.string().optional().default('other').transform((value) => {
     const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
     const aliases: Record<string, 'product'|'model_part_number'|'quantity'|'specification'|'delivery'|'other'> = {
       product: 'product',
@@ -39,7 +39,7 @@ const documentRequirementSchema = z.object({
     };
     return aliases[normalized] ?? 'other';
   }),
-  value: z.string().min(1),
+  value: z.coerce.string().min(1),
   sourceRef: z.string().optional(),
 });
 
