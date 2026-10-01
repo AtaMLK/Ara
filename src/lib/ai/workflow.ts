@@ -2105,20 +2105,37 @@ export async function continueInquiryWorkflow(inquiryId: string) {
         if ((finalized ?? []).some((candidate) => candidate.supplier_id)) {
           const { data: verification } = await supabase
             .from('ai_executions')
-            .select('status')
+            .select('status,output_ref')
             .eq('inquiry_id', inquiryId)
             .eq('task_key', `inquiry:${inquiryId}:stage:verification`)
             .maybeSingle();
 
           if (verification?.status === 'succeeded') {
+            const verificationOutput = (verification.output_ref ?? {}) as { blocked?: boolean; pending_count?: number };
+
+            if (verificationOutput.blocked) {
+              throw new ToolError(
+                'APPROVAL_REQUIRED',
+                verificationOutput.pending_count
+                  ? `Supplier verification is waiting for Admin review: ${verificationOutput.pending_count} supplier(s) still need verification evidence.`
+                  : 'Supplier verification is waiting for Admin review.',
+              );
+            }
+
             const { data: rfqExecution } = await supabase
               .from('ai_executions')
-              .select('status')
+              .select('status,output_ref')
               .eq('inquiry_id', inquiryId)
               .eq('task_key', `inquiry:${inquiryId}:stage:rfq`)
               .maybeSingle();
 
             if (rfqExecution?.status !== 'succeeded') return runStage(inquiryId, 'rfq');
+
+            const rfqOutput = (rfqExecution.output_ref ?? {}) as { status?: string; created_count?: number };
+            if (rfqOutput.status === 'pending_approval' || rfqOutput.created_count) {
+              throw new ToolError('APPROVAL_REQUIRED', 'RFQ drafts require Admin approval before sending');
+            }
+
             throw new ToolError('APPROVAL_REQUIRED', 'RFQ drafts require Admin approval before sending');
           }
 
