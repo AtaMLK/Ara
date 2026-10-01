@@ -2237,11 +2237,39 @@ export async function processQueuedWorkflow(limit = 5) {
     const stage = match?.[1] as WorkflowStage | undefined;
 
     if (!stage || !stageAgentExists(stage)) {
+      const message = 'Invalid workflow stage in task key';
+      const { error: executionError } = await supabase
+        .from('ai_executions')
+        .update({
+          status: 'failed',
+          error_code: 'VALIDATION',
+          error_message: message,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', execution.id)
+        .eq('status', 'queued');
+
+      if (!executionError) {
+        await supabase.from('ai_alerts').insert({
+          inquiry_id: execution.inquiry_id,
+          agent_id: 'orchestrator',
+          alert_type: 'WORKFLOW_INVALID_STAGE',
+          message,
+          priority: 'urgent',
+        });
+        await timeline(execution.inquiry_id, 'workflow_execution_failed', {
+          execution_id: execution.id,
+          stage: stage ?? null,
+          error_code: 'VALIDATION',
+          message,
+        });
+      }
+
       results.push({
         executionId: execution.id,
         inquiryId: execution.inquiry_id,
         stage: null,
-        error: 'Invalid workflow stage in task key',
+        error: message,
       });
       continue;
     }
@@ -2255,11 +2283,21 @@ export async function processQueuedWorkflow(limit = 5) {
         outcome: result.outcome,
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Workflow stage failed';
+      const errorCode = error instanceof ToolError ? error.code : 'AI_PROCESSING';
+
+      await timeline(execution.inquiry_id, 'workflow_stage_failed', {
+        execution_id: execution.id,
+        stage,
+        error_code: errorCode,
+        message,
+      }, stageAgentForTimeline(stage));
+
       results.push({
         executionId: execution.id,
         inquiryId: execution.inquiry_id,
         stage,
-        error: error instanceof Error ? error.message : 'Workflow stage failed',
+        error: message,
       });
     }
   }
@@ -2268,6 +2306,21 @@ export async function processQueuedWorkflow(limit = 5) {
     processed: results.length,
     results,
   };
+}
+
+function stageAgentForTimeline(stage: WorkflowStage) {
+  if (stage === 'document') return 'document';
+  if (stage === 'intake') return 'intake';
+  if (stage === 'clarification') return 'clarification';
+  if (stage === 'research') return 'product_research';
+  if (stage === 'supplier_discovery') return 'supplier_discovery';
+  if (stage === 'verification') return 'supplier_verification';
+  if (stage === 'rfq') return 'rfq';
+  if (stage === 'quote_extraction') return 'quote_extraction';
+  if (stage === 'comparison') return 'comparison';
+  if (stage === 'customer_quote') return 'customer_quote';
+  if (stage === 'reporting') return 'reporting';
+  return 'orchestrator';
 }
 
 function stageAgentExists(stage: WorkflowStage) {
