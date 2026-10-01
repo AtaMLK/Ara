@@ -1960,8 +1960,18 @@ export async function startInquiryWorkflow(inquiryId: string) {
     throw new ToolError('CONFLICT', `Inquiry cannot be started from status ${inquiry.status}`);
   }
 
-  await timeline(inquiryId, 'workflow_started', { previous_status: inquiry.status });
-  return runStage(inquiryId, 'document');
+  const execution = await enqueueWorkflow(inquiryId, 'document');
+  await timeline(inquiryId, 'workflow_started', {
+    previous_status: inquiry.status,
+    execution_id: execution.id,
+    execution_status: execution.status,
+    trigger: 'inquiry_submission',
+  });
+
+  return {
+    execution,
+    outcome: execution.status === 'queued' ? 'workflow_queued' as const : 'workflow_already_running' as const,
+  };
 }
 
 export async function continueInquiryWorkflow(inquiryId: string) {
