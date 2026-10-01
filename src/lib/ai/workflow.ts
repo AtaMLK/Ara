@@ -1946,7 +1946,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
   }
 }
 
-export async function startInquiryWorkflow(inquiryId: string) {
+export async function startInquiryWorkflow(
+  inquiryId: string,
+  trigger: 'inquiry_submission' | 'admin_manual' | 'document_retry' = 'inquiry_submission',
+) {
   const supabase = createSupabaseAdminClient();
   const { data: inquiry, error } = await supabase
     .from('inquiries')
@@ -1960,17 +1963,42 @@ export async function startInquiryWorkflow(inquiryId: string) {
     throw new ToolError('CONFLICT', `Inquiry cannot be started from status ${inquiry.status}`);
   }
 
+  const existing = await supabase
+    .from('ai_executions')
+    .select('id,status,output_ref')
+    .eq('task_key', `inquiry:${inquiryId}:stage:document`)
+    .maybeSingle();
+
+  if (existing.error) throw new ToolError('TRANSIENT', existing.error.message);
+
+  if (existing.data?.status === 'queued' || existing.data?.status === 'running') {
+    return {
+      execution: existing.data,
+      outcome: 'workflow_already_running' as const,
+    };
+  }
+
+  if (existing.data?.status === 'succeeded') {
+    return {
+      execution: existing.data,
+      outcome: 'workflow_already_started' as const,
+    };
+  }
+
   const execution = await enqueueWorkflow(inquiryId, 'document');
+
   await timeline(inquiryId, 'workflow_started', {
     previous_status: inquiry.status,
     execution_id: execution.id,
     execution_status: execution.status,
-    trigger: 'inquiry_submission',
+    trigger,
   });
 
   return {
     execution,
-    outcome: execution.status === 'queued' ? 'workflow_queued' as const : 'workflow_already_running' as const,
+    outcome: execution.status === 'queued'
+      ? 'workflow_queued' as const
+      : 'workflow_already_running' as const,
   };
 }
 
