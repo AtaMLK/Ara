@@ -483,112 +483,160 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .order('created_at', { ascending: true });
       if (currentError) throw new ToolError('TRANSIENT', currentError.message);
       const rows = (currentRequirements ?? []) as RequirementRow[];
-      const unresolved = rows.filter(
-        (r) => r.status === 'open' || r.status === 'clarification_required',
-      );
 
-      if (rows.length === 0 || unresolved.length > 0) {
-        await createClarificationDrafts(inquiryId, rows);
-        await setInquiryStatus(inquiryId, 'clarification_required');
-        await timeline(inquiryId, 'workflow_clarification_required', {
-          unresolved_requirement_ids: unresolved.map((r) => r.id),
-          reason: rows.length === 0 ? 'no_requirements' : 'unresolved_requirements',
-        }, 'intake');
-
-        await markExecutionSuccess(running.id, {
-          next_stage: 'clarification',
-          blocked: true,
-          unresolved_count: unresolved.length,
-        });
-
-        return { execution: running, outcome: 'clarification_required' as const };
-      }
-
-      await setInquiryStatus(inquiryId, 'researching');
-      await timeline(inquiryId, 'workflow_research_ready', {
-        confirmed_requirement_count: rows.length,
+      // Do not treat every open requirement as a clarification request.
+      // The clarification agent is the decision gate: it evaluates the
+      // complete requirement set and decides whether missing/conflicting
+      // information is materially important enough to ask the customer about.
+      const clarification = await enqueueWorkflow(inquiryId, 'clarification');
+      await markExecutionSuccess(running.id, {
+        next_stage: 'clarification',
+        clarification_execution_id: clarification.id,
+        requirement_count: rows.length,
+      });
+      await timeline(inquiryId, 'workflow_clarification_check_queued', {
+        clarification_execution_id: clarification.id,
+        requirement_count: rows.length,
       }, 'intake');
 
-      const research = await enqueueWorkflow(inquiryId, 'research');
-      await markExecutionSuccess(running.id, {
-        next_stage: 'research',
-        research_execution_id: research.id,
-      });
-
-      return { execution: running, outcome: 'research_queued' as const };
+      return { execution: running, outcome: 'clarification_check_queued' as const };
     }
 
     if (stage === 'clarification') {
       const { data: requirements, error: requirementsError } = await supabase
         .from('requirements')
-        .select('id,type,value,status,admin_edited,current_version')
+        .select('id,type,value,status,admin_edited,current_version,source,source_ref')
         .eq('inquiry_id', inquiryId)
         .in('status', ['open', 'clarification_required'])
         .order('created_at', { ascending: true });
 
       if (requirementsError) throw new ToolError('TRANSIENT', requirementsError.message);
 
-      if ((requirements ?? []).length > 0) {
-        const { data: existing } = await supabase
-          .from('clarifications')
-          .select('id,requirement_id,question,status')
-          .eq('inquiry_id', inquiryId)
-          .in('status', ['draft', 'pending_approval', 'sent'])
-          .order('created_at', { ascending: true });
+      const activeRequirements = (requirements ?? []).filter((item) => !item.admin_edited);
 
-        const existingRequirementIds = new Set(
-          (existing ?? []).map((item) => item.requirement_id).filter(Boolean),
-        );
+      if (activeRequirements.length === 0) {
+        await setInquiryStatus(inquiryId, 'researching');
+        const research = await enqueueWorkflow(inquiryId, 'research');
+        await markExecutionSuccess(running.id, { next_stage: 'research', research_execution_id: research.id });
+        return { execution: running, outcome: 'research_queued' as const };
+      }
 
-        const unresolvedForAI = (requirements ?? []).filter(
-          (item) => !existingRequirementIds.has(item.id),
-        );
+      const { data: existing } = await supabase
+        .from('clarifications')
+        .select('id,requirement_id,question,status')
+        .eq('inquiry_id', inquiryId)
+        .in('status', ['draft', 'pending_approval', 'sent'])
+        .order('created_at', { ascending: true });
 
-        if (unresolvedForAI.length > 0) {
-          const ai = await runAgent(
-            { agentId: 'clarification', executionId: running.id, inquiryId },
-            {
-              requirements: unresolvedForAI.map((item) => ({
-                id: item.id,
-                type: item.type,
-                value: item.value,
-                admin_edited: item.admin_edited,
-                current_version: item.current_version,
-              })),
-              instructions: [
-                'Only ask about material ambiguity that can change product, model, part number, quantity, specification, delivery, price, currency, terms, or supplier identity.',
-                'Ask the minimum targeted question.',
-                'Never ask the customer to repeat information that is already explicit.',
-                'Do not resolve the ambiguity yourself.',
-                'Do not create or send customer communication.',
-              ],
-            },
-            clarificationOutputSchema,
-          );
+      const existingRequirementIds = new Set(
+        (existing ?? []).map((item) => item.requirement_id).filter(Boolean),
+      );
 
-          for (const question of ai.output.questions) {
-            if (!question.requirementId) continue;
-            const requirement = unresolvedForAI.find((item) => item.id === question.requirementId);
-            if (!requirement || existingRequirementIds.has(requirement.id)) continue;
+      const unresolvedForAI = activeRequirements.filter(
+        (item) => !existingRequirementIds.has(item.id),
+      );
 
-            const { error: insertError } = await supabase.from('clarifications').insert({
-              inquiry_id: inquiryId,
-              requirement_id: requirement.id,
-              question: question.question,
-              status: 'draft',
-            });
-            if (insertError) throw new ToolError('CONFLICT', insertError.message);
-          }
+      // If clarification drafts already exist, keep the inquiry blocked and
+      // wait for the customer/admin flow rather than asking the model again.
+      if (unresolvedForAI.length === 0) {
+        await setInquiryStatus(inquiryId, 'clarification_required');
+        await markExecutionSuccess(running.id, {
+          blocked: true,
+          reason: 'pending_clarifications',
+          pending_clarifications: existing?.length ?? 0,
+        });
+        return { execution: running, outcome: 'still_blocked' as const };
+      }
 
-          await timeline(inquiryId, 'clarification_ai_drafts_created', {
-            execution_id: running.id,
-            question_count: ai.output.questions.length,
-            provider: ai.provider,
-            model: ai.model,
-          }, 'clarification');
+      const ai = await runAgent(
+        { agentId: 'clarification', executionId: running.id, inquiryId },
+        {
+          requirements: unresolvedForAI.map((item) => ({
+            id: item.id,
+            type: item.type,
+            value: item.value,
+            status: item.status,
+            source: item.source,
+            source_ref: item.source_ref,
+            admin_edited: item.admin_edited,
+            current_version: item.current_version,
+          })),
+          instructions: [
+            'Evaluate the complete customer requirement set before deciding whether clarification is necessary.',
+            'A requirement being open does NOT by itself mean clarification is required.',
+            'Preserve the complete customer product phrase. Never drop a meaningful word because it looks like a keyword.',
+            'Obvious typos, spacing errors, grammar errors, capitalization differences, and common abbreviations do not require clarification when the intended meaning is clear with high confidence.',
+            'Example: "tempereture sensor" can be treated as "temperature sensor" when the intended product is clear; do not ask the customer to confirm the typo.',
+            'Use all available evidence already represented in the requirements, including evidence extracted from PDFs, spreadsheets, and images.',
+            'Ask clarification only when missing, conflicting, or materially ambiguous information could change the requested product, model, part number, quantity, specification, delivery, price, currency, terms, or supplier identity.',
+            'Do not invent missing quantities or specifications. If a required quantity is genuinely absent, ask for it.',
+            'If multiple reasonable interpretations remain, ask the minimum targeted question that resolves the ambiguity.',
+            'If the request is sufficiently understandable for product research and supplier discovery, return needsClarification=false and no questions.',
+            'Do not create or send customer communication.',
+          ],
+        },
+        clarificationOutputSchema,
+      );
+
+      const questionIds = new Set<string>();
+      for (const question of ai.output.questions) {
+        if (!question.requirementId) continue;
+        const requirement = unresolvedForAI.find((item) => item.id === question.requirementId);
+        if (!requirement || existingRequirementIds.has(requirement.id)) continue;
+        if (questionIds.has(requirement.id)) continue;
+        questionIds.add(requirement.id);
+
+        const { error: insertError } = await supabase.from('clarifications').insert({
+          inquiry_id: inquiryId,
+          requirement_id: requirement.id,
+          question: question.question,
+          status: 'draft',
+        });
+        if (insertError) throw new ToolError('CONFLICT', insertError.message);
+      }
+
+      if (ai.output.needsClarification && questionIds.size === 0) {
+        throw new ToolError('AI_PROCESSING', 'Clarification agent reported material ambiguity but returned no targeted question.');
+      }
+
+      if (ai.output.needsClarification) {
+        // Only requirements actually referenced by clarification questions remain
+        // unresolved. Everything else has been judged sufficiently clear.
+        const nonQuestionIds = unresolvedForAI
+          .filter((item) => !questionIds.has(item.id))
+          .map((item) => item.id);
+
+        if (nonQuestionIds.length > 0) {
+          const { error: confirmError } = await supabase
+            .from('requirements')
+            .update({ status: 'confirmed' })
+            .in('id', nonQuestionIds)
+            .eq('inquiry_id', inquiryId)
+            .eq('admin_edited', false)
+            .eq('status', 'open');
+
+          if (confirmError) throw new ToolError('CONFLICT', confirmError.message);
+        }
+
+        if (questionIds.size > 0) {
+          const { error: flagError } = await supabase
+            .from('requirements')
+            .update({ status: 'clarification_required' })
+            .in('id', [...questionIds])
+            .eq('inquiry_id', inquiryId)
+            .eq('admin_edited', false);
+
+          if (flagError) throw new ToolError('CONFLICT', flagError.message);
         }
 
         await setInquiryStatus(inquiryId, 'clarification_required');
+        await timeline(inquiryId, 'clarification_ai_drafts_created', {
+          execution_id: running.id,
+          question_count: questionIds.size,
+          provider: ai.provider,
+          model: ai.model,
+        }, 'clarification');
+
         const { data: drafts } = await supabase
           .from('clarifications')
           .select('id,status')
@@ -597,18 +645,36 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         await markExecutionSuccess(running.id, {
           blocked: true,
-          reason: 'requirements_not_confirmed',
+          reason: 'material_ambiguity_requires_customer_clarification',
           pending_clarifications: drafts?.length ?? 0,
         });
+
         return { execution: running, outcome: 'still_blocked' as const };
       }
+
+      // The request is sufficiently understood. Confirm requirements that
+      // were only open because they had not yet passed this semantic gate.
+      const { error: confirmError } = await supabase
+        .from('requirements')
+        .update({ status: 'confirmed' })
+        .in('id', unresolvedForAI.map((item) => item.id))
+        .eq('inquiry_id', inquiryId)
+        .eq('admin_edited', false)
+        .in('status', ['open', 'clarification_required']);
+
+      if (confirmError) throw new ToolError('CONFLICT', confirmError.message);
 
       await setInquiryStatus(inquiryId, 'researching');
       const research = await enqueueWorkflow(inquiryId, 'research');
       await timeline(inquiryId, 'workflow_research_started', {
-        execution_id: research.id,
+        execution_id: running.id,
+        clarification_required: false,
+      }, 'clarification');
+      await markExecutionSuccess(running.id, {
+        next_stage: 'research',
+        research_execution_id: research.id,
+        clarification_required: false,
       });
-      await markExecutionSuccess(running.id, { next_stage: 'research' });
       return { execution: running, outcome: 'research_queued' as const };
     }
 
