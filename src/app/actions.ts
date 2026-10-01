@@ -470,7 +470,7 @@ export async function startInquiryWorkflowAction(inquiryId: string) {
   try {
     const parsed = idSchema.parse(inquiryId);
     await requireAdmin();
-    const result = await startInquiryWorkflow(parsed);
+    const result = await startInquiryWorkflow(parsed, 'admin_manual');
     revalidatePath('/inquiries');
     revalidatePath(`/inquiries/${parsed}`);
     return { ok: true, outcome: result.outcome };
