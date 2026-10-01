@@ -548,9 +548,39 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         return { execution: running, outcome: 'still_blocked' as const };
       }
 
+      const { data: sourceContext, error: sourceContextError } = await supabase
+        .from('inquiries')
+        .select('original_customer_text')
+        .eq('id', inquiryId)
+        .single();
+
+      if (sourceContextError || !sourceContext) {
+        throw new ToolError('NOT_FOUND', 'Inquiry source context not found');
+      }
+
+      const { data: processedDocuments } = await supabase
+        .from('document_processing')
+        .select('file_id,extracted_text,source_map,quality_flags')
+        .eq('status', 'processed')
+        .in(
+          'file_id',
+          (await supabase.from('inquiry_files').select('id').eq('inquiry_id', inquiryId)).data?.map((file) => file.id) ?? [],
+        );
+
+      const evidenceContext = (processedDocuments ?? [])
+        .filter((document) => document.extracted_text?.trim())
+        .map((document) => ({
+          file_id: document.file_id,
+          source_map: document.source_map,
+          quality_flags: document.quality_flags,
+          extracted_text: document.extracted_text,
+        }));
+
       const ai = await runAgent(
         { agentId: 'clarification', executionId: running.id, inquiryId },
         {
+          original_customer_text: sourceContext.original_customer_text ?? '',
+          document_evidence: evidenceContext,
           requirements: unresolvedForAI.map((item) => ({
             id: item.id,
             type: item.type,
