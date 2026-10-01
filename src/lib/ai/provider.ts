@@ -44,7 +44,6 @@ class OpenAICompatibleProvider implements AIModelProvider {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        temperature: options.temperature ?? 0,
         messages,
         response_format: { type: 'json_object' },
       }),
@@ -81,7 +80,7 @@ class OpenAICompatibleProvider implements AIModelProvider {
 
 const agentPrompts: Partial<Record<AgentId, string>> = {
   intake: 'Create a reliable initial understanding of the customer inquiry. Never invent facts. Material ambiguity must be surfaced.',
-  clarification: 'Ask the minimum targeted question needed to resolve material ambiguity. Never silently guess consequential values.',
+  clarification: 'Evaluate the full customer request and all available evidence before deciding whether clarification is materially necessary. Preserve complete product phrases. Normalize obvious typos, spacing, grammar, and common abbreviations when the intended meaning is clear. Do not ask clarification merely because wording is imperfect. Ask only when missing or conflicting information could materially change the requested product, model, part number, quantity, specification, delivery, price, currency, terms, or supplier identity. Never silently invent consequential values.',
   product_research: 'Research technical product identity and evidence. Do not replace customer requirements.',
   supplier_discovery: 'Find supplier candidates from evidence. Do not rank suppliers.',
   supplier_verification: 'Verify supplier identity, country, website and activity from evidence. Unresolved conflicts remain pending.',
