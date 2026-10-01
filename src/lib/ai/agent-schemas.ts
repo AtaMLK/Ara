@@ -1,14 +1,53 @@
 import { z } from 'zod';
 
+const documentQualityFlagSchema = z.union([
+  z.string(),
+  z.object({
+    code: z.string().optional(),
+    flag: z.string().optional(),
+    type: z.string().optional(),
+    reason: z.string().optional(),
+    message: z.string().optional(),
+  }).transform((value) =>
+    value.code ?? value.flag ?? value.type ?? value.reason ?? value.message ?? 'UNKNOWN',
+  ),
+]);
+
+const documentRequirementSchema = z.object({
+  type: z.string().transform((value) => {
+    const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const aliases: Record<string, 'product'|'model_part_number'|'quantity'|'specification'|'delivery'|'other'> = {
+      product: 'product',
+      product_name: 'product',
+      item: 'product',
+      part: 'product',
+      part_name: 'product',
+      model: 'model_part_number',
+      model_number: 'model_part_number',
+      part_number: 'model_part_number',
+      part_no: 'model_part_number',
+      mpn: 'model_part_number',
+      quantity: 'quantity',
+      qty: 'quantity',
+      specification: 'specification',
+      specs: 'specification',
+      technical_specification: 'specification',
+      delivery: 'delivery',
+      delivery_time: 'delivery',
+      lead_time: 'delivery',
+      other: 'other',
+    };
+    return aliases[normalized] ?? 'other';
+  }),
+  value: z.string().min(1),
+  sourceRef: z.string().optional(),
+});
+
 export const documentOutputSchema = z.object({
   extractedText: z.string().default(''),
   extractedData: z.record(z.string(), z.unknown()).default({}),
-  qualityFlags: z.array(z.string()).default([]),
-  requirements: z.array(z.object({
-    type: z.enum(['product','model_part_number','quantity','specification','delivery','other']),
-    value: z.string().min(1),
-    sourceRef: z.string().optional(),
-  })).default([]),
+  qualityFlags: z.array(documentQualityFlagSchema).default([]),
+  requirements: z.array(documentRequirementSchema).default([]),
 });
 
 export const intakeOutputSchema = z.object({
