@@ -2213,17 +2213,9 @@ export async function setClarificationPendingApproval(inquiryId: string, clarifi
   return data;
 }
 
-export async function processQueuedWorkflow(limit = 5) {
+export async function processQueuedWorkflow(limit = 5, inquiryId?: string) {
   const supabase = createSupabaseAdminClient();
-  const { data: queued, error } = await supabase
-    .from('ai_executions')
-    .select('id,inquiry_id,task_key,status,created_at')
-    .eq('status', 'queued')
-    .order('created_at', { ascending: true })
-    .limit(Math.max(1, Math.min(limit, 20)));
-
-  if (error) throw new ToolError('TRANSIENT', error.message);
-
+  const maxExecutions = Math.max(1, Math.min(limit, 20));
   const results: Array<{
     executionId: string;
     inquiryId: string;
@@ -2231,8 +2223,28 @@ export async function processQueuedWorkflow(limit = 5) {
     outcome?: string;
     error?: string;
   }> = [];
+  const processedExecutionIds = new Set<string>();
 
-  for (const execution of queued ?? []) {
+  // Fetch one job at a time so stages queued by the current stage can be
+  // processed in the same worker invocation. This makes the workflow advance
+  // end-to-end in local development as well as from the scheduled worker.
+  for (let iteration = 0; iteration < maxExecutions; iteration++) {
+    let query = supabase
+      .from('ai_executions')
+      .select('id,inquiry_id,task_key,status,created_at')
+      .eq('status', 'queued')
+      .order('created_at', { ascending: true })
+      .limit(20);
+
+    if (inquiryId) query = query.eq('inquiry_id', inquiryId);
+
+    const { data: queued, error } = await query;
+    if (error) throw new ToolError('TRANSIENT', error.message);
+
+    const execution = (queued ?? []).find((item) => !processedExecutionIds.has(item.id));
+    if (!execution) break;
+
+    processedExecutionIds.add(execution.id);
     const match = execution.task_key.match(/^inquiry:[^:]+:stage:(.+)$/);
     const stage = match?.[1] as WorkflowStage | undefined;
 
