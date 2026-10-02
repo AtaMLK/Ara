@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireAdmin, requireCustomerAccess, requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import { ToolError } from '@/lib/errors';
-import { continueInquiryWorkflow, startInquiryWorkflow } from '@/lib/ai/workflow';
+import { continueInquiryWorkflow, processQueuedWorkflow, startInquiryWorkflow } from '@/lib/ai/workflow';
 import { getEmailProvider } from '@/lib/email/provider';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { applyCustomerClarificationAnswer } from '@/lib/ai/clarification-replies';
@@ -471,9 +471,23 @@ export async function startInquiryWorkflowAction(inquiryId: string) {
     const parsed = idSchema.parse(inquiryId);
     await requireAdmin();
     const result = await startInquiryWorkflow(parsed, 'admin_manual');
+
+    // The scheduled worker is not available during local development.
+    // Kick the inquiry-specific queue immediately so the workflow can advance
+    // through newly queued stages without creating duplicate executions.
+    const worker = await processQueuedWorkflow(5, parsed);
+
     revalidatePath('/inquiries');
     revalidatePath(`/inquiries/${parsed}`);
-    return { ok: true, outcome: result.outcome };
+    return {
+      ok: true,
+      outcome: result.outcome,
+      worker: {
+        processed: worker.results.length,
+        lastStage: worker.results.at(-1)?.stage ?? null,
+        lastOutcome: worker.results.at(-1)?.outcome ?? null,
+      },
+    };
   } catch (error) {
     fail(error);
   }
