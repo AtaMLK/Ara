@@ -421,7 +421,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           // from that pass because document-derived requirements are persisted
           // by the Document stage.
           const customerTextRequirements = result.requirements
-            .filter((item) => item.source === 'customer_text')
+            .filter((item) => item.source === 'customer_text' && item.value.trim())
             .map((item) => ({
               ...item,
               source: 'customer_text' as const,
