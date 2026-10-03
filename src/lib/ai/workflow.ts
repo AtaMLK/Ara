@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider, type ResearchResult } from './research/provider';
 import { runAgent } from './agent-runner';
-import { documentOutputSchema, intakeOutputSchema, intakeRepairOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema, supplierDiscoveryOutputSchema } from './agent-schemas';
+import { documentOutputSchema, intakeOutputSchema, intakeRepairOutputSchema, clarificationOutputSchema, clarificationRepairOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema, supplierDiscoveryOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
   enqueueWorkflow,
@@ -759,8 +759,40 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         clarificationOutputSchema,
       );
 
+      // Some models return clarification questions as plain strings even when
+      // the structured contract asks for requirement IDs. Repair that output
+      // once with the concrete requirement IDs before allowing the workflow to
+      // fail. Never guess IDs in application code.
+      let clarificationOutput = ai.output;
+      const missingQuestionIds = clarificationOutput.needsClarification &&
+        clarificationOutput.questions.some((question) => !question.requirementId);
+      if (missingQuestionIds) {
+        const repair = await runAgent(
+          { agentId: 'clarification', executionId: running.id, inquiryId },
+          {
+            original_customer_text: sourceContext.original_customer_text ?? '',
+            requirements: unresolvedForAI.map((item) => ({
+              id: item.id,
+              type: item.type,
+              value: item.value,
+            })),
+            current_output: clarificationOutput,
+            instructions: [
+              'Repair the clarification decision without changing its meaning.',
+              'Every clarification question MUST be an object with a valid requirementId copied exactly from one of the supplied requirements.',
+              'Never invent or alter a requirementId.',
+              'If a question is not materially necessary, remove it rather than assigning an arbitrary requirement.',
+              'If needsClarification is false, return an empty questions array.',
+              'Return only the requested structured output.',
+            ],
+          },
+          clarificationRepairOutputSchema,
+        );
+        clarificationOutput = repair.output;
+      }
+
       const questionIds = new Set<string>();
-      for (const question of ai.output.questions) {
+      for (const question of clarificationOutput.questions) {
         if (!question.requirementId) continue;
         const requirement = unresolvedForAI.find((item) => item.id === question.requirementId);
         if (!requirement || existingRequirementIds.has(requirement.id)) continue;
@@ -776,11 +808,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (insertError) throw new ToolError('CONFLICT', insertError.message);
       }
 
-      if (ai.output.needsClarification && questionIds.size === 0) {
+      if (clarificationOutput.needsClarification && questionIds.size === 0) {
         throw new ToolError('AI_PROCESSING', 'Clarification agent reported material ambiguity but returned no targeted question.');
       }
 
-      if (ai.output.needsClarification) {
+      if (clarificationOutput.needsClarification) {
         // Only requirements actually referenced by clarification questions remain
         // unresolved. Everything else has been judged sufficiently clear.
         const nonQuestionIds = unresolvedForAI
