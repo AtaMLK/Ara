@@ -413,9 +413,20 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             intakeOutputSchema,
           );
           const result = ai.output;
-          if (result.requirements.some((item) => item.source !== 'customer_text' || item.sourceRef)) {
-            throw new ToolError('AI_PROCESSING', 'Intake must only add customer_text requirements in this pass');
-          }
+
+          // Intake is allowed to add only customer-text requirements. The model
+          // can still echo document context despite the instruction, so do not
+          // fail the whole workflow for a recoverable source-label mismatch.
+          // Keep only explicitly customer_text items and discard any sourceRef
+          // from that pass because document-derived requirements are persisted
+          // by the Document stage.
+          const customerTextRequirements = result.requirements
+            .filter((item) => item.source === 'customer_text')
+            .map((item) => ({
+              ...item,
+              source: 'customer_text' as const,
+              sourceRef: undefined,
+            }));
 
           // An execution can be retried after partial persistence; never duplicate
           // the first extraction or overwrite changes made after the model call.
@@ -429,7 +440,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             (latest ?? []).map((item) => `${item.type}|${item.value.trim().toLowerCase()}`)
           );
           const ambiguityTypes = new Set(result.ambiguities.map((a) => a.requirementType));
-          const inserts = result.requirements
+          const inserts = customerTextRequirements
             .filter((item) => {
               const key = `${item.type}|${item.value.trim().toLowerCase()}`;
               return !existingKeys.has(key);
