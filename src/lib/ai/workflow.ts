@@ -1956,6 +1956,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       const seen = new Set<string>();
       let createdCount = 0;
+      const discoveryCandidates = new Map<string, { name: string; country?: string; website?: string; evidence: string[] }>();
 
       let selectedResults = results ?? [];
       if (process.env.OPENAI_API_KEY && results?.length) {
@@ -1992,12 +1993,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         );
 
         const allowedUrls = new Set(results.map((item) => item.sourceUrl));
-        const selectedUrls = new Set(
-          discoveryAi.output.candidates
-            .map((candidate) => candidate.sourceUrl)
-            .filter((url) => allowedUrls.has(url)),
-        );
-        selectedResults = results.filter((item) => selectedUrls.has(item.sourceUrl));
+        for (const candidate of discoveryAi.output.candidates) {
+          if (!allowedUrls.has(candidate.sourceUrl)) continue;
+          discoveryCandidates.set(candidate.sourceUrl, {
+            name: candidate.name.trim(),
+            country: candidate.country?.trim() || undefined,
+            website: candidate.website?.trim() || undefined,
+            evidence: candidate.evidence ?? [],
+          });
+        }
+        selectedResults = results.filter((item) => discoveryCandidates.has(item.sourceUrl));
       }
 
       for (const result of selectedResults) {
@@ -2017,13 +2022,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         const genericInformationSource = /(dictionary|survey|government|regulation|documentation|glossary|reference)/i.test(text);
         if (blockedSource || !supplierSignal || (!commercialSignal && genericInformationSource)) continue;
 
-        const proposedName = result.source_name?.trim() || hostname;
+        const aiCandidate = discoveryCandidates.get(result.source_url);
+        if (!aiCandidate?.name) continue;
+
+        const proposedName = aiCandidate.name.slice(0, 240);
         const key = proposedName.toLowerCase();
         if (seen.has(key) || blockedNames.has(key)) continue;
         seen.add(key);
 
-        const website = `https://${hostname}`;
-        const country = (result.structuredData?.country as string | undefined)?.trim() || null;
+        const website = aiCandidate.website || `https://${hostname}`;
+        const country = aiCandidate.country ||
+          (result.structuredData?.country as string | undefined)?.trim() ||
+          null;
 
         // Supplier discovery is an AI preparation step, not an Admin approval
         // gate. Create the supplier record immediately so it is available in
@@ -2049,7 +2059,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               primary_country: country ?? 'Unknown',
               supplier_type: 'unknown',
               verification_status: 'pending',
-              description: result.finding?.slice(0, 2000) || null,
+              description: [
+              result.finding?.slice(0, 1600) || '',
+              aiCandidate.evidence.join(' ').slice(0, 400),
+            ].filter(Boolean).join(' ').slice(0, 2000) || null,
             })
             .select('id')
             .single();
@@ -2093,7 +2106,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .from('suppliers')
           .update({
             primary_website_id: websiteId,
-            description: result.finding?.slice(0, 2000) || null,
+            description: [
+              result.finding?.slice(0, 1600) || '',
+              aiCandidate.evidence.join(' ').slice(0, 400),
+            ].filter(Boolean).join(' ').slice(0, 2000) || null,
             ...(country ? { primary_country: country } : {}),
           })
           .eq('id', supplierId);
@@ -2340,8 +2356,9 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 (item.type === 'specification' || item.type === 'model_part_number')
               )
               .map((item) => item.value)
+              .filter((value) => value && value.trim() && value.trim().toLowerCase() !== 'null')
               .join(' ');
-            return [product.value, related].filter(Boolean).join(' ').trim();
+            return [product.value, related, 'manufacturer supplier distributor official'].filter(Boolean).join(' ').trim();
           })
           .filter(Boolean);
 
@@ -2352,9 +2369,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           );
         }
 
-        const focusedQueries = itemQueries
-          .slice(0, 5)
-          .map((item) => item + ' manufacturer supplier distributor official');
+        const focusedQueries = itemQueries.slice(0, 5);
 
         const resultBatches = await Promise.all(
           focusedQueries.slice(0, 5).map((supplierSearchQuery) =>
