@@ -1839,15 +1839,44 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }
 
           supplierId = createdSupplier.id;
-
-          const { error: websiteError } = await supabase.from('supplier_websites').insert({
-            supplier_id: supplierId,
-            url: website,
-            is_primary: true,
-          });
-
-          if (websiteError) throw new ToolError('CONFLICT', websiteError.message);
         }
+
+        const { data: existingWebsite, error: websiteLookupError } = await supabase
+          .from('supplier_websites')
+          .select('id')
+          .eq('supplier_id', supplierId)
+          .eq('url', website)
+          .maybeSingle();
+
+        if (websiteLookupError) throw new ToolError('TRANSIENT', websiteLookupError.message);
+
+        let websiteId = existingWebsite?.id ?? null;
+        if (!websiteId) {
+          const { data: createdWebsite, error: websiteError } = await supabase
+            .from('supplier_websites')
+            .insert({
+              supplier_id: supplierId,
+              url: website,
+              is_primary: true,
+            })
+            .select('id')
+            .single();
+
+          if (websiteError || !createdWebsite) {
+            throw new ToolError('CONFLICT', websiteError?.message ?? 'Failed to create supplier website');
+          }
+
+          websiteId = createdWebsite.id;
+        }
+
+        await supabase
+          .from('suppliers')
+          .update({
+            primary_website_id: websiteId,
+            description: result.finding?.slice(0, 2000) || null,
+            ...(country ? { primary_country: country } : {}),
+          })
+          .eq('id', supplierId);
 
         const { error } = await supabase.from('supplier_candidates').upsert({
           inquiry_id: inquiryId,
