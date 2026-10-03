@@ -23,6 +23,24 @@ type RequirementRow = {
   status: 'open' | 'clarification_required' | 'confirmed' | 'rejected';
 };
 
+async function createAlert(
+  inquiryId: string,
+  agentId: string,
+  alertType: string,
+  message: string,
+  priority: 'normal' | 'urgent' = 'normal',
+) {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase.from('ai_alerts').insert({
+    inquiry_id: inquiryId,
+    agent_id: agentId,
+    alert_type: alertType,
+    message,
+    priority,
+  });
+  if (error) throw new ToolError('TRANSIENT', error.message);
+}
+
 async function timeline(
   inquiryId: string,
   eventType: string,
@@ -1882,9 +1900,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
 
         const text = `${result.source_name ?? ''} ${result.finding ?? ''} ${result.structuredData?.title ?? ''}`.toLowerCase();
-        const blockedSource = /(scribd|manualslib|manualmachine|pdfcoffee|researchgate|academia\.edu)/i.test(hostname);
-        const supplierSignal = /(manufacturer|manufacturer[s]?|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?)/i.test(text);
-        if (blockedSource || !supplierSignal) continue;
+        const blockedSource = /(scribd|manualslib|manualmachine|pdfcoffee|researchgate|academia\\.edu|merriam-webster|newyorkfed|irs|sba|developer\\.android|arenasolutions)/i.test(hostname);
+        const supplierSignal = /(manufacturer|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?|electronics|sensor|instrumentation)/i.test(text);
+        const commercialSignal = /(sales|contact|products?|catalog|quote|quotation|rfq|buy|stock|inventory|dealer|distributor|manufacturer)/i.test(text);
+        const genericInformationSource = /(dictionary|survey|government|regulation|documentation|glossary|reference)/i.test(text);
+        if (blockedSource || !supplierSignal || (!commercialSignal && genericInformationSource)) continue;
 
         const proposedName = result.source_name?.trim() || hostname;
         const key = proposedName.toLowerCase();
