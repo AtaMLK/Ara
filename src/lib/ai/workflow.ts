@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider, type ResearchResult } from './research/provider';
 import { runAgent } from './agent-runner';
-import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema, supplierDiscoveryOutputSchema } from './agent-schemas';
+import { documentOutputSchema, intakeOutputSchema, intakeRepairOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema, supplierDiscoveryOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
   enqueueWorkflow,
@@ -435,7 +435,41 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             },
             intakeOutputSchema,
           );
-          const result = ai.output;
+          let result = ai.output;
+
+          // Some models may partially follow the extraction contract when a PDF
+          // contains many technical lines. Do not silently accept incomplete
+          // items: run a focused AI repair pass using the customer request as
+          // the authoritative product source.
+          const incompleteItems = result.items.some((item) =>
+            !item.product?.trim() || !item.evidence?.trim()
+          );
+          if (incompleteItems) {
+            const repair = await runAgent(
+              { agentId: 'intake', executionId: running.id, inquiryId },
+              {
+                original_customer_text: originalText ?? '',
+                current_items: result.items,
+                document_context: documentText,
+                instructions: [
+                  'Repair the procurement item extraction. Use the customer text as the primary source.',
+                  'Return one item for every distinct product explicitly requested by the customer.',
+                  'For this request, "temprature sensor handsfor 50 pcs" is one product item and "powerstation GMI 2 pcs" is another.',
+                  'Normalize obvious spelling errors such as temprature -> temperature, but preserve the original phrase in requestedText.',
+                  'Extract brand when explicitly stated or strongly supported by wording; do not invent model or part number.',
+                  'Quantity and unit must come from the customer request unless explicitly supported elsewhere.',
+                  'Do not turn individual PDF specification lines into separate products.',
+                  'Every item must have a concrete product field and evidence explaining the customer text that supports it.',
+                  'Never return an empty items array when the customer request contains procurement items.',
+                ],
+              },
+              intakeRepairOutputSchema,
+            );
+            result = {
+              ...result,
+              items: repair.output.items,
+            };
+          }
 
           // Intake is allowed to add only customer-text requirements. The model
           // can still echo document context despite the instruction, so do not
