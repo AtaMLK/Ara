@@ -1999,16 +1999,44 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           );
         }
 
-        // Research is used for supplier discovery next, so make the
-        // external search intent supplier-oriented instead of relying only on
-        // product/manual results.
-        const supplierSearchQuery = `${query} manufacturer supplier official distributor`;
+        // Supplier discovery needs supplier-oriented searches. Searching the
+        // entire customer email produces manuals/catalogues instead of actual
+        // manufacturers or distributors. Build focused queries from confirmed
+        // requirements first, then fall back to quantity-bearing item lines
+        // from the original customer text.
+        const itemQueries = (requirements ?? [])
+          .map((item) => item.type + ': ' + item.value)
+          .filter(Boolean);
 
-        const results = await provider.search({
-          inquiryId,
-          query: supplierSearchQuery,
-          limit: 10,
-        });
+        if (itemQueries.length === 0) {
+          const lines = (sourceInquiry?.original_customer_text ?? '')
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean);
+
+          for (const line of lines) {
+            const match = line.match(/^(.+?)\s+(\d+(?:[.,]\d+)?)\s*(pcs?|pieces?|units?|unit)\b/i);
+            if (match) itemQueries.push(match[1].trim() + ' ' + match[2] + ' ' + match[3]);
+          }
+        }
+
+        const focusedQueries = itemQueries.length
+          ? itemQueries.map((item) => item + ' manufacturer supplier distributor official')
+          : [query + ' manufacturer supplier distributor official'];
+
+        const resultBatches = await Promise.all(
+          focusedQueries.slice(0, 5).map((supplierSearchQuery) =>
+            provider.search({ inquiryId, query: supplierSearchQuery, limit: 10 }),
+          ),
+        );
+
+        const resultMap = new Map<string, ResearchResult>();
+        for (const batch of resultBatches) {
+          for (const result of batch) {
+            if (result.sourceUrl && !resultMap.has(result.sourceUrl)) resultMap.set(result.sourceUrl, result);
+          }
+        }
+        const results = [...resultMap.values()].slice(0, 30);
 
         for (const result of results) {
           await supabase.from('research_results').insert({
