@@ -61,7 +61,32 @@ const intakeItemSchema = z.object({
   specifications: z.array(z.coerce.string().min(1)).default([]),
   deliveryRequirement: z.coerce.string().min(1).optional(),
   confidence: z.coerce.number().min(0).max(1),
-  inferredFields: z.array(z.enum(['product','brand','model','partNumber','quantity','unit','specification','delivery'])).default([]),
+  inferredFields: z.array(z.coerce.string().transform((value) => {
+    const normalized = value.trim().toLowerCase().replace(/[\\s-]+/g, '');
+    const aliases: Record<string, 'product'|'brand'|'model'|'partNumber'|'quantity'|'unit'|'specification'|'delivery'> = {
+      product: 'product',
+      productname: 'product',
+      item: 'product',
+      brand: 'brand',
+      manufacturer: 'brand',
+      model: 'model',
+      modelnumber: 'model',
+      partnumber: 'partNumber',
+      partno: 'partNumber',
+      mpn: 'partNumber',
+      quantity: 'quantity',
+      qty: 'quantity',
+      unit: 'unit',
+      specification: 'specification',
+      specifications: 'specification',
+      spec: 'specification',
+      specs: 'specification',
+      delivery: 'delivery',
+      deliverytime: 'delivery',
+      leadtime: 'delivery',
+    };
+    return aliases[normalized] ?? 'specification';
+  })).default([]),
   evidence: z.coerce.string().min(1).optional(),
 });
 
