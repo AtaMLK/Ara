@@ -93,6 +93,23 @@ export const supplierDiscoveryOutputSchema = z.object({
   })),
 });
 
+export const supplierContactResearchOutputSchema = z.object({
+  contacts: z.array(z.object({
+    name: z.string().optional(),
+    email: z.string().email().optional(),
+    phone: z.string().optional(),
+    jobTitle: z.string().optional(),
+    department: z.string().optional(),
+    country: z.string().optional(),
+    professionalProfile: z.string().url().optional(),
+    evidence: z.array(z.string()).default([]),
+  })),
+  emails: z.array(z.object({
+    email: z.string().email(),
+    evidence: z.string().min(1),
+  })).default([]),
+});
+
 export const supplierVerificationOutputSchema = z.object({
   status: z.enum(['pending','verified','rejected']),
   explanation: z.string().min(1),
