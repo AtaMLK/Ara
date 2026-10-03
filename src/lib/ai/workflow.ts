@@ -2322,6 +2322,21 @@ export async function continueInquiryWorkflow(inquiryId: string) {
         if ((matchedEmails ?? []).length) return runStage(inquiryId, 'quote_extraction');
       }
 
+      if (discovery?.status === 'queued' || discovery?.status === 'running') {
+        const { data: researchExecution } = await supabase
+          .from('ai_executions')
+          .select('status')
+          .eq('inquiry_id', inquiryId)
+          .eq('task_key', `inquiry:${inquiryId}:stage:research`)
+          .maybeSingle();
+
+        if (researchExecution?.status === 'queued' || researchExecution?.status === 'running') {
+          return runStage(inquiryId, 'research');
+        }
+
+        return runStage(inquiryId, 'supplier_discovery');
+      }
+
       if (discovery?.status === 'succeeded') {
         const { data: finalized } = await supabase
           .from('supplier_candidates')
@@ -2347,7 +2362,41 @@ export async function continueInquiryWorkflow(inquiryId: string) {
           throw new ToolError('APPROVAL_REQUIRED', 'RFQ drafts require Admin approval before sending');
         }
 
-        throw new ToolError('CONFLICT', 'Supplier discovery completed but no supplier record was created');
+        const { data: discoveryExecution } = await supabase
+          .from('ai_executions')
+          .select('id,status,output_ref')
+          .eq('inquiry_id', inquiryId)
+          .eq('task_key', `inquiry:${inquiryId}:stage:supplier_discovery`)
+          .maybeSingle();
+
+        const candidateCount = Number((discoveryExecution?.output_ref as { candidate_count?: number } | null)?.candidate_count ?? 0);
+
+        if (discoveryExecution?.status === 'succeeded' && candidateCount === 0) {
+          const { data: researchExecution } = await supabase
+            .from('ai_executions')
+            .select('id,status')
+            .eq('inquiry_id', inquiryId)
+            .eq('task_key', `inquiry:${inquiryId}:stage:research`)
+            .maybeSingle();
+
+          if (researchExecution?.id && researchExecution.status === 'succeeded') {
+            await supabase
+              .from('ai_executions')
+              .update({
+                status: 'queued',
+                error_code: null,
+                error_message: null,
+                completed_at: null,
+                started_at: null,
+              })
+              .eq('id', researchExecution.id)
+              .eq('status', 'succeeded');
+
+            return runStage(inquiryId, 'research');
+          }
+        }
+
+        throw new ToolError('CONFLICT', 'Supplier discovery completed but no supplier candidate could be created');
       }
 
       return runStage(inquiryId, 'supplier_discovery');
