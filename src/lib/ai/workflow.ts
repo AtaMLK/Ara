@@ -1873,6 +1873,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .eq('research_case_id', research.id)
         .order('confidence', { ascending: false, nullsFirst: false });
 
+      const discoveryProvider = getResearchProvider();
+
       if (resultsError) throw new ToolError('TRANSIENT', resultsError.message);
 
       const { data: existingCandidates } = await supabase
@@ -2004,8 +2006,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           emails: Array<{ email: string; evidence: string }>;
         } = { contacts: [], emails: [] };
 
-        if (provider) {
-          const contactResults = await provider.search({
+        if (discoveryProvider) {
+          const contactResults = await discoveryProvider.search({
             inquiryId,
             query: `site:${hostname} (contact OR sales OR "sales email" OR "email us" OR distributor OR "request a quote")`,
             limit: 8,
@@ -2069,8 +2071,27 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
             if (emailError) throw new ToolError('CONFLICT', emailError.message);
 
-            if (createdEmail && !supplierId) {
-              throw new ToolError('CONFLICT', 'Supplier contact was found before supplier record was created');
+            if (createdEmail) {
+              const { data: primaryEmail } = await supabase
+                .from('supplier_emails')
+                .select('id')
+                .eq('supplier_id', supplierId)
+                .eq('status', 'active')
+                .order('is_primary', { ascending: false })
+                .order('created_at', { ascending: true })
+                .limit(1)
+                .maybeSingle();
+
+              if (primaryEmail?.id) {
+                await supabase
+                  .from('supplier_emails')
+                  .update({ is_primary: true })
+                  .eq('id', primaryEmail.id);
+                await supabase
+                  .from('suppliers')
+                  .update({ primary_email_id: primaryEmail.id })
+                  .eq('id', supplierId);
+              }
             }
           }
         }
