@@ -422,9 +422,9 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           // Intake is allowed to add only customer-text requirements. The model
           // can still echo document context despite the instruction, so do not
           // fail the whole workflow for a recoverable source-label mismatch.
-          // Keep only explicitly customer_text items and discard any sourceRef
-          // from that pass because document-derived requirements are persisted
-          // by the Document stage.
+          // Keep only customer-text items; the sourceRef here identifies the
+          // AI-extracted item group so Research can keep brand/model/specs scoped
+          // to the correct product.
           const extractedRequirements = result.items.flatMap((item, itemIndex) => {
             const requirements: Array<{
               type: 'product'|'model_part_number'|'quantity'|'specification'|'delivery'|'other';
@@ -529,7 +529,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               type: item.type,
               value: item.value,
               source: item.source,
-              source_ref: item.source === 'customer_text' ? null : item.sourceRef,
+              source_ref: item.sourceRef ?? null,
               status: ambiguityTypes.has(item.type) ? 'clarification_required' : 'open',
               admin_edited: false,
             }));
