@@ -50,55 +50,25 @@ export const documentOutputSchema = z.object({
   requirements: z.array(documentRequirementSchema).default([]),
 });
 
-const intakeRequirementSchema = z.object({
-  type: z.string().optional().default('other').transform((value) => {
-    const normalized = value.trim().toLowerCase().replace(/[\\s-]+/g, '_');
-    const aliases: Record<string, 'product'|'model_part_number'|'quantity'|'specification'|'delivery'|'other'> = {
-      product: 'product',
-      product_name: 'product',
-      item: 'product',
-      part: 'product',
-      part_name: 'product',
-      model: 'model_part_number',
-      model_number: 'model_part_number',
-      part_number: 'model_part_number',
-      part_no: 'model_part_number',
-      mpn: 'model_part_number',
-      quantity: 'quantity',
-      qty: 'quantity',
-      specification: 'specification',
-      specs: 'specification',
-      technical_specification: 'specification',
-      delivery: 'delivery',
-      delivery_time: 'delivery',
-      lead_time: 'delivery',
-      other: 'other',
-    };
-    return aliases[normalized] ?? 'other';
-  }),
-  // AI may omit a value when a requirement is mentioned but not yet
-  // concretely specified. Keep the item parseable; Intake filters empty values
-  // before persistence instead of failing the entire stage.
-  value: z.unknown().optional().transform((value) => {
-    if (value === undefined || value === null) return '';
-    return String(value).trim();
-  }),
-  source: z.string().optional().default('customer_text').transform((value) => {
-    const normalized = value.trim().toLowerCase().replace(/[\\s-]+/g, '_');
-    if (normalized === 'customer' || normalized === 'customer_text' || normalized === 'text') return 'customer_text' as const;
-    if (normalized === 'pdf' || normalized === 'document') return 'pdf' as const;
-    if (normalized === 'excel' || normalized === 'spreadsheet' || normalized === 'csv') return 'excel' as const;
-    if (normalized === 'image' || normalized === 'photo') return 'image' as const;
-    if (normalized === 'clarification' || normalized === 'clarified') return 'clarification' as const;
-    return 'customer_text' as const;
-  }),
-  sourceRef: z.coerce.string().optional(),
+const intakeItemSchema = z.object({
+  requestedText: z.coerce.string().min(1),
+  product: z.coerce.string().min(1),
+  brand: z.coerce.string().optional(),
+  model: z.coerce.string().optional(),
+  partNumber: z.coerce.string().optional(),
+  quantity: z.coerce.number().positive().optional(),
+  unit: z.coerce.string().min(1).optional(),
+  specifications: z.array(z.coerce.string().min(1)).default([]),
+  deliveryRequirement: z.coerce.string().min(1).optional(),
+  confidence: z.coerce.number().min(0).max(1),
+  inferredFields: z.array(z.enum(['product','brand','model','partNumber','quantity','unit','specification','delivery'])).default([]),
+  evidence: z.coerce.string().min(1),
 });
 
 export const intakeOutputSchema = z.object({
   title: z.coerce.string().min(1).default('Customer inquiry'),
   description: z.coerce.string().min(1).default('Customer inquiry details extracted from the supplied request.'),
-  requirements: z.array(intakeRequirementSchema).default([]),
+  items: z.array(intakeItemSchema).min(1),
   ambiguities: z.array(z.object({
     requirementType: z.coerce.string().default('other'),
     reason: z.coerce.string().min(1),
