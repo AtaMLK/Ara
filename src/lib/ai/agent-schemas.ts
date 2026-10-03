@@ -76,7 +76,13 @@ const intakeRequirementSchema = z.object({
     };
     return aliases[normalized] ?? 'other';
   }),
-  value: z.coerce.string().min(1),
+  // AI may omit a value when a requirement is mentioned but not yet
+  // concretely specified. Keep the item parseable; Intake filters empty values
+  // before persistence instead of failing the entire stage.
+  value: z.unknown().optional().transform((value) => {
+    if (value === undefined || value === null) return '';
+    return String(value).trim();
+  }),
   source: z.string().optional().default('customer_text').transform((value) => {
     const normalized = value.trim().toLowerCase().replace(/[\\s-]+/g, '_');
     if (normalized === 'customer' || normalized === 'customer_text' || normalized === 'text') return 'customer_text' as const;
