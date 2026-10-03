@@ -403,10 +403,15 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               existing_title: source.title,
               existing_description: source.description,
               instructions: [
-                'Use only explicitly supported customer text facts.',
-                'Do not mark material requirements confirmed when ambiguous.',
-                'For unclear quantities, model, brand, or specifications, report ambiguity.',
-                'Do not invent evidence references or document content.',
+                'This is the primary AI understanding step for a procurement request.',
+                'Read the complete customer request and identify every distinct requested product/item before creating requirements.',
+                'For each item, extract product, brand, model/part number, quantity and unit when supported by the customer wording.',
+                'Normalize obvious typos and spacing when the intended term is clear. For example, treat "temprature sensor" as "temperature sensor" but do not invent a model.',
+                'A brand or manufacturer can be inferred from the wording only when the relationship is strongly supported; record that field in inferredFields and lower confidence if needed.',
+                'Never invent a missing quantity, brand, model, part number, specification, delivery term, or supplier.',
+                'Return one item per requested product. If customer text contains procurement items, items must not be empty.',
+                'Preserve the exact customer line/phrase in requestedText and use it as evidence.',
+                'Material ambiguity must be reported in ambiguities, but ambiguity does not mean ignoring an otherwise identifiable product.',
                 'Document-derived requirements are already persisted separately. In this Intake pass, create only new requirements sourced from customer_text. Do not recreate or modify document-derived requirements.',
               ],
             },
@@ -420,13 +425,80 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           // Keep only explicitly customer_text items and discard any sourceRef
           // from that pass because document-derived requirements are persisted
           // by the Document stage.
-          const customerTextRequirements = result.requirements
-            .filter((item) => item.source === 'customer_text' && item.value.trim())
-            .map((item) => ({
-              ...item,
-              source: 'customer_text' as const,
-              sourceRef: undefined,
-            }));
+          const extractedRequirements = result.items.flatMap((item) => {
+            const requirements: Array<{
+              type: 'product'|'model_part_number'|'quantity'|'specification'|'delivery'|'other';
+              value: string;
+              source: 'customer_text';
+              sourceRef?: string;
+            }> = [];
+
+            requirements.push({
+              type: 'product',
+              value: item.product.trim(),
+              source: 'customer_text',
+            });
+
+            if (item.brand?.trim()) {
+              requirements.push({
+                type: 'specification',
+                value: `Brand: ${item.brand.trim()}`,
+                source: 'customer_text',
+              });
+            }
+
+            if (item.model?.trim()) {
+              requirements.push({
+                type: 'model_part_number',
+                value: item.model.trim(),
+                source: 'customer_text',
+              });
+            }
+
+            if (item.partNumber?.trim()) {
+              requirements.push({
+                type: 'model_part_number',
+                value: item.partNumber.trim(),
+                source: 'customer_text',
+              });
+            }
+
+            if (item.quantity !== undefined) {
+              requirements.push({
+                type: 'quantity',
+                value: item.unit?.trim()
+                  ? `${item.quantity} ${item.unit.trim()}`
+                  : String(item.quantity),
+                source: 'customer_text',
+              });
+            }
+
+            for (const specification of item.specifications) {
+              if (specification.trim()) {
+                requirements.push({
+                  type: 'specification',
+                  value: specification.trim(),
+                  source: 'customer_text',
+                });
+              }
+            }
+
+            if (item.deliveryRequirement?.trim()) {
+              requirements.push({
+                type: 'delivery',
+                value: item.deliveryRequirement.trim(),
+                source: 'customer_text',
+              });
+            }
+
+            return requirements;
+          });
+
+          const customerTextRequirements = extractedRequirements.map((item) => ({
+            ...item,
+            source: 'customer_text' as const,
+            sourceRef: undefined,
+          }));
 
           // An execution can be retried after partial persistence; never duplicate
           // the first extraction or overwrite changes made after the model call.
@@ -468,6 +540,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                     title: result.title,
                     description: result.description,
                     ambiguities: result.ambiguities,
+                    items: result.items,
                     model: ai.model,
                     provider: ai.provider,
                     execution_id: running.id,
@@ -478,6 +551,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               .eq('current_version', source.current_version);
             await timeline(inquiryId, 'intake_ai_extracted', {
               execution_id: running.id,
+              extracted_items: result.items.length,
               extracted_requirements: inserts.length,
               ambiguity_count: result.ambiguities.length,
               provider: ai.provider,
