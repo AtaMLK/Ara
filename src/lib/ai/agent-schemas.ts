@@ -138,6 +138,15 @@ export const clarificationOutputSchema = z.object({
   questions: z.array(clarificationQuestionSchema).max(5),
 });
 
+export const clarificationRepairOutputSchema = z.object({
+  needsClarification: z.boolean(),
+  questions: z.array(z.object({
+    requirementId: z.string().uuid(),
+    question: z.string().min(1),
+    reason: z.string().min(1),
+  })).max(5),
+});
+
 export const supplierDiscoveryOutputSchema = z.object({
   candidates: z.array(z.object({
     name: z.string().min(1),
