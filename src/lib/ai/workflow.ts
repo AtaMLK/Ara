@@ -2062,7 +2062,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .filter((item) => item.type === 'product')
           .map((product) => {
             const related = confirmedRequirements
-              .filter((item) => item.type === 'specification' || item.type === 'model_part_number')
+              .filter((item) =>
+                item.source_ref === product.source_ref &&
+                (item.type === 'specification' || item.type === 'model_part_number')
+              )
               .map((item) => item.value)
               .join(' ');
             return [product.value, related].filter(Boolean).join(' ').trim();
