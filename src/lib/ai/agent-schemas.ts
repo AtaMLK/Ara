@@ -50,18 +50,52 @@ export const documentOutputSchema = z.object({
   requirements: z.array(documentRequirementSchema).default([]),
 });
 
+const intakeRequirementSchema = z.object({
+  type: z.string().optional().default('other').transform((value) => {
+    const normalized = value.trim().toLowerCase().replace(/[\\s-]+/g, '_');
+    const aliases: Record<string, 'product'|'model_part_number'|'quantity'|'specification'|'delivery'|'other'> = {
+      product: 'product',
+      product_name: 'product',
+      item: 'product',
+      part: 'product',
+      part_name: 'product',
+      model: 'model_part_number',
+      model_number: 'model_part_number',
+      part_number: 'model_part_number',
+      part_no: 'model_part_number',
+      mpn: 'model_part_number',
+      quantity: 'quantity',
+      qty: 'quantity',
+      specification: 'specification',
+      specs: 'specification',
+      technical_specification: 'specification',
+      delivery: 'delivery',
+      delivery_time: 'delivery',
+      lead_time: 'delivery',
+      other: 'other',
+    };
+    return aliases[normalized] ?? 'other';
+  }),
+  value: z.coerce.string().min(1),
+  source: z.string().optional().default('customer_text').transform((value) => {
+    const normalized = value.trim().toLowerCase().replace(/[\\s-]+/g, '_');
+    if (normalized === 'customer' || normalized === 'customer_text' || normalized === 'text') return 'customer_text' as const;
+    if (normalized === 'pdf' || normalized === 'document') return 'pdf' as const;
+    if (normalized === 'excel' || normalized === 'spreadsheet' || normalized === 'csv') return 'excel' as const;
+    if (normalized === 'image' || normalized === 'photo') return 'image' as const;
+    if (normalized === 'clarification' || normalized === 'clarified') return 'clarification' as const;
+    return 'customer_text' as const;
+  }),
+  sourceRef: z.coerce.string().optional(),
+});
+
 export const intakeOutputSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().min(1),
-  requirements: z.array(z.object({
-    type: z.enum(['product','model_part_number','quantity','specification','delivery','other']),
-    value: z.string().min(1),
-    source: z.enum(['customer_text','pdf','excel','image','clarification']),
-    sourceRef: z.string().optional(),
-  })),
+  title: z.coerce.string().min(1).default('Customer inquiry'),
+  description: z.coerce.string().min(1).default('Customer inquiry details extracted from the supplied request.'),
+  requirements: z.array(intakeRequirementSchema).default([]),
   ambiguities: z.array(z.object({
-    requirementType: z.string(),
-    reason: z.string().min(1),
+    requirementType: z.coerce.string().default('other'),
+    reason: z.coerce.string().min(1),
   })).default([]),
 });
 
