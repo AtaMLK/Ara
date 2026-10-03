@@ -52,7 +52,7 @@ export const documentOutputSchema = z.object({
 
 const intakeItemSchema = z.object({
   requestedText: z.coerce.string().min(1),
-  product: z.coerce.string().min(1),
+  product: z.coerce.string().min(1).optional(),
   brand: z.coerce.string().optional(),
   model: z.coerce.string().optional(),
   partNumber: z.coerce.string().optional(),
@@ -62,7 +62,7 @@ const intakeItemSchema = z.object({
   deliveryRequirement: z.coerce.string().min(1).optional(),
   confidence: z.coerce.number().min(0).max(1),
   inferredFields: z.array(z.enum(['product','brand','model','partNumber','quantity','unit','specification','delivery'])).default([]),
-  evidence: z.coerce.string().min(1),
+  evidence: z.coerce.string().min(1).optional(),
 });
 
 export const intakeRepairOutputSchema = z.object({
