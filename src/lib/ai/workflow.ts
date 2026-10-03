@@ -1800,10 +1800,59 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (seen.has(key) || blockedNames.has(key)) continue;
         seen.add(key);
 
+        const website = `https://${hostname}`;
+        const country = (result.structuredData?.country as string | undefined)?.trim() || null;
+
+        // Supplier discovery is an AI preparation step, not an Admin approval
+        // gate. Create the supplier record immediately so it is available in
+        // the Suppliers section. Admin approval is reserved for the RFQ/email
+        // send action.
+        let supplierId: string | null = null;
+        const { data: existingSupplier, error: supplierLookupError } = await supabase
+          .from('suppliers')
+          .select('id')
+          .ilike('legal_name', proposedName.slice(0, 240))
+          .limit(1)
+          .maybeSingle();
+
+        if (supplierLookupError) throw new ToolError('TRANSIENT', supplierLookupError.message);
+
+        if (existingSupplier?.id) {
+          supplierId = existingSupplier.id;
+        } else {
+          const { data: createdSupplier, error: supplierError } = await supabase
+            .from('suppliers')
+            .insert({
+              legal_name: proposedName.slice(0, 240),
+              primary_country: country ?? 'Unknown',
+              supplier_type: 'unknown',
+              verification_status: 'pending',
+              description: result.finding?.slice(0, 2000) || null,
+            })
+            .select('id')
+            .single();
+
+          if (supplierError || !createdSupplier) {
+            throw new ToolError('CONFLICT', supplierError?.message ?? 'Failed to create supplier record');
+          }
+
+          supplierId = createdSupplier.id;
+
+          const { error: websiteError } = await supabase.from('supplier_websites').insert({
+            supplier_id: supplierId,
+            url: website,
+            is_primary: true,
+          });
+
+          if (websiteError) throw new ToolError('CONFLICT', websiteError.message);
+        }
+
         const { error } = await supabase.from('supplier_candidates').upsert({
           inquiry_id: inquiryId,
+          supplier_id: supplierId,
           proposed_name: proposedName.slice(0, 240),
-          proposed_website: `https://${hostname}`,
+          proposed_country: country,
+          proposed_website: website,
           match_evidence: {
             research_result_id: result.id,
             finding: result.finding,
@@ -1815,8 +1864,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             source_url: result.source_url,
             source_name: result.source_name,
           },
-          status: 'proposed',
-        }, { onConflict: 'inquiry_id,proposed_name', ignoreDuplicates: true });
+          status: 'finalized',
+        }, { onConflict: 'inquiry_id,proposed_name', ignoreDuplicates: false });
 
         if (!error) createdCount++;
       }
@@ -1824,9 +1873,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       await markExecutionSuccess(running.id, {
         research_case_id: research.id,
         candidate_count: createdCount,
-        next_stage: 'verification',
-        blocked: true,
-        reason: 'admin_candidate_finalization_required',
+        next_stage: 'rfq',
+        blocked: false,
       });
 
       await setInquiryStatus(inquiryId, 'researching');
@@ -1834,15 +1882,22 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         inquiry_id: inquiryId,
         agent_id: 'supplier_discovery',
         alert_type: 'SUPPLIER_CANDIDATES_READY',
-        message: `${createdCount} supplier candidate(s) were discovered from stored research evidence. Admin finalization is required before verification or RFQ.`,
+        message: `${createdCount} supplier(s) were discovered and added to Suppliers. RFQ drafts will be prepared automatically; Admin approval is required only before sending supplier email.`,
         priority: 'normal',
       });
       await timeline(inquiryId, 'workflow_supplier_candidates_ready', {
         research_case_id: research.id,
         candidate_count: createdCount,
+        admin_approval_required_at: 'rfq_send',
       }, 'supplier_discovery');
 
-      return { execution: running, outcome: 'supplier_candidates_ready' as const };
+      const rfq = await enqueueWorkflow(inquiryId, 'rfq');
+      await timeline(inquiryId, 'workflow_rfq_queued', {
+        rfq_execution_id: rfq.id,
+        approval_required: true,
+      }, 'supplier_discovery');
+
+      return { execution: running, outcome: 'rfq_queued' as const };
     }
 
 
