@@ -455,6 +455,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 type: 'model_part_number',
                 value: item.model.trim(),
                 source: 'customer_text',
+                sourceRef,
               });
             }
 
@@ -463,6 +464,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 type: 'model_part_number',
                 value: item.partNumber.trim(),
                 source: 'customer_text',
+                sourceRef,
               });
             }
 
@@ -483,6 +485,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                   type: 'specification',
                   value: specification.trim(),
                   source: 'customer_text',
+                  sourceRef,
                 });
               }
             }
@@ -492,6 +495,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 type: 'delivery',
                 value: item.deliveryRequirement.trim(),
                 source: 'customer_text',
+                sourceRef,
               });
             }
 
