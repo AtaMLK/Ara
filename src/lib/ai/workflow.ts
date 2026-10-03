@@ -569,6 +569,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       if (currentError) throw new ToolError('TRANSIENT', currentError.message);
       const rows = (currentRequirements ?? []) as RequirementRow[];
 
+      if (rows.length === 0) {
+        throw new ToolError(
+          'AI_PROCESSING',
+          'AI intake extracted no procurement requirements from the customer request.',
+        );
+      }
+
       // Do not treat every open requirement as a clarification request.
       // The clarification agent is the decision gate: it evaluates the
       // complete requirement set and decides whether missing/conflicting
@@ -2043,60 +2050,28 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .eq('status', 'confirmed')
           .order('created_at', { ascending: true });
 
-        let query = (requirements ?? [])
-          .map((item) => `${item.type}: ${item.value}`)
-          .join(' | ')
-          .trim();
-
-        // A research request must never reach the external provider with an
-        // empty query. Intake can legitimately produce zero structured
-        // requirements for a free-form customer request, so fall back to the
-        // original customer text rather than fabricating a requirement.
-        if (!query) {
-          const { data: sourceInquiry, error: sourceInquiryError } = await supabase
-            .from('inquiries')
-            .select('original_customer_text')
-            .eq('id', inquiryId)
-            .single();
-
-          if (sourceInquiryError) {
-            throw new ToolError('TRANSIENT', sourceInquiryError.message);
-          }
-
-          query = sourceInquiry?.original_customer_text?.trim() ?? '';
-        }
-
-        if (!query) {
-          throw new ToolError(
-            'CONFLICT',
-            'Product research cannot start because no confirmed requirements or original customer request is available.',
-          );
-        }
-
-        // Supplier discovery needs supplier-oriented searches. Searching the
-        // entire customer email produces manuals/catalogues instead of actual
-        // manufacturers or distributors. Build focused queries from confirmed
-        // requirements first, then fall back to quantity-bearing item lines
-        // from the original customer text.
-        const itemQueries = (requirements ?? [])
-          .map((item) => item.type + ': ' + item.value)
+        const confirmedRequirements = requirements ?? [];
+        const itemQueries = confirmedRequirements
+          .filter((item) => item.type === 'product')
+          .map((product) => {
+            const related = confirmedRequirements
+              .filter((item) => item.type === 'specification' || item.type === 'model_part_number')
+              .map((item) => item.value)
+              .join(' ');
+            return [product.value, related].filter(Boolean).join(' ').trim();
+          })
           .filter(Boolean);
 
         if (itemQueries.length === 0) {
-          const lines = (query ?? '')
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter(Boolean);
-
-          for (const line of lines) {
-            const match = line.match(/^(.+?)\s+(\d+(?:[.,]\d+)?)\s*(pcs?|pieces?|units?|unit)\b/i);
-            if (match) itemQueries.push(match[1].trim() + ' ' + match[2] + ' ' + match[3]);
-          }
+          throw new ToolError(
+            'CONFLICT',
+            'Product research cannot start because no confirmed AI-extracted product requirements are available.',
+          );
         }
 
-        const focusedQueries = itemQueries.length
-          ? itemQueries.map((item) => item + ' manufacturer supplier distributor official')
-          : [query + ' manufacturer supplier distributor official'];
+        const focusedQueries = itemQueries
+          .slice(0, 5)
+          .map((item) => item + ' manufacturer supplier distributor official');
 
         const resultBatches = await Promise.all(
           focusedQueries.slice(0, 5).map((supplierSearchQuery) =>
