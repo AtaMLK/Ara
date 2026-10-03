@@ -2195,6 +2195,54 @@ export async function startInquiryWorkflow(
   }
 
   if (existing.data?.status === 'succeeded') {
+    // Recover the legacy Intake behavior where the AI execution was marked
+    // successful even though it extracted zero procurement requirements.
+    const { count: requirementCount, error: requirementCountError } = await supabase
+      .from('requirements')
+      .select('id', { count: 'exact', head: true })
+      .eq('inquiry_id', inquiryId);
+
+    if (requirementCountError) throw new ToolError('TRANSIENT', requirementCountError.message);
+
+    if ((requirementCount ?? 0) === 0) {
+      const { data: intakeExecution } = await supabase
+        .from('ai_executions')
+        .select('id,status')
+        .eq('inquiry_id', inquiryId)
+        .eq('task_key', `inquiry:${inquiryId}:stage:intake`)
+        .maybeSingle();
+
+      if (intakeExecution?.status === 'succeeded') {
+        const { data: recoveredIntake, error: recoveryError } = await supabase
+          .from('ai_executions')
+          .update({
+            status: 'queued',
+            error_code: null,
+            error_message: null,
+            completed_at: null,
+            started_at: null,
+          })
+          .eq('id', intakeExecution.id)
+          .eq('status', 'succeeded')
+          .select('*')
+          .single();
+
+        if (recoveryError || !recoveredIntake) {
+          throw new ToolError('TRANSIENT', recoveryError?.message ?? 'Failed to requeue legacy Intake execution');
+        }
+
+        await timeline(inquiryId, 'workflow_intake_requeued_for_recovery', {
+          execution_id: recoveredIntake.id,
+          reason: 'intake_succeeded_with_zero_requirements',
+        }, 'intake');
+
+        return {
+          execution: recoveredIntake,
+          outcome: 'intake_requeued_for_recovery' as const,
+        };
+      }
+    }
+
     // The document stage is already complete. If a downstream stage failed
     // before reaching the next stage, an Admin Start should recover that
     // queued workflow instead of becoming a no-op.
