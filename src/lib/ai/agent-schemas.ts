@@ -120,13 +120,22 @@ export const intakeOutputSchema = z.object({
   ])).default([]),
 });
 
-export const clarificationOutputSchema = z.object({
-  needsClarification: z.boolean(),
-  questions: z.array(z.object({
+const clarificationQuestionSchema = z.union([
+  z.object({
     requirementId: z.string().uuid().optional(),
     question: z.string().min(1),
     reason: z.string().min(1),
-  })).max(5),
+  }),
+  z.coerce.string().min(1).transform((question) => ({
+    requirementId: undefined,
+    question,
+    reason: question,
+  })),
+]);
+
+export const clarificationOutputSchema = z.object({
+  needsClarification: z.boolean(),
+  questions: z.array(clarificationQuestionSchema).max(5),
 });
 
 export const supplierDiscoveryOutputSchema = z.object({
