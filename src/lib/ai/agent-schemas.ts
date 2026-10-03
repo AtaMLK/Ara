@@ -89,6 +89,7 @@ export const supplierDiscoveryOutputSchema = z.object({
     name: z.string().min(1),
     country: z.string().optional(),
     website: z.string().url().optional(),
+    sourceUrl: z.string().url(),
     evidence: z.array(z.string()).default([]),
   })),
 });
