@@ -86,10 +86,13 @@ export const intakeOutputSchema = z.object({
   title: z.coerce.string().min(1).default('Customer inquiry'),
   description: z.coerce.string().min(1).default('Customer inquiry details extracted from the supplied request.'),
   items: z.array(intakeItemSchema).min(1),
-  ambiguities: z.array(z.object({
-    requirementType: z.coerce.string().default('other'),
-    reason: z.coerce.string().min(1),
-  })).default([]),
+  ambiguities: z.array(z.union([
+    z.coerce.string().min(1).transform((reason) => ({ requirementType: 'other', reason })),
+    z.object({
+      requirementType: z.coerce.string().default('other'),
+      reason: z.coerce.string().min(1),
+    }),
+  ])).default([]),
 });
 
 export const clarificationOutputSchema = z.object({
