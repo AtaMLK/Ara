@@ -1637,8 +1637,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .filter((id): id is string => Boolean(id));
 
       if (!supplierIds.length) {
-        await markExecutionSuccess(running.id, { blocked: true, reason: 'no_verified_suppliers' });
-        await createAlert(inquiryId, 'rfq', 'NO_VERIFIED_SUPPLIERS', 'RFQ cannot be created until at least one supplier is verified.', 'normal');
+        await markExecutionSuccess(running.id, { blocked: true, reason: 'no_suppliers_available' });
+        await createAlert(inquiryId, 'rfq', 'NO_SUPPLIERS_AVAILABLE', 'RFQ cannot be prepared because no supplier record is available.', 'normal');
         return { execution: running, outcome: 'blocked' as const };
       }
 
@@ -1647,11 +1647,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .select('id,legal_name,verification_status')
         .in('id', supplierIds);
 
-      const verifiedSuppliers = (suppliers ?? []).filter((s) => s.verification_status === 'verified');
+      // Verification is informational at this stage. The RFQ is still a draft
+      // and cannot be sent until Admin explicitly approves the email action.
+      const rfqSuppliers = suppliers ?? [];
 
-      if (!verifiedSuppliers.length) {
-        await markExecutionSuccess(running.id, { blocked: true, reason: 'suppliers_not_verified' });
-        await createAlert(inquiryId, 'rfq', 'SUPPLIERS_NOT_VERIFIED', 'RFQ is waiting for supplier verification.', 'normal');
+      if (!rfqSuppliers.length) {
+        await markExecutionSuccess(running.id, { blocked: true, reason: 'supplier_records_not_found' });
+        await createAlert(inquiryId, 'rfq', 'SUPPLIER_RECORDS_NOT_FOUND', 'RFQ cannot be prepared because supplier records could not be loaded.', 'normal');
         return { execution: running, outcome: 'blocked' as const };
       }
 
@@ -1670,7 +1672,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .single();
 
       let created = 0;
-      for (const supplier of verifiedSuppliers) {
+      for (const supplier of rfqSuppliers) {
         const { data: email } = await supabase
           .from('supplier_emails')
           .select('email')
@@ -2265,46 +2267,24 @@ export async function continueInquiryWorkflow(inquiryId: string) {
           .eq('status', 'finalized');
 
         if ((finalized ?? []).some((candidate) => candidate.supplier_id)) {
-          const { data: verification } = await supabase
+          const { data: rfqExecution } = await supabase
             .from('ai_executions')
             .select('status,output_ref')
             .eq('inquiry_id', inquiryId)
-            .eq('task_key', `inquiry:${inquiryId}:stage:verification`)
+            .eq('task_key', `inquiry:${inquiryId}:stage:rfq`)
             .maybeSingle();
 
-          if (verification?.status === 'succeeded') {
-            const verificationOutput = (verification.output_ref ?? {}) as { blocked?: boolean; pending_count?: number };
+          if (rfqExecution?.status !== 'succeeded') return runStage(inquiryId, 'rfq');
 
-            if (verificationOutput.blocked) {
-              throw new ToolError(
-                'APPROVAL_REQUIRED',
-                verificationOutput.pending_count
-                  ? `Supplier verification is waiting for Admin review: ${verificationOutput.pending_count} supplier(s) still need verification evidence.`
-                  : 'Supplier verification is waiting for Admin review.',
-              );
-            }
-
-            const { data: rfqExecution } = await supabase
-              .from('ai_executions')
-              .select('status,output_ref')
-              .eq('inquiry_id', inquiryId)
-              .eq('task_key', `inquiry:${inquiryId}:stage:rfq`)
-              .maybeSingle();
-
-            if (rfqExecution?.status !== 'succeeded') return runStage(inquiryId, 'rfq');
-
-            const rfqOutput = (rfqExecution.output_ref ?? {}) as { status?: string; created_count?: number };
-            if (rfqOutput.status === 'pending_approval' || rfqOutput.created_count) {
-              throw new ToolError('APPROVAL_REQUIRED', 'RFQ drafts require Admin approval before sending');
-            }
-
+          const rfqOutput = (rfqExecution.output_ref ?? {}) as { status?: string; created_count?: number };
+          if (rfqOutput.status === 'pending_approval' || rfqOutput.created_count) {
             throw new ToolError('APPROVAL_REQUIRED', 'RFQ drafts require Admin approval before sending');
           }
 
-          return runStage(inquiryId, 'verification');
+          throw new ToolError('APPROVAL_REQUIRED', 'RFQ drafts require Admin approval before sending');
         }
 
-        throw new ToolError('APPROVAL_REQUIRED', 'Supplier candidates require Admin finalization and supplier approval before verification');
+        throw new ToolError('CONFLICT', 'Supplier discovery completed but no supplier record was created');
       }
 
       return runStage(inquiryId, 'supplier_discovery');
