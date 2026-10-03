@@ -2009,7 +2009,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .filter(Boolean);
 
         if (itemQueries.length === 0) {
-          const lines = (sourceInquiry?.original_customer_text ?? '')
+          const lines = (query ?? '')
             .split(/\r?\n/)
             .map((line) => line.trim())
             .filter(Boolean);
