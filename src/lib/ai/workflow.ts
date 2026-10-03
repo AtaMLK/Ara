@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider, type ResearchResult } from './research/provider';
 import { runAgent } from './agent-runner';
-import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema } from './agent-schemas';
+import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema, supplierDiscoveryOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
   enqueueWorkflow,
