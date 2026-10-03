@@ -1,5 +1,3 @@
-import { type Instrumentation } from 'next';
-
 const WORKER_INTERVAL_MS = 5_000;
 const WORKER_STATE_KEY = '__aratWorkflowWorkerStarted__';
 
@@ -29,8 +27,7 @@ export async function register() {
   };
 
   console.log('[ARAT][workflow-worker] started (local development)');
-  await run();
+  void run();
   setInterval(run, WORKER_INTERVAL_MS).unref();
 }
 
-export type { Instrumentation };
