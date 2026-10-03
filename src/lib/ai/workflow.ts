@@ -1793,9 +1793,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           continue;
         }
 
-        const text = `${result.source_name ?? ''} ${result.finding ?? ''}`.toLowerCase();
-        const supplierSignal = /(manufacturer|manufacturer[s]?|supplier|distributor|fabricat|hydraulic|industrial|machinery|components?)/i.test(text);
-        if (!supplierSignal) continue;
+        const text = `${result.source_name ?? ''} ${result.finding ?? ''} ${result.structuredData?.title ?? ''}`.toLowerCase();
+        const blockedSource = /(scribd|manualslib|manualmachine|pdfcoffee|researchgate|academia\.edu)/i.test(hostname);
+        const supplierSignal = /(manufacturer|manufacturer[s]?|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?)/i.test(text);
+        if (blockedSource || !supplierSignal) continue;
 
         const proposedName = result.source_name?.trim() || hostname;
         const key = proposedName.toLowerCase();
@@ -1998,9 +1999,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           );
         }
 
+        // Research is used for supplier discovery next, so make the
+        // external search intent supplier-oriented instead of relying only on
+        // product/manual results.
+        const supplierSearchQuery = `${query} manufacturer supplier official distributor`;
+
         const results = await provider.search({
           inquiryId,
-          query,
+          query: supplierSearchQuery,
           limit: 10,
         });
 
