@@ -50,12 +50,23 @@ export const documentOutputSchema = z.object({
   requirements: z.array(documentRequirementSchema).default([]),
 });
 
+const optionalIntakeText = z.preprocess(
+  (value) => {
+    if (value == null) return undefined;
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    if (!trimmed || /^(null|undefined|n\/a|na)$/i.test(trimmed)) return undefined;
+    return trimmed;
+  },
+  z.string().min(1).optional(),
+);
+
 const intakeItemSchema = z.object({
   requestedText: z.coerce.string().min(1),
   product: z.coerce.string().min(1).optional(),
-  brand: z.coerce.string().optional(),
-  model: z.coerce.string().optional(),
-  partNumber: z.coerce.string().optional(),
+  brand: optionalIntakeText,
+  model: optionalIntakeText,
+  partNumber: optionalIntakeText,
   quantity: z.coerce.number().positive().optional(),
   unit: z.coerce.string().min(1).optional(),
   specifications: z.array(z.coerce.string().min(1)).default([]),
@@ -94,9 +105,9 @@ export const intakeRepairOutputSchema = z.object({
   items: z.array(z.object({
     requestedText: z.coerce.string().min(1),
     product: z.coerce.string().min(1),
-    brand: z.coerce.string().optional(),
-    model: z.coerce.string().optional(),
-    partNumber: z.coerce.string().optional(),
+    brand: optionalIntakeText,
+    model: optionalIntakeText,
+    partNumber: optionalIntakeText,
     quantity: z.coerce.number().positive().optional(),
     unit: z.coerce.string().min(1).optional(),
     specifications: z.array(z.coerce.string().min(1)).default([]),
