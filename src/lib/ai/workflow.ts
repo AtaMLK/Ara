@@ -425,18 +425,20 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           // Keep only explicitly customer_text items and discard any sourceRef
           // from that pass because document-derived requirements are persisted
           // by the Document stage.
-          const extractedRequirements = result.items.flatMap((item) => {
+          const extractedRequirements = result.items.flatMap((item, itemIndex) => {
             const requirements: Array<{
               type: 'product'|'model_part_number'|'quantity'|'specification'|'delivery'|'other';
               value: string;
               source: 'customer_text';
               sourceRef?: string;
             }> = [];
+            const sourceRef = `intake:item:${itemIndex}`;
 
             requirements.push({
               type: 'product',
               value: item.product.trim(),
               source: 'customer_text',
+              sourceRef,
             });
 
             if (item.brand?.trim()) {
@@ -444,6 +446,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 type: 'specification',
                 value: `Brand: ${item.brand.trim()}`,
                 source: 'customer_text',
+                sourceRef,
               });
             }
 
@@ -470,6 +473,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                   ? `${item.quantity} ${item.unit.trim()}`
                   : String(item.quantity),
                 source: 'customer_text',
+                sourceRef,
               });
             }
 
@@ -497,7 +501,6 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           const customerTextRequirements = extractedRequirements.map((item) => ({
             ...item,
             source: 'customer_text' as const,
-            sourceRef: undefined,
           }));
 
           // An execution can be retried after partial persistence; never duplicate
