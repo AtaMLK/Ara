@@ -1882,9 +1882,35 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .eq('status', 'confirmed')
           .order('created_at', { ascending: true });
 
-        const query = (requirements ?? [])
+        let query = (requirements ?? [])
           .map((item) => `${item.type}: ${item.value}`)
-          .join(' | ');
+          .join(' | ')
+          .trim();
+
+        // A research request must never reach the external provider with an
+        // empty query. Intake can legitimately produce zero structured
+        // requirements for a free-form customer request, so fall back to the
+        // original customer text rather than fabricating a requirement.
+        if (!query) {
+          const { data: sourceInquiry, error: sourceInquiryError } = await supabase
+            .from('inquiries')
+            .select('original_customer_text')
+            .eq('id', inquiryId)
+            .single();
+
+          if (sourceInquiryError) {
+            throw new ToolError('TRANSIENT', sourceInquiryError.message);
+          }
+
+          query = sourceInquiry?.original_customer_text?.trim() ?? '';
+        }
+
+        if (!query) {
+          throw new ToolError(
+            'CONFLICT',
+            'Product research cannot start because no confirmed requirements or original customer request is available.',
+          );
+        }
 
         const results = await provider.search({
           inquiryId,
