@@ -45,7 +45,21 @@ class SerpApiResearchProvider implements ResearchProvider {
     });
 
     if (!response.ok) {
-      throw new ToolError('TRANSIENT', `Research provider returned HTTP ${response.status}`);
+      let detail = '';
+      try {
+        const errorPayload = await response.json() as {
+          error?: string;
+          message?: string;
+        };
+        detail = errorPayload.error || errorPayload.message || '';
+      } catch {
+        // Keep the provider error generic when the upstream body is not JSON.
+      }
+
+      throw new ToolError(
+        'TRANSIENT',
+        `Research provider returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
+      );
     }
 
     const payload = await response.json() as {
