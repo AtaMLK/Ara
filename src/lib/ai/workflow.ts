@@ -1990,9 +1990,51 @@ export async function startInquiryWorkflow(
   }
 
   if (existing.data?.status === 'succeeded') {
+    // The document stage is already complete. If a downstream stage failed
+    // before reaching the next stage, an Admin Start should recover that
+    // queued workflow instead of becoming a no-op.
+    const { data: failedDownstream } = await supabase
+      .from('ai_executions')
+      .select('id,task_key,status,attempt_count')
+      .eq('inquiry_id', inquiryId)
+      .eq('status', 'failed')
+      .lt('attempt_count', 3)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (failedDownstream) {
+      const match = failedDownstream.task_key.match(/^inquiry:[^:]+:stage:(.+)$/);
+      const failedStage = match?.[1] as WorkflowStage | undefined;
+      if (failedStage && stageAgentExists(failedStage)) {
+        const { data: recovered, error: recoveryError } = await supabase
+          .from('ai_executions')
+          .update({
+            status: 'queued',
+            error_code: null,
+            error_message: null,
+            completed_at: null,
+          })
+          .eq('id', failedDownstream.id)
+          .eq('status', 'failed')
+          .select('*')
+          .single();
+
+        if (recoveryError || !recovered) {
+          throw new ToolError('TRANSIENT', recoveryError?.message ?? 'Failed to requeue downstream workflow stage');
+        }
+
+        await timeline(inquiryId, 'workflow_stage_requeued', {
+          execution_id: recovered.id,
+          stage: failedStage,
+          trigger,
+        }, stageAgentForTimeline(failedStage));
+      }
+    }
+
     return {
       execution: existing.data,
-      outcome: 'workflow_already_started' as const,
+      outcome: failedDownstream ? 'workflow_downstream_requeued' as const : 'workflow_already_started' as const,
     };
   }
 
