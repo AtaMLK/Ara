@@ -1891,7 +1891,50 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       const seen = new Set<string>();
       let createdCount = 0;
 
-      for (const result of results ?? []) {
+      let selectedResults = results ?? [];
+      if (process.env.OPENAI_API_KEY && results?.length) {
+        const confirmedRequirements = await supabase
+          .from('requirements')
+          .select('type,value')
+          .eq('inquiry_id', inquiryId)
+          .eq('status', 'confirmed');
+
+        const discoveryAi = await runAgent(
+          { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
+          {
+            requirements: confirmedRequirements.data ?? [],
+            research_results: results.map((item) => ({
+              source_name: item.sourceName,
+              source_url: item.sourceUrl,
+              finding: item.finding,
+              structured_data: item.structuredData,
+              relevance: item.relevance,
+              confidence: item.confidence,
+              evidence: item.evidence,
+            })),
+            instructions: [
+              'Select only real companies that can plausibly supply, manufacture, or officially distribute the requested products.',
+              'Reject marketplaces, government sites, banks, dictionaries, documentation sites, generic directories, media, research portals, and unrelated information pages.',
+              'A source URL is evidence, not proof of supplier identity. The candidate must be supported by the supplied evidence.',
+              'Use only an exact source URL from the supplied research results as sourceUrl. Never invent a URL.',
+              'Use the supplier website only when the evidence supports that website as the supplier website.',
+              'Do not create a supplier merely because its page contains the word manufacturer, supplier, or distributor.',
+              'Return no candidate when the evidence is insufficient.',
+            ],
+          },
+          supplierDiscoveryOutputSchema,
+        );
+
+        const allowedUrls = new Set(results.map((item) => item.sourceUrl));
+        const selectedUrls = new Set(
+          discoveryAi.output.candidates
+            .map((candidate) => candidate.sourceUrl)
+            .filter((url) => allowedUrls.has(url)),
+        );
+        selectedResults = results.filter((item) => selectedUrls.has(item.sourceUrl));
+      }
+
+      for (const result of selectedResults) {
         if (!result.source_url) continue;
 
         let hostname = '';
