@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider, type ResearchResult } from './research/provider';
 import { runAgent } from './agent-runner';
-import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema } from './agent-schemas';
+import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
   enqueueWorkflow,
@@ -1986,6 +1986,129 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             ...(country ? { primary_country: country } : {}),
           })
           .eq('id', supplierId);
+
+        // Before a supplier can be used for RFQ, research its real contact channels.
+        // Search specifically for the supplier's own domain and let the AI extract only
+        // contact facts supported by the returned evidence.
+        let contactResearch: {
+          contacts: Array<{
+            name?: string;
+            email?: string;
+            phone?: string;
+            jobTitle?: string;
+            department?: string;
+            country?: string;
+            professionalProfile?: string;
+            evidence: string[];
+          }>;
+          emails: Array<{ email: string; evidence: string }>;
+        } = { contacts: [], emails: [] };
+
+        if (provider) {
+          const contactResults = await provider.search({
+            inquiryId,
+            query: `site:${hostname} (contact OR sales OR "sales email" OR "email us" OR distributor OR "request a quote")`,
+            limit: 8,
+          });
+
+          if (contactResults.length > 0) {
+            const contactAi = await runAgent(
+              { agentId: 'contact_research', executionId: running.id, inquiryId },
+              {
+                supplier: {
+                  name: proposedName,
+                  website,
+                  country,
+                },
+                search_results: contactResults.map((item) => ({
+                  source_name: item.sourceName,
+                  source_url: item.sourceUrl,
+                  finding: item.finding,
+                  structured_data: item.structuredData,
+                  evidence: item.evidence,
+                })),
+                instructions: [
+                  'Verify contact information for this supplier using only the supplied search evidence.',
+                  'Prefer contact pages, official sales pages, official distributor pages, and official supplier domains.',
+                  'Extract email addresses only when explicitly present in the evidence. Never guess an email pattern.',
+                  'Extract contact person, department, job title, phone, country, and professional profile only when explicitly supported.',
+                  'Ignore generic directories and unrelated websites even if they mention the supplier.',
+                  'Return empty arrays when the evidence does not support a contact fact.',
+                ],
+              },
+              supplierContactResearchOutputSchema,
+            );
+            contactResearch = contactAi.output;
+          }
+        }
+
+        const uniqueEmails = new Set<string>();
+        for (const item of contactResearch.emails) {
+          const emailValue = item.email.trim().toLowerCase();
+          if (uniqueEmails.has(emailValue)) continue;
+          uniqueEmails.add(emailValue);
+
+          const { data: existingEmail } = await supabase
+            .from('supplier_emails')
+            .select('id')
+            .eq('supplier_id', supplierId)
+            .eq('email', emailValue)
+            .maybeSingle();
+
+          if (!existingEmail) {
+            const { data: createdEmail, error: emailError } = await supabase
+              .from('supplier_emails')
+              .insert({
+                supplier_id: supplierId,
+                email: emailValue,
+                is_primary: false,
+                status: 'active',
+              })
+              .select('id')
+              .single();
+
+            if (emailError) throw new ToolError('CONFLICT', emailError.message);
+
+            if (createdEmail && !supplierId) {
+              throw new ToolError('CONFLICT', 'Supplier contact was found before supplier record was created');
+            }
+          }
+        }
+
+        for (const contact of contactResearch.contacts) {
+          if (!contact.email && !contact.name && !contact.phone && !contact.professionalProfile) continue;
+
+          const { data: existingContact } = await supabase
+            .from('supplier_contacts')
+            .select('id')
+            .eq('supplier_id', supplierId)
+            .eq('email', contact.email ?? '')
+            .maybeSingle();
+
+          if (!existingContact) {
+            const { data: createdContact, error: contactError } = await supabase
+              .from('supplier_contacts')
+              .insert({
+                supplier_id: supplierId,
+                name: contact.name ?? null,
+                email: contact.email ?? null,
+                phone: contact.phone ?? null,
+                job_title: contact.jobTitle ?? null,
+                department: contact.department ?? null,
+                country: contact.country ?? country,
+                professional_profile: contact.professionalProfile ?? null,
+                notes: contact.evidence.join(' | ').slice(0, 2000) || null,
+                status: 'active',
+                is_primary: false,
+              })
+              .select('id')
+              .single();
+
+            if (contactError || !createdContact) {
+              throw new ToolError('CONFLICT', contactError?.message ?? 'Failed to create supplier contact');
+            }
+          }
+        }
 
         const { error } = await supabase.from('supplier_candidates').upsert({
           inquiry_id: inquiryId,
