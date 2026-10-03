@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
-import { getResearchProvider } from './research/provider';
+import { getResearchProvider, type ResearchResult } from './research/provider';
 import { runAgent } from './agent-runner';
 import { documentOutputSchema, intakeOutputSchema, clarificationOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
