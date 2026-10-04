@@ -2349,23 +2349,44 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
 
         // Keep the strongest 10 candidates per requested product.
+        // IMPORTANT: candidate.website may be the supplier homepage while the
+        // evidence source is a different research URL. Do not lose a valid
+        // candidate just because those URLs differ.
         const selectedByRequirement = new Map<string, { result: ResearchResult; score: number }[]>();
-        for (const item of results) {
-          const requirementId = String(item.structuredData?.arat_requirement_id ?? '');
-          if (!requirementId) continue;
-          const candidate = [...discoveryCandidates.values()].find((value) =>
-            value.requirementId === requirementId &&
-            (value.website === item.source_url || value.evidence.includes(item.finding ?? '') ||
-              discoveryCandidates.has(item.source_url + '::' + requirementId))
+        for (const candidate of discoveryCandidates.values()) {
+          if (!candidate.requirementId || !candidate.name) continue;
+          const candidateSource = results.find((item) =>
+            String(item.structuredData?.arat_requirement_id ?? '') === candidate.requirementId &&
+            (
+              item.source_url === candidate.website ||
+              candidate.evidence.some((e) => Boolean(e) && (
+                item.finding?.includes(e) ||
+                e.includes(item.finding ?? '')
+              ))
+            )
           );
-          if (!candidate) continue;
-          const score = candidate.matchScore ?? ((item.relevance ?? 0) * 100);
-          const list = selectedByRequirement.get(requirementId) ?? [];
-          list.push({ result: item, score });
-          selectedByRequirement.set(requirementId, list);
+          if (!candidateSource) {
+            // Fall back to the strongest research result for this product. The
+            // candidate itself is already evidence-bound by the discovery pass.
+            const fallback = results.find((item) =>
+              String(item.structuredData?.arat_requirement_id ?? '') === candidate.requirementId
+            );
+            if (!fallback) continue;
+            const list = selectedByRequirement.get(candidate.requirementId) ?? [];
+            list.push({ result: fallback, score: candidate.matchScore ?? 50 });
+            selectedByRequirement.set(candidate.requirementId, list);
+            continue;
+          }
+          const list = selectedByRequirement.get(candidate.requirementId) ?? [];
+          list.push({ result: candidateSource, score: candidate.matchScore ?? ((candidateSource.relevance ?? 0) * 100) });
+          selectedByRequirement.set(candidate.requirementId, list);
         }
         selectedResults = [...selectedByRequirement.values()].flatMap((items) =>
-          items.sort((a, b) => b.score - a.score).slice(0, 10).map((item) => item.result)
+          items
+            .sort((a, b) => b.score - a.score)
+            .filter((item, index, arr) => index === arr.findIndex((x) => x.result.source_url === item.result.source_url))
+            .slice(0, 10)
+            .map((item) => item.result)
         );
       }
 
