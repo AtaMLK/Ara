@@ -1967,6 +1967,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .eq('status', 'confirmed');
 
         const productRequirements = (confirmedRequirements.data ?? []).filter((item) => item.type === 'product');
+        const allowedUrls = new Set((results ?? []).map((item) => item.sourceUrl));
 
         // Validate each product independently. Research evidence carries the exact
         // product requirement id so candidates cannot be accidentally attributed to
@@ -2064,12 +2065,17 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             );
 
             for (const candidate of repairAi.output.candidates) {
+              if (!candidate.name?.trim()) continue;
               if (!allowedUrls.has(candidate.sourceUrl)) continue;
-              discoveryCandidates.set(candidate.sourceUrl, {
+              const matchingResult = results.find((item) => item.source_url === candidate.sourceUrl);
+              const requirementId = String(matchingResult?.structuredData?.arat_requirement_id ?? candidate.requirementId ?? '');
+              if (!requirementId) continue;
+              discoveryCandidates.set(`${candidate.sourceUrl}::${requirementId}`, {
                 name: candidate.name.trim(),
                 country: candidate.country?.trim() || undefined,
                 website: candidate.website?.trim() || undefined,
                 evidence: candidate.evidence ?? [],
+                requirementId,
               });
             }
           }
@@ -2127,10 +2133,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const name = companyNameFromFinding(result.finding ?? '', matchedBrand);
             if (!name) continue;
 
-            discoveryCandidates.set(result.sourceUrl, {
+            const requirementId = String(result.structuredData?.arat_requirement_id ?? '');
+            if (!requirementId) continue;
+            discoveryCandidates.set(`${result.sourceUrl}::${requirementId}`, {
               name,
               website: /^https?:\/\//i.test(result.sourceUrl) ? result.sourceUrl : undefined,
               evidence: [result.finding].filter(Boolean),
+              requirementId,
             });
           }
         }
