@@ -1,6 +1,6 @@
 'use server';
 
-import { requireAdmin } from '@/lib/data/admin';
+import { requireAdmin } from '@/lib/ai/guards';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getEmailProvider } from '@/lib/email/provider';
 import { ToolError } from '@/lib/errors';
