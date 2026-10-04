@@ -2092,6 +2092,65 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }
         }
 
+        // Deterministic evidence recovery. Research results are already evidence;
+        // do not throw away a usable company merely because the LLM candidate schema
+        // was incomplete. Extract company identities only when they are explicitly
+        // present in the evidence and the result is commercially relevant.
+        if (results.length > 0) {
+          const confirmedRequirementsForRecovery = confirmedRequirements.data ?? [];
+          for (const productRequirement of productRequirements) {
+            const scoped = results.filter((item) =>
+              String(item.structuredData?.arat_requirement_id ?? '') === productRequirement.id
+            );
+            const brandValues = confirmedRequirementsForRecovery
+              .filter((item) => item.source_ref === productRequirement.source_ref && item.type === 'specification')
+              .map((item) => item.value.match(/brand\\s*:\\s*(.+)/i)?.[1]?.trim())
+              .filter((value): value is string => Boolean(value));
+            const brandPattern = brandValues.length ? new RegExp(brandValues.map((v) => v.replace(/[.*+?^{}()|[\\]\\\\]/g, '\\\\        // If one product did not yield a usable candidate, run a focused
+')).join('|'), 'i') : null;
+
+            for (const item of scoped) {
+              const evidenceText = [item.sourceName, item.finding, item.structuredData?.title, ...(item.evidence ?? [])]
+                .filter(Boolean).join(' ');
+              if (!evidenceText.trim()) continue;
+
+              const host = (() => { try { return new URL(item.sourceUrl).hostname.replace(/^www\\./, ''); } catch { return ''; } })();
+              if (!host || /(wikipedia|facebook|instagram|ebay|walmart|alibaba|manuals\\.plus|researchgate|academia|britannica|gov\\b)/i.test(host)) continue;
+
+              const companyMatches = [
+                evidenceText.match(/\\b([A-Z][A-Za-z0-9&.,'()\\- ]{2,100}?(?:Ltd|Limited|Inc|LLC|GmbH|S\\.?A\\.?|Co\\.|Corporation|Corp\\.|Sensors|Energy))\\b/),
+                evidenceText.match(/\\b([A-Z][A-Za-z0-9&.'()\\- ]{2,80}?)\\s+(?:supplies|supply|manufactures|manufacture|distributes|distributor|represents|offers|sells)\\b/i),
+              ];
+              let name = companyMatches.find((m) => m?.[1])?.[1]?.trim();
+              if (!name && brandPattern) {
+                const brandMatch = evidenceText.match(brandPattern);
+                if (brandMatch && /(supplier|distributor|manufacturer|official|sales|products?|supply|sells|temperature|sensor|power station|energy)/i.test(evidenceText)) {
+                  name = brandMatch[0].trim();
+                }
+              }
+              if (!name) continue;
+
+              const key = productRequirement.id + '::' + name.toLowerCase();
+              if (blockedNames.has(name.toLowerCase())) continue;
+              const exactModel = confirmedRequirementsForRecovery
+                .filter((item) => item.source_ref === productRequirement.source_ref && item.type === 'model_part_number')
+                .some((item) => evidenceText.toLowerCase().includes(item.value.toLowerCase()));
+              const sameBrand = Boolean(brandPattern?.test(evidenceText));
+              const score = exactModel ? 96 : sameBrand ? 86 : 70;
+              const matchType = exactModel ? 'exact_product' : sameBrand ? 'same_brand_distributor' : 'related_alternative';
+              discoveryCandidates.set(key, {
+                name,
+                website: item.sourceUrl,
+                evidence: [item.finding, ...(item.evidence ?? [])].filter(Boolean).slice(0, 5),
+                requirementId: productRequirement.id,
+                matchType,
+                matchScore: score,
+                matchNote: exactModel ? 'Exact requested model is present in the research evidence.' : sameBrand ? 'Requested brand is explicitly represented in the research evidence.' : 'Commercial company identity is explicitly present in the research evidence; exact product requires confirmation.',
+              });
+            }
+          }
+        }
+
         // If one product did not yield a usable candidate, run a focused
         // extraction pass for that product only. Product A must never mask Product B.
         if (results.length > 0) {
