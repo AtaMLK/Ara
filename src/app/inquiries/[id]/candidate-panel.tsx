@@ -8,7 +8,7 @@ type Requirement = {
   type: string;
   value: string;
   status: string;
-  source?: string;
+  source?: string;\n  source_ref?: string | null;
   admin_edited?: boolean;
   updated_at?: string;
 };
@@ -69,10 +69,10 @@ function buildPreview(requirements: Requirement[], candidate: Candidate, languag
   const product = requirements.find((item) => item.id === candidate.requirement_id && item.type === 'product');
   if (!product) return null;
 
-  const index = product.source ? product.source : '';
+  const index = product.source_ref ? product.source_ref : '';
   const sameItem = requirements.filter((item) => {
     if (item.id === product.id) return true;
-    return item.source === index;
+    return item.source_ref === index;
   });
   const model = sameItem.find((item) => item.type === 'model_part_number')?.value ?? '';
   const quantity = sameItem.find((item) => item.type === 'quantity')?.value ?? '';
@@ -191,7 +191,7 @@ export function CandidatePanel({
           {products.map((product) => {
             const rows = grouped.get(product.id) ?? [];
             const validCount = rows.filter(valid).length;
-            const model = requirements.find((item) => item.type === 'model_part_number' && item.source === product.source)?.value;
+            const model = requirements.find((item) => item.type === 'model_part_number' && item.source_ref === product.source_ref)?.value;
             return (
               <div className="row" key={product.id}>
                 <div><strong>{product.value}</strong></div>
