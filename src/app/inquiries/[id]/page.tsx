@@ -28,7 +28,7 @@ export default async function InquiryDetailPage({ params }: Props) {
     supabase.from('ai_alerts').select('id,agent_id,alert_type,message,priority,status,created_at').eq('inquiry_id', id).eq('status', 'open').order('created_at', { ascending: false }).limit(10),
     supabase.from('clarifications').select('id,requirement_id,question,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('research_cases').select('id,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(5),
-    supabase.from('supplier_candidates').select('id,requirement_id,proposed_name,proposed_country,proposed_website,status,match_evidence,availability_evidence,verification_evidence,created_at,supplier_id,suppliers(id,legal_name,primary_country,supplier_type,verification_status,supplier_contacts(id,name,email,phone,job_title,department,status,is_primary),supplier_emails(email,is_primary,status))').eq('inquiry_id', id).order('created_at', { ascending: true }),
+    supabase.from('supplier_candidates').select('id,requirement_id,proposed_name,proposed_country,proposed_website,status,match_evidence,availability_evidence,verification_evidence,created_at,supplier_id,suppliers(id,legal_name,primary_country,supplier_type,verification_status,supplier_contacts!supplier_contacts_supplier_id_fkey(id,name,email,phone,job_title,department,status,is_primary),supplier_emails!supplier_emails_supplier_id_fkey(email,is_primary,status))').eq('inquiry_id', id).order('created_at', { ascending: true }),
   ]);
 
   if (inquiryResult.error || !inquiryResult.data) notFound();
