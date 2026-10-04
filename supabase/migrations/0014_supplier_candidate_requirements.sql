@@ -19,10 +19,6 @@ comment on column public.supplier_candidates.requirement_id is
 alter table public.supplier_candidates
   drop constraint if exists supplier_candidates_inquiry_id_proposed_name_key;
 
-create unique index if not exists supplier_candidates_inquiry_name_requirement_key
-  on public.supplier_candidates(inquiry_id, proposed_name, requirement_id)
-  where requirement_id is not null;
-
-create unique index if not exists supplier_candidates_inquiry_name_unlinked_key
-  on public.supplier_candidates(inquiry_id, proposed_name)
-  where requirement_id is null;
+alter table public.supplier_candidates
+  add constraint supplier_candidates_inquiry_name_requirement_key
+  unique(inquiry_id, proposed_name, requirement_id);
