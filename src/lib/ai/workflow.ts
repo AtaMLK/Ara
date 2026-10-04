@@ -2815,22 +2815,25 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .limit(1)
         .maybeSingle();
 
-      let researchCase = existing;
-      if (!researchCase) {
-        const created = await supabase
-          .from('research_cases')
-          .insert({
-            inquiry_id: inquiryId,
-            status: 'pending',
-            scope: { source_types: ['web', 'public_specialized_sources'] },
-          })
-          .select('id,status')
-          .single();
-        if (created.error || !created.data) {
-          throw new ToolError('TRANSIENT', created.error?.message ?? 'Failed to create research case');
-        }
-        researchCase = created.data;
+      // Every explicit research retry gets a fresh case. Reusing an old
+      // completed case caused stale/irrelevant search results to accumulate
+      // and made Supplier Discovery evaluate the wrong evidence set.
+      const created = await supabase
+        .from('research_cases')
+        .insert({
+          inquiry_id: inquiryId,
+          status: 'pending',
+          scope: {
+            source_types: ['web', 'public_specialized_sources'],
+            run_reason: 'fresh_product_research',
+          },
+        })
+        .select('id,status')
+        .single();
+      if (created.error || !created.data) {
+        throw new ToolError('TRANSIENT', created.error?.message ?? 'Failed to create research case');
       }
+      const researchCase = created.data;
 
       const provider = getResearchProvider();
 
@@ -2897,9 +2900,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               '"GMI Energy" "VPG750"',
               '"VMAX Portable Power Station 500W / 786Wh"',
               '"VPG750" "786Wh" "500W"',
-              'site:gmienergy.com VPG750',
-              'site:gmienergy.com "786Wh"',
-              '"GMI Energy" "portable power station" distributor',
+              'site:gmienergy.com "VPG750"',
+              'site:gmienergy.com "VMAX Portable Power Station"',
+              '"GMI Energy" "portable power station" distributor Turkey',
+              '"GMI Energy" "VPG750" distributor',
+            ] : []),
+            ...(item.brand?.toLowerCase().includes('hansford') ? [
+              '"HS-210" "Hansford Sensors"',
+              '"HS-210 Temperature Sensor"',
+              'site:hansfordsensors.com "HS-210"',
+              '"HS-210" supplier Turkey',
+              '"HS-210" distributor Turkey',
+              '"Hansford Sensors" Turkey distributor',
             ] : []),
             [item.model, item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
             [item.model, item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
@@ -2939,14 +2951,91 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         const resultBatches = await Promise.all(
           queryJobs.map((job) =>
-            provider.search({ inquiryId, query: job.query, limit: 8 }).then((results) => ({ job, results })),
+            provider.search({
+              inquiryId,
+              query: job.query,
+              limit: 8,
+              country: /\bTurkey\b/i.test(job.query) ? 'Turkey' : undefined,
+            }).then((results) => ({ job, results })),
           ),
         );
 
-        const resultMap = new Map<string, { result: ResearchResult; requirementId: string | null; product: string; query: string }>();
+        const normalizeResearchText = (value: string) =>
+          value.toLowerCase()
+            .normalize('NFKD')
+            .replace(/[\\u0300-\\u036f]/g, '')
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+
+        const meaningfulProductTokens = (value: string) =>
+          normalizeResearchText(value)
+            .split(/\\s+/)
+            .filter((token) => token.length >= 4 && !['temperature', 'sensor', 'portable', 'power', 'station', 'product', 'official', 'supplier', 'distributor', 'manufacturer'].includes(token));
+
+        // Search results are external evidence, so we apply a deterministic
+        // relevance gate before storing them. This is a guardrail, not a supplier
+        // decision: AI Supplier Discovery still validates the commercial company.
+        const isRelevantResearchResult = (
+          item: typeof productItems[number],
+          result: ResearchResult,
+        ) => {
+          const haystack = normalizeResearchText([
+            result.sourceName,
+            result.sourceUrl,
+            result.finding,
+            String(result.structuredData?.title ?? ''),
+          ].join(' '));
+          const model = item.model ? normalizeResearchText(item.model) : '';
+          const brand = item.brand ? normalizeResearchText(item.brand) : '';
+          const product = normalizeResearchText(item.product);
+          const specs = item.specifications.map(normalizeResearchText).filter(Boolean);
+
+          if (model && haystack.includes(model)) return { accepted: true, reason: 'exact_model' };
+          if (brand && product && haystack.includes(brand) && haystack.includes(product)) {
+            return { accepted: true, reason: 'brand_and_product' };
+          }
+
+          const matchedSpec = specs.find((spec) => spec.length >= 4 && haystack.includes(spec));
+          if (brand && matchedSpec && haystack.includes(brand)) {
+            return { accepted: true, reason: 'brand_and_spec' };
+          }
+
+          // GMI/VMAX has several public names. Accept an exact identity only when
+          // at least one strong identity marker is present.
+          if (brand.includes('gmi')) {
+            const gmiStrong = ['vpg750', '786wh', '500w', 'vmax portable power station', 'gmi energy'];
+            if (gmiStrong.some((token) => haystack.includes(normalizeResearchText(token)))) {
+              return { accepted: true, reason: 'gmi_identity_marker' };
+            }
+          }
+
+          if (brand.includes('hansford')) {
+            const hansfordStrong = ['hs 210', 'hansford sensors'];
+            if (hansfordStrong.some((token) => haystack.includes(normalizeResearchText(token)))) {
+              return { accepted: true, reason: 'hansford_identity_marker' };
+            }
+          }
+
+          const tokens = meaningfulProductTokens(item.product);
+          const tokenHits = tokens.filter((token) => haystack.includes(token)).length;
+          if (!brand && tokens.length > 0 && tokenHits >= Math.max(1, Math.ceil(tokens.length * 0.6))) {
+            return { accepted: true, reason: 'product_tokens' };
+          }
+
+          return { accepted: false, reason: 'unrelated_result' };
+        };
+
+        const resultMap = new Map<string, { result: ResearchResult; requirementId: string | null; product: string; query: string; relevanceReason: string }>();
+        const researchLog: Array<Record<string, unknown>> = [];
+
         for (const batch of resultBatches) {
+          let acceptedCount = 0;
           for (const result of batch.results) {
             if (!result.sourceUrl) continue;
+            const relevance = isRelevantResearchResult(batch.job, result);
+            if (!relevance.accepted) continue;
+
+            acceptedCount++;
             const key = `${batch.job.requirementId ?? batch.job.product}::${result.sourceUrl}`;
             if (!resultMap.has(key)) {
               resultMap.set(key, {
@@ -2954,17 +3043,30 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 requirementId: batch.job.requirementId,
                 product: batch.job.product,
                 query: batch.job.query,
+                relevanceReason: relevance.reason,
               });
             }
           }
+          researchLog.push({
+            product: batch.job.product,
+            model: batch.job.model ?? '-',
+            query: batch.job.query,
+            returned: batch.results.length,
+            accepted: acceptedCount,
+          });
         }
+
+        console.log('\\n[ARAT][research] ===== RESEARCH RESULTS BY PRODUCT =====');
+        console.table(researchLog);
+        console.log('[ARAT][research] unique accepted results:', resultMap.size);
+
         // Keep a fair evidence budget for every requested product. A global slice can
         // starve the second product when the first product returns many duplicates.
-        const perRequirement = new Map<string, Array<{ result: ResearchResult; requirementId: string | null; product: string; query: string }>>();
+        const perRequirement = new Map<string, Array<{ result: ResearchResult; requirementId: string | null; product: string; query: string; relevanceReason: string }>>();
         for (const entry of resultMap.values()) {
           const key = entry.requirementId ?? entry.product;
           const bucket = perRequirement.get(key) ?? [];
-          if (bucket.length < 80) bucket.push(entry);
+          if (bucket.length < 30) bucket.push(entry);
           perRequirement.set(key, bucket);
         }
         const balancedResults = [...perRequirement.values()].flat();
@@ -2975,8 +3077,17 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             arat_product: entry.product,
             arat_requirement_id: entry.requirementId,
             arat_query: entry.query,
+            arat_research_relevance: entry.relevanceReason,
           },
         }));
+
+        console.log('[ARAT][research] ===== TOP ACCEPTED EVIDENCE =====');
+        console.table(results.slice(0, 40).map((result) => ({
+          product: result.structuredData?.arat_product ?? '-',
+          reason: result.structuredData?.arat_research_relevance ?? '-',
+          source: result.sourceUrl,
+          finding: String(result.finding ?? '').slice(0, 160),
+        })));
 
         for (const result of results) {
           await supabase.from('research_results').insert({
