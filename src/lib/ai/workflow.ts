@@ -2279,6 +2279,31 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (!error) createdCount++;
       }
 
+      if (createdCount === 0) {
+        await markExecutionSuccess(running.id, {
+          research_case_id: research.id,
+          candidate_count: 0,
+          blocked: true,
+          reason: 'no_supplier_candidates_supported_by_research',
+        });
+
+        await setInquiryStatus(inquiryId, 'researching');
+        await supabase.from('ai_alerts').insert({
+          inquiry_id: inquiryId,
+          agent_id: 'supplier_discovery',
+          alert_type: 'NO_SUPPLIER_CANDIDATES',
+          message: 'Supplier discovery found no supplier candidate supported by the current research evidence. No RFQ was queued.',
+          priority: 'normal',
+        });
+        await timeline(inquiryId, 'workflow_supplier_candidates_not_found', {
+          research_case_id: research.id,
+          candidate_count: 0,
+          reason: 'no_supplier_candidates_supported_by_research',
+        }, 'supplier_discovery');
+
+        return { execution: running, outcome: 'no_supplier_candidates' as const };
+      }
+
       await markExecutionSuccess(running.id, {
         research_case_id: research.id,
         candidate_count: createdCount,
@@ -2347,7 +2372,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .order('created_at', { ascending: true });
 
         const confirmedRequirements = requirements ?? [];
-        const itemQueries = confirmedRequirements
+        const productItems = confirmedRequirements
           .filter((item) => item.type === 'product')
           .map((product) => {
             const related = confirmedRequirements
@@ -2356,24 +2381,42 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 (item.type === 'specification' || item.type === 'model_part_number')
               )
               .map((item) => item.value)
-              .filter((value) => value && value.trim() && value.trim().toLowerCase() !== 'null')
-              .join(' ');
-            return [product.value, related, 'manufacturer supplier distributor official'].filter(Boolean).join(' ').trim();
-          })
-          .filter(Boolean);
+              .filter((value) => value && value.trim() && value.trim().toLowerCase() !== 'null');
 
-        if (itemQueries.length === 0) {
+            const brand = related.find((value) => /brand\\s*:/i.test(value))?.replace(/^brand\\s*:\\s*/i, '').trim();
+            const model = related.find((value) => !/brand\\s*:/i.test(value))?.trim();
+
+            return {
+              product: product.value.trim(),
+              brand,
+              model,
+            };
+          });
+
+        if (productItems.length === 0) {
           throw new ToolError(
             'CONFLICT',
             'Product research cannot start because no confirmed AI-extracted product requirements are available.',
           );
         }
 
-        const focusedQueries = itemQueries.slice(0, 5);
+        // Do not send one overloaded query such as
+        // "temperature sensor Hansford HS-210 ... manufacturer supplier distributor official".
+        // Search engines often interpret that as a generic information query and return
+        // unrelated technical pages. Use a few focused commercial queries per item instead.
+        const focusedQueries = productItems.flatMap(({ product, brand, model }) => {
+          const queries = [
+            [brand, model, product].filter(Boolean).join(' '),
+            [brand, product, 'manufacturer'].filter(Boolean).join(' '),
+            [model, 'supplier distributor'].filter(Boolean).join(' '),
+            [brand, product, 'official distributor'].filter(Boolean).join(' '),
+          ];
+          return [...new Set(queries.map((query) => query.trim()).filter(Boolean))];
+        }).slice(0, 12);
 
         const resultBatches = await Promise.all(
-          focusedQueries.slice(0, 5).map((supplierSearchQuery) =>
-            provider.search({ inquiryId, query: supplierSearchQuery, limit: 10 }),
+          focusedQueries.map((supplierSearchQuery) =>
+            provider.search({ inquiryId, query: supplierSearchQuery, limit: 8 }),
           ),
         );
 
