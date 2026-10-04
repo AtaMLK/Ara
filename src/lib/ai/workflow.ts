@@ -2441,6 +2441,47 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (!error) createdCount++;
       }
 
+      // Rank suppliers higher when the same supplier can cover multiple requested products.
+      // Each product still keeps its own candidate row, so separate suppliers are fully valid.
+      const { data: rankedCandidates } = await supabase
+        .from('supplier_candidates')
+        .select('id,supplier_id,requirement_id,match_evidence')
+        .eq('inquiry_id', inquiryId)
+        .not('supplier_id', 'is', null)
+        .not('requirement_id', 'is', null);
+
+      const totalProductRequirements = new Set(
+        (await supabase.from('requirements').select('id').eq('inquiry_id', inquiryId).eq('status', 'confirmed').eq('type', 'product')).data?.map((row) => row.id) ?? [],
+      ).size;
+      const coverageBySupplier = new Map<string, Set<string>>();
+      for (const candidate of rankedCandidates ?? []) {
+        if (!candidate.supplier_id || !candidate.requirement_id) continue;
+        const set = coverageBySupplier.get(candidate.supplier_id) ?? new Set<string>();
+        set.add(candidate.requirement_id);
+        coverageBySupplier.set(candidate.supplier_id, set);
+      }
+
+      for (const candidate of rankedCandidates ?? []) {
+        if (!candidate.supplier_id) continue;
+        const coverageCount = coverageBySupplier.get(candidate.supplier_id)?.size ?? 1;
+        const evidence = (candidate.match_evidence ?? {}) as Record<string, unknown>;
+        const baseScore = typeof evidence.match_score === 'number' ? evidence.match_score : 75;
+        const coverageBonus = Math.min(10, Math.max(0, coverageCount - 1) * 5);
+        const rankScore = Math.min(100, baseScore + coverageBonus);
+        await supabase
+          .from('supplier_candidates')
+          .update({
+            match_evidence: {
+              ...evidence,
+              match_score: rankScore,
+              coverage_count: coverageCount,
+              coverage_total: totalProductRequirements,
+              coverage_bonus: coverageBonus,
+            },
+          })
+          .eq('id', candidate.id);
+      }
+
       if (createdCount === 0) {
         await markExecutionSuccess(running.id, {
           research_case_id: research.id,
@@ -2614,7 +2655,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
         // Keep a fair evidence budget for every requested product. A global slice can
         // starve the second product when the first product returns many duplicates.
-        const perRequirement = new Map<string, typeof resultMap extends Map<any, infer V> ? V[] : never>();
+        const perRequirement = new Map<string, Array<{ result: ResearchResult; requirementId: string | null; product: string; query: string }>>();
         for (const entry of resultMap.values()) {
           const key = entry.requirementId ?? entry.product;
           const bucket = perRequirement.get(key) ?? [];
