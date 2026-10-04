@@ -21,7 +21,7 @@ export default async function InquiryDetailPage({ params }: Props) {
 
   const [inquiryResult, requirementsResult, filesResult, timelineResult, executionsResult, alertsResult, clarificationsResult, researchResult, candidatesResult] = await Promise.all([
     supabase.from('inquiries').select('id,reference,title,description,status,priority,original_customer_text,current_version,created_at,updated_at,customers(name,company_name,email,country)').eq('id', id).single(),
-    supabase.from('requirements').select('id,type,value,status,source,admin_edited,updated_at').eq('inquiry_id', id).order('created_at', { ascending: true }),
+    supabase.from('requirements').select('id,type,value,status,source,source_ref,admin_edited,updated_at').eq('inquiry_id', id).order('created_at', { ascending: true }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,version,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at', { ascending: false }),
     supabase.from('timeline_events').select('id,event_type,visibility,actor_type,agent_id,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(30),
     supabase.from('ai_executions').select('id,task_key,agent_id,status,attempt_count,error_code,error_message,started_at,completed_at,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(20),
