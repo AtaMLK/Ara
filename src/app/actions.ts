@@ -856,7 +856,7 @@ export async function answerClarificationAction(input: { inquiryId: string; clar
       answer: z.string().trim().min(1),
     }).parse(input);
 
-    const { customer, user } = await requireCustomerInquiryAccess(parsed.inquiryId);
+    const { user } = await requireCustomerInquiryAccess(parsed.inquiryId);
     const result = await applyCustomerClarificationAnswer({
       inquiryId: parsed.inquiryId,
       clarificationId: parsed.clarificationId,
