@@ -8,7 +8,8 @@ type Requirement = {
   type: string;
   value: string;
   status: string;
-  source?: string;\n  source_ref?: string | null;
+  source?: string;
+  source_ref?: string | null;
   admin_edited?: boolean;
   updated_at?: string;
 };
