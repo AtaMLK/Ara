@@ -139,11 +139,14 @@ export async function sendSupplierRfqAction(input: {
       specifications,
     }]);
 
+    const rfqToken = `ARAT-${crypto.randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase()}`;
+    const subject = `${email.subject} — ${rfqToken}`;
+
     const { data: rfq, error: rfqError } = await admin.from('rfqs').insert({
       inquiry_id: inquiry.id,
       supplier_id: supplierId,
       status: 'pending_approval',
-      subject: email.subject,
+      subject,
       body: email.html,
       sender_email: process.env.SMTP_FROM || process.env.SMTP_USER || null,
       recipient_email: recipient,
@@ -173,7 +176,7 @@ export async function sendSupplierRfqAction(input: {
       rfq_id: rfq.id,
       direction: 'outgoing',
       channel: 'email',
-      subject: email.subject,
+      subject,
       body: email.html,
       metadata: {
         language,
@@ -188,7 +191,7 @@ export async function sendSupplierRfqAction(input: {
     // Explicit admin action has already happened in the UI. The RFQ is now sent.
     const sent = await provider.send({
       to: [recipient],
-      subject: email.subject,
+      subject,
       html: email.html,
       text: email.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
