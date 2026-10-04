@@ -2418,7 +2418,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             source_name: result.source_name,
           },
           status: 'finalized',
-        }, { onConflict: 'inquiry_id,proposed_name', ignoreDuplicates: false });
+        }, { onConflict: 'inquiry_id,proposed_name,requirement_id', ignoreDuplicates: false });
 
         if (!error) createdCount++;
       }
