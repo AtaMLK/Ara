@@ -263,7 +263,13 @@ export function CandidatePanel({
                               <>
                                 <div className="supplier-match-line"><strong>{meta.label}</strong>{meta.score !== null ? ` · ${meta.score}/100` : ''} · Covers {meta.coverageCount}/{meta.coverageTotal} products</div>
                                 {meta.type !== 'exact_product' && (
-                                  <div className="supplier-match-warning">⚠ Exact requested product is not confirmed. This supplier is relevant to the brand/product family.</div>
+                                  <div className="supplier-match-warning">
+                                    ⚠ {meta.type === 'same_brand_distributor'
+                                      ? 'Exact requested product is not confirmed, but this supplier/distributor is supported as a supplier for the requested brand.'
+                                      : meta.type === 'same_brand_similar'
+                                        ? 'Exact requested model is not confirmed, but a similar product from the requested brand is supported by the evidence.'
+                                        : 'This is not an exact product match; the supplier is shown as a related alternative based on the research evidence.'}
+                                  </div>
                                 )}
                                 {meta.note && <div className="muted">{meta.note}</div>}
                               </>
