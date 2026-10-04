@@ -187,6 +187,7 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
   country: z.string().optional(),
   website: z.string().url().optional(),
   sourceUrl: z.string().url(),
+  requirementId: z.string().uuid().optional(),
   // Some models return a single evidence sentence instead of an array.
   evidence: z.preprocess(
     (value) => typeof value === 'string' ? [value] : value,
