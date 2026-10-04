@@ -1956,7 +1956,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       const seen = new Set<string>();
       let createdCount = 0;
-      const discoveryCandidates = new Map<string, { name: string; country?: string; website?: string; evidence: string[]; requirementId?: string }>();
+      const discoveryCandidates = new Map<string, { name: string; country?: string; website?: string; evidence: string[]; requirementId?: string; matchType?: 'exact_product' | 'same_brand_distributor' | 'same_brand_similar' | 'related_alternative'; matchScore?: number; matchNote?: string }>();
 
       let selectedResults = results ?? [];
       if (process.env.OPENAI_API_KEY && results?.length) {
@@ -2030,6 +2030,68 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             });
           }
         }
+        // Evidence-first recovery: if the ranking pass returns too few candidates
+        // for a product, run a second extraction pass instead of treating the whole
+        // supplier-discovery stage as empty.
+        if (results.length > 0) {
+          for (const productRequirement of productRequirements) {
+            const productResults = results.filter((item) =>
+              (item.structuredData?.arat_requirement_id as string | undefined) === productRequirement.id
+            );
+            const currentCount = [...discoveryCandidates.values()].filter(
+              (candidate) => candidate.requirementId === productRequirement.id,
+            ).length;
+            if (!productResults.length || currentCount >= 3) continue;
+
+            const extractionAi = await runAgent(
+              { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
+              {
+                target_product: productRequirement,
+                research_results: productResults.slice(0, 80).map((item) => ({
+                  source_name: item.sourceName,
+                  source_url: item.sourceUrl,
+                  finding: item.finding,
+                  structured_data: item.structuredData,
+                  relevance: item.relevance,
+                  confidence: item.confidence,
+                  evidence: item.evidence,
+                })),
+                instructions: [
+                  'Extract supplier/manufacturer/distributor candidates for THIS product only.',
+                  'Return up to 10 candidates, strongest evidence first.',
+                  'The company name must be explicitly present in source_name, page title, finding, or evidence.',
+                  'Use the exact supplied source_url supporting that company and product relationship.',
+                  'Official manufacturer pages are valid even when they do not say supplier or distributor.',
+                  'Prefer Turkey/Türkiye suppliers when evidence is comparable; include international suppliers when needed.',
+                  'Exact product/model gets the highest score. Official brand distributors may be same_brand_distributor when the exact model is not confirmed.',
+                  'Never return marketplaces, generic directories, government pages, documentation portals, media, or unrelated companies.',
+                  'Never invent email, phone, contact person, website, country, or availability.',
+                  'Return requirementId exactly as the target product requirement id.',
+                ],
+              },
+              supplierDiscoveryOutputSchema,
+            );
+
+            const allowedProductUrls = new Set(productResults.map((item) => item.sourceUrl));
+            for (const candidate of extractionAi.output.candidates) {
+              const name = candidate.name?.trim();
+              if (!name || !allowedProductUrls.has(candidate.sourceUrl)) continue;
+              const source = productResults.find((item) => item.sourceUrl === candidate.sourceUrl);
+              const key = productRequirement.id + '::' + name.toLowerCase();
+              discoveryCandidates.set(key, {
+                name,
+                country: candidate.country?.trim() || undefined,
+                website: candidate.website?.trim() || undefined,
+                evidence: candidate.evidence ?? (source?.finding ? [source.finding] : []),
+                requirementId: productRequirement.id,
+                matchType: candidate.matchType,
+                matchScore: candidate.matchScore,
+                matchNote: candidate.matchNote,
+              });
+            }
+          }
+        }
+
         // If one product did not yield a usable candidate, run a focused
         // extraction pass for that product only. Product A must never mask Product B.
         if (results.length > 0) {
@@ -2221,7 +2283,25 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }
         }
 
-        selectedResults = results.filter((item) => discoveryCandidates.has(`${item.source_url}::${String(item.structuredData?.arat_requirement_id ?? '')}`));
+        // Keep the strongest 10 candidates per requested product.
+        const selectedByRequirement = new Map<string, { result: ResearchResult; score: number }[]>();
+        for (const item of results) {
+          const requirementId = String(item.structuredData?.arat_requirement_id ?? '');
+          if (!requirementId) continue;
+          const candidate = [...discoveryCandidates.values()].find((value) =>
+            value.requirementId === requirementId &&
+            (value.website === item.source_url || value.evidence.includes(item.finding ?? '') ||
+              discoveryCandidates.has(item.source_url + '::' + requirementId))
+          );
+          if (!candidate) continue;
+          const score = candidate.matchScore ?? ((item.relevance ?? 0) * 100);
+          const list = selectedByRequirement.get(requirementId) ?? [];
+          list.push({ result: item, score });
+          selectedByRequirement.set(requirementId, list);
+        }
+        selectedResults = [...selectedByRequirement.values()].flatMap((items) =>
+          items.sort((a, b) => b.score - a.score).slice(0, 10).map((item) => item.result)
+        );
       }
 
       for (const result of selectedResults) {
@@ -2236,18 +2316,20 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         const text = `${result.source_name ?? ''} ${result.finding ?? ''} ${result.structuredData?.title ?? ''}`.toLowerCase();
         const blockedSource = /(scribd|manualslib|manualmachine|pdfcoffee|researchgate|academia\\.edu|merriam-webster|newyorkfed|irs|sba|developer\\.android|arenasolutions)/i.test(hostname);
-        const supplierSignal = /(manufacturer|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?|electronics|sensor|instrumentation|power station|portable power|battery|energy storage|inverter)/i.test(text);
+        const supplierSignal = /(manufacturer|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?|electronics|sensor|instrumentation|power station|portable power|battery|energy storage|inverter|brand|product)/i.test(text);
         const commercialSignal = /(sales|contact|products?|catalog|quote|quotation|rfq|buy|stock|inventory|dealer|distributor|manufacturer)/i.test(text);
         const genericInformationSource = /(dictionary|survey|government|regulation|documentation|glossary|reference)/i.test(text);
-        if (blockedSource || !supplierSignal || (!commercialSignal && genericInformationSource)) continue;
+        const resultRequirementId = String(result.structuredData?.arat_requirement_id ?? '');
+        const validatedCandidate = [...discoveryCandidates.values()].find((candidate) => candidate.requirementId === resultRequirementId && (candidate.website === result.source_url || candidate.evidence.includes(result.finding ?? '')));
+        if (blockedSource || (!supplierSignal && !validatedCandidate?.name) || (!commercialSignal && genericInformationSource)) continue;
 
         const requirementId = String(result.structuredData?.arat_requirement_id ?? '');
         const aiCandidate = discoveryCandidates.get(`${result.source_url}::${requirementId}`) ?? [...discoveryCandidates.values()].find((candidate) => candidate.website === result.source_url && candidate.requirementId === requirementId);
         if (!aiCandidate?.name) continue;
 
         const proposedName = aiCandidate.name.slice(0, 240);
-        const key = proposedName.toLowerCase();
-        if (seen.has(key) || blockedNames.has(key)) continue;
+        const key = `${requirementId}::${proposedName.toLowerCase()}`;
+        if (seen.has(key) || blockedNames.has(proposedName.toLowerCase())) continue;
         seen.add(key);
 
         const website = aiCandidate.website || `https://${hostname}`;
