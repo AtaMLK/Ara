@@ -2583,22 +2583,24 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             }
           }
         }
-        const results = [...resultMap.values()].slice(0, 80);
+        const results = [...resultMap.values()].slice(0, 80).map((entry) => ({
+          ...entry.result,
+          structuredData: {
+            ...(entry.result.structuredData ?? {}),
+            arat_product: entry.product,
+            arat_requirement_id: entry.requirementId,
+            arat_query: entry.query,
+          },
+        }));
 
-        for (const entry of results) {
-          const result = entry.result;
+        for (const result of results) {
           await supabase.from('research_results').insert({
             research_case_id: researchCase.id,
             source_type: result.sourceType,
             source_name: result.sourceName,
             source_url: result.sourceUrl,
             finding: result.finding,
-            structured_data: {
-              ...(result.structuredData ?? {}),
-              arat_product: entry.product,
-              arat_requirement_id: entry.requirementId,
-              arat_query: entry.query,
-            },
+            structured_data: result.structuredData,
             relevance: result.relevance,
             confidence: result.confidence,
             evidence: result.evidence,
