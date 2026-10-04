@@ -2510,7 +2510,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       if (provider) {
         const { data: requirements } = await supabase
           .from('requirements')
-          .select('type,value')
+          .select('id,type,value,source_ref')
           .eq('inquiry_id', inquiryId)
           .eq('status', 'confirmed')
           .order('created_at', { ascending: true });
