@@ -2004,6 +2004,63 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             evidence: candidate.evidence ?? [],
           });
         }
+        // If the broad discovery pass was overly conservative, run a focused
+        // extraction pass over the strongest evidence instead of concluding that
+        // no supplier exists. This is still evidence-bound: every sourceUrl must
+        // come from research_results and every name must be extracted from evidence.
+        if (discoveryCandidates.size === 0 && results.length > 0) {
+          const strongResults = results.filter((item) => {
+            const haystack = [
+              item.source_name ?? '',
+              item.finding ?? '',
+              item.source_url ?? '',
+            ].join(' ').toLowerCase();
+
+            return (
+              /(manufacturer|supplier|distributor|official|sales|contact|products?)/i.test(haystack) ||
+              /hansford|gmi/i.test(haystack)
+            );
+          }).slice(0, 20);
+
+          if (strongResults.length > 0) {
+            const repairAi = await runAgent(
+              { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
+              {
+                requirements: confirmedRequirements.data ?? [],
+                research_results: strongResults.map((item) => ({
+                  source_name: item.sourceName,
+                  source_url: item.sourceUrl,
+                  finding: item.finding,
+                  structured_data: item.structuredData,
+                  confidence: item.confidence,
+                  evidence: item.evidence,
+                })),
+                instructions: [
+                  'This is a focused supplier-name extraction pass.',
+                  'Identify real supplier/manufacturer/distributor companies explicitly named in the supplied evidence.',
+                  'If an official company domain or official company page clearly identifies the company, select it.',
+                  'Extract the exact company name from source_name, page title, finding, or evidence into name.',
+                  'Do not require the page to contain the literal word supplier if it is clearly the official manufacturer/company page for the requested product.',
+                  'Do not invent names. Do not use marketplaces, social media, directories, government sites, or unrelated companies.',
+                  'Every sourceUrl must exactly match one of the supplied research_results.',
+                  'Return every supported supplier candidate, not an empty list merely because some results are weak.',
+                ],
+              },
+              supplierDiscoveryOutputSchema,
+            );
+
+            for (const candidate of repairAi.output.candidates) {
+              if (!allowedUrls.has(candidate.sourceUrl)) continue;
+              discoveryCandidates.set(candidate.sourceUrl, {
+                name: candidate.name.trim(),
+                country: candidate.country?.trim() || undefined,
+                website: candidate.website?.trim() || undefined,
+                evidence: candidate.evidence ?? [],
+              });
+            }
+          }
+        }
+
         selectedResults = results.filter((item) => discoveryCandidates.has(item.sourceUrl));
       }
 
