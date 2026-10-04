@@ -73,7 +73,16 @@ class SerpApiResearchProvider implements ResearchProvider {
       }>;
     };
 
-    if (payload.error) throw new ToolError('TRANSIENT', payload.error);
+    // SerpApi/Google can return a provider-level "no results" message for a
+    // perfectly valid query. That is an empty evidence set, not a workflow
+    // failure. The Research stage must continue with its other queries.
+    if (payload.error) {
+      const normalizedError = payload.error.toLowerCase();
+      if (normalizedError.includes("hasn't returned any results") || normalizedError.includes('no results')) {
+        return [];
+      }
+      throw new ToolError('TRANSIENT', payload.error);
+    }
 
     return (payload.organic_results ?? [])
       .filter((item) => Boolean(item.link && item.title))
