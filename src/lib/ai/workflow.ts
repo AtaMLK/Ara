@@ -2115,7 +2115,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
             discoveryCandidates.set(result.sourceUrl, {
               name,
-              website: /^https?:\\/\\//i.test(result.sourceUrl) ? result.sourceUrl : undefined,
+              website: /^https?:\/\//i.test(result.sourceUrl) ? result.sourceUrl : undefined,
               evidence: [result.finding].filter(Boolean),
             });
           }
