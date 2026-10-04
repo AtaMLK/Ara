@@ -869,7 +869,7 @@ export async function answerClarificationAction(input: { inquiryId: string; clar
     }
 
     await createSupabaseAdminClient().from('notifications').insert({
-      user_id: customer.user_id ?? user.id,
+      user_id: user.id,
       category: 'customer',
       priority: 'normal',
       title: 'Clarification answer received',
