@@ -2349,42 +2349,62 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
 
         // Keep the strongest 10 candidates per requested product.
-        // IMPORTANT: candidate.website may be the supplier homepage while the
-        // evidence source is a different research URL. Do not lose a valid
-        // candidate just because those URLs differ.
+        // IMPORTANT: a candidate's website can be a supplier homepage while
+        // sourceUrl is the research page that actually supports the candidate.
+        // Preserve the evidence source instead of falling back to an unrelated
+        // result for the same product. That previous fallback caused valid
+        // candidates to disappear in the persistence loop because the candidate
+        // no longer matched the selected result URL.
         const selectedByRequirement = new Map<string, { result: ResearchResult; score: number }[]>();
-        for (const candidate of discoveryCandidates.values()) {
+        for (const [candidateKey, candidate] of discoveryCandidates.entries()) {
           if (!candidate.requirementId || !candidate.name) continue;
-          const candidateSource = results.find((item) =>
-            String(item.structuredData?.arat_requirement_id ?? '') === candidate.requirementId &&
-            (
-              item.source_url === candidate.website ||
+
+          // The first discovery pass uses "sourceUrl::requirementId" as its key.
+          // Later recovery passes use "requirementId::name". Prefer the exact
+          // source encoded in the key when available, then the explicit website,
+          // then evidence matching.
+          const sourceUrlFromKey =
+            candidateKey.startsWith('http')
+              ? candidateKey.slice(0, candidateKey.lastIndexOf(`::${candidate.requirementId}`))
+              : undefined;
+
+          const candidateSource =
+            (sourceUrlFromKey
+              ? results.find((item) =>
+                  String(item.structuredData?.arat_requirement_id ?? '') === candidate.requirementId &&
+                  item.source_url === sourceUrlFromKey
+                )
+              : undefined) ??
+            results.find((item) =>
+              String(item.structuredData?.arat_requirement_id ?? '') === candidate.requirementId &&
+              item.source_url === candidate.website
+            ) ??
+            results.find((item) =>
+              String(item.structuredData?.arat_requirement_id ?? '') === candidate.requirementId &&
               candidate.evidence.some((e) => Boolean(e) && (
                 item.finding?.includes(e) ||
                 e.includes(item.finding ?? '')
               ))
-            )
-          );
-          if (!candidateSource) {
-            // Fall back to the strongest research result for this product. The
-            // candidate itself is already evidence-bound by the discovery pass.
-            const fallback = results.find((item) =>
-              String(item.structuredData?.arat_requirement_id ?? '') === candidate.requirementId
             );
-            if (!fallback) continue;
-            const list = selectedByRequirement.get(candidate.requirementId) ?? [];
-            list.push({ result: fallback, score: candidate.matchScore ?? 50 });
-            selectedByRequirement.set(candidate.requirementId, list);
-            continue;
-          }
+
+          // Do not substitute an unrelated result from the same product.
+          // A candidate without a traceable evidence result must not be persisted.
+          if (!candidateSource) continue;
+
           const list = selectedByRequirement.get(candidate.requirementId) ?? [];
-          list.push({ result: candidateSource, score: candidate.matchScore ?? ((candidateSource.relevance ?? 0) * 100) });
+          list.push({
+            result: candidateSource,
+            score: candidate.matchScore ?? ((candidateSource.relevance ?? 0) * 100),
+          });
           selectedByRequirement.set(candidate.requirementId, list);
         }
+
         selectedResults = [...selectedByRequirement.values()].flatMap((items) =>
           items
             .sort((a, b) => b.score - a.score)
-            .filter((item, index, arr) => index === arr.findIndex((x) => x.result.source_url === item.result.source_url))
+            .filter((item, index, arr) =>
+              index === arr.findIndex((x) => x.result.source_url === item.result.source_url)
+            )
             .slice(0, 10)
             .map((item) => item.result)
         );
@@ -2410,7 +2430,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (blockedSource || (!supplierSignal && !validatedCandidate?.name) || (!commercialSignal && genericInformationSource)) continue;
 
         const requirementId = String(result.structuredData?.arat_requirement_id ?? '');
-        const aiCandidate = discoveryCandidates.get(`${result.source_url}::${requirementId}`) ?? [...discoveryCandidates.values()].find((candidate) => candidate.website === result.source_url && candidate.requirementId === requirementId);
+        const aiCandidate =
+          discoveryCandidates.get(`${result.source_url}::${requirementId}`) ??
+          [...discoveryCandidates.values()].find((candidate) =>
+            candidate.requirementId === requirementId &&
+            (
+              candidate.website === result.source_url ||
+              candidate.evidence.some((e) => Boolean(e) && (
+                result.finding?.includes(e) ||
+                e.includes(result.finding ?? '')
+              ))
+            )
+          );
         if (!aiCandidate?.name) continue;
 
         const proposedName = aiCandidate.name.slice(0, 240);
