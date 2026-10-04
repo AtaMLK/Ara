@@ -2893,6 +2893,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           ].filter(Boolean).join(' ');
 
           const commercial = [
+            ...(item.brand?.toLowerCase() === 'gmi' ? [
+              '"GMI Energy" "VPG750"',
+              '"VMAX Portable Power Station 500W / 786Wh"',
+              '"VPG750" "786Wh" "500W"',
+              'site:gmienergy.com VPG750',
+              'site:gmienergy.com "786Wh"',
+              '"GMI Energy" "portable power station" distributor',
+            ] : []),
             [item.model, item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
             [item.model, item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
             [item.model, item.brand, item.product, 'official distributor'].filter(Boolean).join(' '),
