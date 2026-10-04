@@ -2014,8 +2014,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           const allowedUrls = new Set(productResults.map((item) => item.sourceUrl));
           for (const candidate of discoveryAi.output.candidates) {
             if (!allowedUrls.has(candidate.sourceUrl)) continue;
+            const name = candidate.name?.trim();
+            // A schema-tolerant AI response may omit the company name. Do not let
+            // an empty candidate suppress the fallback for this product.
+            if (!name) continue;
             discoveryCandidates.set(`${candidate.sourceUrl}::${productRequirement.id}`, {
-              name: candidate.name.trim(),
+              name,
               country: candidate.country?.trim() || undefined,
               website: candidate.website?.trim() || undefined,
               evidence: candidate.evidence ?? [],
@@ -2026,6 +2030,66 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             });
           }
         }
+        // If one product did not yield a usable candidate, run a focused
+        // extraction pass for that product only. Product A must never mask Product B.
+        if (results.length > 0) {
+          for (const productRequirement of productRequirements) {
+            const alreadyHasCandidate = [...discoveryCandidates.values()]
+              .some((candidate) => candidate.requirementId === productRequirement.id);
+            if (alreadyHasCandidate) continue;
+
+            const productResults = results.filter((item) =>
+              (item.structuredData?.arat_requirement_id as string | undefined) === productRequirement.id
+            );
+            if (!productResults.length) continue;
+
+            const focusedAi = await runAgent(
+              { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
+              {
+                target_product: productRequirement,
+                research_results: productResults.map((item) => ({
+                  source_name: item.sourceName,
+                  source_url: item.sourceUrl,
+                  finding: item.finding,
+                  structured_data: item.structuredData,
+                  relevance: item.relevance,
+                  confidence: item.confidence,
+                  evidence: item.evidence,
+                })),
+                instructions: [
+                  'Find supplier candidates for THIS PRODUCT ONLY.',
+                  'Use the exact product, brand, model/part number and specifications in the target product.',
+                  'Prefer Turkey/Türkiye suppliers first; if none are supported, use credible international suppliers.',
+                  'An exact product match is preferred, but an official manufacturer, representative or distributor of the requested brand may also be returned when the exact model is not confirmed.',
+                  'A similar product from the requested brand may also be returned, but mark it same_brand_similar, never exact_product unless the exact model is supported.',
+                  'Never invent a company name, relationship, website, contact, email or phone.',
+                  'The company name and supplier relationship must be supported by the supplied evidence.',
+                  'Every sourceUrl must exactly match a supplied research result.',
+                  'Return requirementId exactly as the target product requirement id.',
+                  'Return matchType and an evidence-bound matchScore using the existing supplier matching rules.',
+                ],
+              },
+              supplierDiscoveryOutputSchema,
+            );
+
+            const productAllowedUrls = new Set(productResults.map((item) => item.sourceUrl));
+            for (const candidate of focusedAi.output.candidates) {
+              const name = candidate.name?.trim();
+              if (!name || !productAllowedUrls.has(candidate.sourceUrl)) continue;
+              discoveryCandidates.set(`${candidate.sourceUrl}::${productRequirement.id}`, {
+                name,
+                country: candidate.country?.trim() || undefined,
+                website: candidate.website?.trim() || undefined,
+                evidence: candidate.evidence ?? [],
+                requirementId: productRequirement.id,
+                matchType: candidate.matchType,
+                matchScore: candidate.matchScore,
+                matchNote: candidate.matchNote,
+              });
+            }
+          }
+        }
+
         // If the broad discovery pass was overly conservative, run a focused
         // extraction pass over the strongest evidence instead of concluding that
         // no supplier exists. This is still evidence-bound: every sourceUrl must
@@ -2098,7 +2162,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (discoveryCandidates.size === 0 && results.length > 0) {
           const confirmedBrands = (confirmedRequirements.data ?? [])
             .filter((item) => item.type === 'specification')
-            .map((item) => item.value.match(/brand\\s*:\\s*(.+)/i)?.[1]?.trim())
+            .map((item) => item.value.match(/brand\s*:\s*(.+)/i)?.[1]?.trim())
             .filter((value): value is string => Boolean(value))
             .map((value) => value.toLowerCase());
 
@@ -2109,7 +2173,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               .filter(Boolean);
 
             const verbPattern =
-              /\\s+(?:is|are|offers|offer|specialises|specializes|manufactures|manufacture|supplies|supply|designs|design|provides|provide)\\s+/i;
+              /\s+(?:is|are|offers|offer|specialises|specializes|manufactures|manufacture|supplies|supply|designs|design|provides|provide)\s+/i;
 
             for (const sentence of sentences) {
               const match = sentence.match(new RegExp(
@@ -2578,21 +2642,30 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         const productItems = confirmedRequirements
           .filter((item) => item.type === 'product')
           .map((product) => {
-            const related = confirmedRequirements
+            const relatedRows = confirmedRequirements
               .filter((item) =>
                 item.source_ref === product.source_ref &&
                 (item.type === 'specification' || item.type === 'model_part_number')
               )
-              .map((item) => item.value)
-              .filter((value) => value && value.trim() && value.trim().toLowerCase() !== 'null');
+              .filter((item) => item.value?.trim() && item.value.trim().toLowerCase() !== 'null');
 
-            const brand = related.find((value) => /brand\\s*:/i.test(value))?.replace(/^brand\\s*:\\s*/i, '').trim();
-            const model = related.find((value) => !/brand\\s*:/i.test(value))?.trim();
+            const brand = relatedRows
+              .find((item) => /^brand\s*:/i.test(item.value))
+              ?.value.replace(/^brand\s*:\s*/i, '').trim();
+
+            const model = relatedRows
+              .find((item) => item.type === 'model_part_number')
+              ?.value.trim();
+
+            const specifications = relatedRows
+              .filter((item) => item.type === 'specification' && !/^brand\s*:/i.test(item.value))
+              .map((item) => item.value.trim());
 
             return {
               product: product.value.trim(),
               brand,
               model,
+              specifications,
             };
           });
 
@@ -2603,27 +2676,42 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           );
         }
 
-        // Do not send one overloaded query such as
-        // "temperature sensor Hansford HS-210 ... manufacturer supplier distributor official".
-        // Search engines often interpret that as a generic information query and return
-        // unrelated technical pages. Use a few focused commercial queries per item instead.
+        // Search each requested product independently. Include the exact model/part
+        // number and technical specifications so generic brand queries cannot drown
+        // out exact commercial product pages.
         const productQueries = productItems.map((item) => {
+          const identity = [
+            item.brand,
+            item.model,
+            item.product,
+            ...item.specifications,
+          ].filter(Boolean).join(' ');
+
           const commercial = [
-            [item.model, item.brand, item.product].filter(Boolean).join(' '),
-            [item.model, item.brand, 'supplier Turkey'].filter(Boolean).join(' '),
-            [item.model, item.brand, 'distributor Turkey'].filter(Boolean).join(' '),
-            [item.model, item.brand, 'official distributor'].filter(Boolean).join(' '),
+            [item.model, item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
+            [item.model, item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
+            [item.model, item.brand, item.product, 'official distributor'].filter(Boolean).join(' '),
+            [item.model, item.brand, item.product, 'manufacturer'].filter(Boolean).join(' '),
+            [item.model, item.brand, 'supplier'].filter(Boolean).join(' '),
+            [item.model, item.brand, 'distributor'].filter(Boolean).join(' '),
+            [item.model, item.brand, 'official'].filter(Boolean).join(' '),
+            identity,
+            [item.brand, item.model, 'exact product'].filter(Boolean).join(' '),
+            [item.brand, item.model, 'official website'].filter(Boolean).join(' '),
+            [item.brand, item.model, 'Turkey'].filter(Boolean).join(' '),
             [item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
             [item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
             [item.product, 'manufacturer Turkey'].filter(Boolean).join(' '),
             [item.product, 'supplier Turkey'].filter(Boolean).join(' '),
             [item.brand, item.product, 'manufacturer distributor'].filter(Boolean).join(' '),
           ];
+
           return {
-            requirementId: (confirmedRequirements.find((row) => row.type === 'product' && row.value.trim() === item.product)?.id) ?? null,
+            requirementId: product.id,
             product: item.product,
             brand: item.brand,
             model: item.model,
+            specifications: item.specifications,
             queries: [...new Set(commercial.map((query) => query.trim()).filter(Boolean))],
           };
         });
