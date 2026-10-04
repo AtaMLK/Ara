@@ -197,7 +197,7 @@ export function CandidatePanel({
                 <div><strong>{product.value}</strong></div>
                 <div>{model || '—'}</div>
                 <div>
-                  <button className="supplier-count-button" onClick={() => { setSelectedProductId(product.id); setError(''); }}>
+                  <button className="supplier-count-button" onClick={() => { setSelectedProductId(product.id); setSelected([]); setPreview(null); setError(''); }}>
                     {validCount}
                   </button>
                 </div>
@@ -208,15 +208,6 @@ export function CandidatePanel({
         </div>
       )}
 
-      {selected.length > 0 && (
-        <div className="supplier-selection-bar">
-          <strong>{selected.length} supplier{selected.length === 1 ? '' : 's'} selected</strong>
-          <div className="supplier-selection-actions">
-            <button className="secondary-button" onClick={() => openPreview('tr')}>Preview Turkish Email</button>
-            <button className="primary-button" onClick={() => openPreview('en')}>Preview English Email</button>
-          </div>
-        </div>
-      )}
 
       {selectedProductId && (
         <div className="supplier-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedProductId(null); }}>
