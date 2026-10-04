@@ -2236,7 +2236,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         const text = `${result.source_name ?? ''} ${result.finding ?? ''} ${result.structuredData?.title ?? ''}`.toLowerCase();
         const blockedSource = /(scribd|manualslib|manualmachine|pdfcoffee|researchgate|academia\\.edu|merriam-webster|newyorkfed|irs|sba|developer\\.android|arenasolutions)/i.test(hostname);
-        const supplierSignal = /(manufacturer|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?|electronics|sensor|instrumentation)/i.test(text);
+        const supplierSignal = /(manufacturer|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?|electronics|sensor|instrumentation|power station|portable power|battery|energy storage|inverter)/i.test(text);
         const commercialSignal = /(sales|contact|products?|catalog|quote|quotation|rfq|buy|stock|inventory|dealer|distributor|manufacturer)/i.test(text);
         const genericInformationSource = /(dictionary|survey|government|regulation|documentation|glossary|reference)/i.test(text);
         if (blockedSource || !supplierSignal || (!commercialSignal && genericInformationSource)) continue;
