@@ -183,7 +183,7 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
     ...(sourceUrl !== undefined ? { sourceUrl } : {}),
   };
 }, z.object({
-  name: z.string().min(1),
+  name: z.string().optional().default(''),
   country: z.string().optional(),
   website: z.string().url().optional(),
   sourceUrl: z.string().url(),
