@@ -158,18 +158,41 @@ export const clarificationRepairOutputSchema = z.object({
   })).max(5),
 });
 
-const supplierDiscoveryCandidateSchema = z.object({
+const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+
+  const record = value as Record<string, unknown>;
+  const name =
+    record.name ??
+    record.supplierName ??
+    record.supplier_name ??
+    record.companyName ??
+    record.company_name ??
+    record.legalName ??
+    record.legal_name;
+
+  const country = record.country ?? record.primaryCountry ?? record.primary_country;
+  const website = record.website ?? record.supplierWebsite ?? record.supplier_website;
+  const sourceUrl = record.sourceUrl ?? record.source_url ?? record.source;
+
+  return {
+    ...record,
+    ...(name !== undefined ? { name } : {}),
+    ...(country !== undefined ? { country } : {}),
+    ...(website !== undefined ? { website } : {}),
+    ...(sourceUrl !== undefined ? { sourceUrl } : {}),
+  };
+}, z.object({
   name: z.string().min(1),
   country: z.string().optional(),
   website: z.string().url().optional(),
   sourceUrl: z.string().url(),
   // Some models return a single evidence sentence instead of an array.
-  // Normalize that recoverable shape without weakening supplier validation.
   evidence: z.preprocess(
     (value) => typeof value === 'string' ? [value] : value,
     z.array(z.string()).default([]),
   ),
-});
+}));
 
 export const supplierDiscoveryOutputSchema = z.preprocess((value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
