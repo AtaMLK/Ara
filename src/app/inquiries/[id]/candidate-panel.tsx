@@ -239,7 +239,9 @@ export function CandidatePanel({
                         <div className="supplier-candidate-main">
                           <strong>{candidate.suppliers?.legal_name || candidate.proposed_name}</strong>
                           <div className="muted">{label(candidate.suppliers?.supplier_type || 'unknown')} · {candidate.proposed_country || candidate.suppliers?.primary_country || '—'}</div>
-                          <div className="muted">{candidate.proposed_website || 'No website'}{contact?.name ? ` · ${contact.name}` : ''}</div>
+                          <div className="muted">{candidate.proposed_website || 'No website'}</div>
+                          {contact?.name && <div className="muted">Contact: {contact.name}{contact.job_title ? ` · ${contact.job_title}` : ''}{contact.department ? ` · ${contact.department}` : ''}</div>}
+                          {contact?.phone && <div className="muted">{contact.phone}</div>}
                         </div>
                         <div className="supplier-candidate-contact">
                           <span>{emailFor(candidate) || 'No email'}</span>
