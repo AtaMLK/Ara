@@ -26,12 +26,19 @@ export default function AnswerClarificationForm({ inquiryId, clarificationId }: 
     }
   }
 
-  if (done) return <div className="success-box">Answer submitted. Thank you.</div>;
+  if (done) {
+    return (
+      <div className="clarification-answer-success" role="status">
+        <strong>Answer submitted</strong>
+        <span>We received your answer and will continue processing this request.</span>
+      </div>
+    );
+  }
 
   return (
-    <form className="stack" onSubmit={submit}>
-      <textarea value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Type your answer…" rows={4} required />
-      {error && <div className="error-box">{error}</div>}
+    <form className="clarification-answer-form stack" onSubmit={submit}>
+      <label className="clarification-answer-label">Your answer<textarea value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Enter the model or part number…" rows={3} required /></label>
+      {error && <div className="error-box" role="alert">{error}</div>}
       <button className="primary-button" disabled={loading || !answer.trim()}>{loading ? 'Submitting…' : 'Submit answer'}</button>
     </form>
   );
