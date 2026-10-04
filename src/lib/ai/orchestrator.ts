@@ -14,8 +14,36 @@ export async function enqueueWorkflow(inquiryId:string,stage:WorkflowStage){
  if(error) throw new ToolError('TRANSIENT',error.message); return data;
 }
 export async function markExecutionRunning(executionId:string){
- const supabase=createSupabaseAdminClient(); const {data,error}=await supabase.from('ai_executions').update({status:'running',started_at:new Date().toISOString()}).eq('id',executionId).eq('status','queued').select('*').single();
- if(error||!data) throw new ToolError('CONFLICT','Execution cannot enter running state'); return data;
+ const supabase=createSupabaseAdminClient();
+ const {data:current,error:readError}=await supabase
+   .from('ai_executions')
+   .select('*')
+   .eq('id',executionId)
+   .single();
+ if(readError || !current) throw new ToolError('NOT_FOUND','Execution not found');
+
+ // A local workflow worker and a Server Action can race on the same queued
+ // execution. If the worker already claimed it, reuse the running execution
+ // instead of throwing a false conflict.
+ if(current.status === 'running') return current;
+ if(current.status !== 'queued') {
+   throw new ToolError('CONFLICT',`Execution cannot enter running state from ${current.status}`);
+ }
+
+ const {data,error}=await supabase
+   .from('ai_executions')
+   .update({status:'running',started_at:new Date().toISOString()})
+   .eq('id',executionId)
+   .eq('status','queued')
+   .select('*')
+   .single();
+
+ if(error||!data) {
+   const {data:after}=await supabase.from('ai_executions').select('*').eq('id',executionId).maybeSingle();
+   if(after?.status === 'running') return after;
+   throw new ToolError('CONFLICT','Execution cannot enter running state');
+ }
+ return data;
 }
 export async function markExecutionSuccess(executionId:string,outputRef:unknown={}){
  const supabase=createSupabaseAdminClient(); const {data,error}=await supabase.from('ai_executions').update({status:'succeeded',output_ref:outputRef,completed_at:new Date().toISOString()}).eq('id',executionId).eq('status','running').select('*').single();
