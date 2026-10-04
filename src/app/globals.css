@@ -1314,3 +1314,8 @@ html[data-theme="dark"] .clarification-answer-success{
 .supplier-email-preview{width:100%;min-height:300px;margin-top:14px;border:1px solid #dfe3e8;border-radius:10px;padding:12px;resize:vertical;font:inherit;line-height:1.55;background:#fafbfc}
 .supplier-preview-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 @media(max-width:700px){.supplier-product-table .row{grid-template-columns:1.6fr .8fr .6fr}.supplier-product-table .row>:last-child{display:none}.supplier-selection-bar{align-items:flex-start;flex-direction:column}.supplier-candidate-row{grid-template-columns:24px 1fr}.supplier-candidate-contact{grid-column:2;text-align:left}.supplier-modal-backdrop{padding:10px}.supplier-modal{padding:16px}}
+
+
+/* Supplier match intelligence */
+.supplier-match-line { margin-top: 6px; font-size: 12px; }
+.supplier-match-warning { margin-top: 6px; padding: 6px 8px; border-radius: 7px; background: #fff7ed; color: #9a3412; font-size: 11px; line-height: 1.35; }
