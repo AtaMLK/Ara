@@ -3178,13 +3178,23 @@ export async function continueInquiryWorkflow(inquiryId: string) {
         if (discoveryExecution?.status === 'succeeded' && candidateCount === 0) {
           const { data: researchExecution } = await supabase
             .from('ai_executions')
-            .select('id,status')
+            .select('id,status,attempt_count')
             .eq('inquiry_id', inquiryId)
             .eq('task_key', `inquiry:${inquiryId}:stage:research`)
             .maybeSingle();
 
-          if (researchExecution?.id && researchExecution.status === 'succeeded') {
-            await supabase
+          // Supplier discovery can legitimately finish with zero candidates when
+          // the research execution that produced its evidence failed part-way
+          // through. In that case, do not surface the misleading
+          // "no supplier candidate" error. Requeue the failed research execution
+          // so the corrected research code can rebuild the evidence and then
+          // supplier discovery will be reopened automatically by the research
+          // stage.
+          if (
+            researchExecution?.id &&
+            ['failed', 'succeeded'].includes(researchExecution.status)
+          ) {
+            const { error: requeueError } = await supabase
               .from('ai_executions')
               .update({
                 status: 'queued',
@@ -3194,7 +3204,20 @@ export async function continueInquiryWorkflow(inquiryId: string) {
                 started_at: null,
               })
               .eq('id', researchExecution.id)
-              .eq('status', 'succeeded');
+              .in('status', ['failed', 'succeeded']);
+
+            if (requeueError) {
+              throw new ToolError(
+                'TRANSIENT',
+                requeueError.message ?? 'Failed to requeue product research',
+              );
+            }
+
+            await timeline(inquiryId, 'workflow_research_requeued_after_supplier_discovery', {
+              research_execution_id: researchExecution.id,
+              previous_status: researchExecution.status,
+              reason: 'supplier_discovery_completed_with_zero_candidates',
+            }, 'product_research');
 
             return runStage(inquiryId, 'research');
           }
