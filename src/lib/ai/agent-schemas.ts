@@ -158,15 +158,33 @@ export const clarificationRepairOutputSchema = z.object({
   })).max(5),
 });
 
-export const supplierDiscoveryOutputSchema = z.object({
-  candidates: z.array(z.object({
-    name: z.string().min(1),
-    country: z.string().optional(),
-    website: z.string().url().optional(),
-    sourceUrl: z.string().url(),
-    evidence: z.array(z.string()).default([]),
-  })),
+const supplierDiscoveryCandidateSchema = z.object({
+  name: z.string().min(1),
+  country: z.string().optional(),
+  website: z.string().url().optional(),
+  sourceUrl: z.string().url(),
+  evidence: z.array(z.string()).default([]),
 });
+
+export const supplierDiscoveryOutputSchema = z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+
+  const record = value as Record<string, unknown>;
+  if (record.candidates !== undefined) return record;
+
+  // Some models return the same selection under a nearby key despite being
+  // instructed to use candidates. Normalize common variants instead of
+  // failing the whole supplier-discovery stage.
+  const aliases = ['suppliers', 'supplier_candidates', 'results'];
+  const alias = aliases.find((key) => record[key] !== undefined);
+
+  return {
+    ...record,
+    candidates: alias ? record[alias] : [],
+  };
+}, z.object({
+  candidates: z.array(supplierDiscoveryCandidateSchema).default([]),
+}));
 
 export const supplierContactResearchOutputSchema = z.object({
   contacts: z.array(z.object({
