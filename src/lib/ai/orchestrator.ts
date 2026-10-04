@@ -46,8 +46,28 @@ export async function markExecutionRunning(executionId:string){
  return data;
 }
 export async function markExecutionSuccess(executionId:string,outputRef:unknown={}){
- const supabase=createSupabaseAdminClient(); const {data,error}=await supabase.from('ai_executions').update({status:'succeeded',output_ref:outputRef,completed_at:new Date().toISOString()}).eq('id',executionId).eq('status','running').select('*').single();
- if(error||!data) throw new ToolError('CONFLICT','Execution cannot be completed'); return data;
+ const supabase=createSupabaseAdminClient();
+ const {data:current,error:readError}=await supabase.from('ai_executions').select('*').eq('id',executionId).single();
+ if(readError || !current) throw new ToolError('NOT_FOUND','Execution not found');
+ // A second worker/action may finish the same execution after the first worker.
+ // Treat an already-succeeded execution as idempotent instead of a false conflict.
+ if(current.status === 'succeeded') return current;
+ if(current.status !== 'running') {
+   throw new ToolError('CONFLICT',`Execution cannot be completed from ${current.status}`);
+ }
+ const {data,error}=await supabase
+   .from('ai_executions')
+   .update({status:'succeeded',output_ref:outputRef,completed_at:new Date().toISOString()})
+   .eq('id',executionId)
+   .eq('status','running')
+   .select('*')
+   .single();
+ if(error||!data) {
+   const {data:after}=await supabase.from('ai_executions').select('*').eq('id',executionId).maybeSingle();
+   if(after?.status === 'succeeded') return after;
+   throw new ToolError('CONFLICT','Execution cannot be completed');
+ }
+ return data;
 }
 export async function markExecutionFailure(executionId:string,errorCode:string,errorMessage:string){
  const supabase=createSupabaseAdminClient(); const {data:current}=await supabase.from('ai_executions').select('*').eq('id',executionId).single();
