@@ -163,7 +163,12 @@ const supplierDiscoveryCandidateSchema = z.object({
   country: z.string().optional(),
   website: z.string().url().optional(),
   sourceUrl: z.string().url(),
-  evidence: z.array(z.string()).default([]),
+  // Some models return a single evidence sentence instead of an array.
+  // Normalize that recoverable shape without weakening supplier validation.
+  evidence: z.preprocess(
+    (value) => typeof value === 'string' ? [value] : value,
+    z.array(z.string()).default([]),
+  ),
 });
 
 export const supplierDiscoveryOutputSchema = z.preprocess((value) => {
