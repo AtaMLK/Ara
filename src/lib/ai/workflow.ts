@@ -2693,7 +2693,28 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         coverageBySupplier.set(candidate.supplier_id, set);
       }
 
-      console.log('\n[ARAT][supplier-discovery] ===== SUPPLIER CANDIDATES =====');
+      // Debug: show the actual supplier candidates discovered BEFORE persistence.
+      // This is the important table for diagnosing why candidates may disappear.
+      console.log('\n[ARAT][supplier-discovery] ===== DISCOVERED SUPPLIERS =====');
+      console.table([...discoveryCandidates.values()].map((candidate) => {
+        const source = results.find((item) =>
+          String(item.structuredData?.arat_requirement_id ?? '') === String(candidate.requirementId ?? '') &&
+          (item.source_url === candidate.website ||
+            candidate.evidence.some((e) => Boolean(e) && item.finding?.includes(e)))
+        );
+        return {
+          supplier: candidate.name,
+          product_requirement: candidate.requirementId ?? '-',
+          match_type: candidate.matchType ?? '-',
+          score: candidate.matchScore ?? '-',
+          relevance: source?.relevance ?? '-',
+          confidence: source?.confidence ?? '-',
+          source: source?.source_url ?? candidate.website ?? '-',
+          evidence: (candidate.evidence?.[0] ?? source?.finding ?? '-').slice(0, 180),
+        };
+      }));
+      console.log('[ARAT][supplier-discovery] discovered candidate count:', discoveryCandidates.size);
+      console.log('[ARAT][supplier-discovery] ===== PERSISTED SUPPLIER CANDIDATES =====');
       console.table((rankedCandidates ?? []).map((candidate) => {
         const evidence = (candidate.match_evidence ?? {}) as Record<string, unknown>;
         return {
@@ -2701,12 +2722,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           requirement_id: candidate.requirement_id,
           match_type: evidence.match_type ?? '-',
           score: evidence.match_score ?? '-',
-          coverage: evidence.coverage_count ?? '-',
-          name: evidence.supplier_name ?? '-',
+          relevance: evidence.relevance ?? '-',
+          confidence: evidence.confidence ?? '-',
         };
       }));
-      console.log('[ARAT][supplier-discovery] candidate rows:', rankedCandidates?.length ?? 0);
-      console.log('[ARAT][supplier-discovery] ================================\n');
+      console.log('[ARAT][supplier-discovery] persisted candidate rows:', rankedCandidates?.length ?? 0);
+      console.log('[ARAT][supplier-discovery] ============================================\n');
 
       for (const candidate of rankedCandidates ?? []) {
         if (!candidate.supplier_id) continue;
