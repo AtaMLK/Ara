@@ -2950,14 +2950,29 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         );
 
         const resultBatches = await Promise.all(
-          queryJobs.map((job) =>
-            provider.search({
-              inquiryId,
-              query: job.query,
-              limit: 8,
-              country: /\bTurkey\b/i.test(job.query) ? 'Turkey' : undefined,
-            }).then((results) => ({ job, results })),
-          ),
+          queryJobs.map(async (job) => {
+            try {
+              const results = await provider.search({
+                inquiryId,
+                query: job.query,
+                limit: 8,
+                country: /\bTurkey\b/i.test(job.query) ? 'Turkey' : undefined,
+              });
+              return { job, results, error: null as string | null };
+            } catch (error) {
+              // One bad/no-result search must never abort the complete Research
+              // stage. Keep the query visible in the terminal for diagnosis and
+              // continue with the remaining product searches.
+              const message = error instanceof Error ? error.message : 'Research query failed';
+              console.warn('[ARAT][research] query failed; continuing', {
+                product: job.product,
+                model: job.model ?? null,
+                query: job.query,
+                error: message,
+              });
+              return { job, results: [] as ResearchResult[], error: message };
+            }
+          }),
         );
 
         const normalizeResearchText = (value: string) =>
@@ -3053,6 +3068,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             query: batch.job.query,
             returned: batch.results.length,
             accepted: acceptedCount,
+            error: batch.error ?? null,
           });
         }
 
