@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { answerClarificationAction } from '@/app/actions';
 
 export default function AnswerClarificationForm({ inquiryId, clarificationId }: { inquiryId: string; clarificationId: string }) {
@@ -8,6 +9,7 @@ export default function AnswerClarificationForm({ inquiryId, clarificationId }: 
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   async function submit(event: FormEvent) {
     event.preventDefault();
