@@ -1956,53 +1956,68 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       const seen = new Set<string>();
       let createdCount = 0;
-      const discoveryCandidates = new Map<string, { name: string; country?: string; website?: string; evidence: string[] }>();
+      const discoveryCandidates = new Map<string, { name: string; country?: string; website?: string; evidence: string[]; requirementId?: string }>();
 
       let selectedResults = results ?? [];
       if (process.env.OPENAI_API_KEY && results?.length) {
         const confirmedRequirements = await supabase
           .from('requirements')
-          .select('type,value')
+          .select('id,type,value,source_ref')
           .eq('inquiry_id', inquiryId)
           .eq('status', 'confirmed');
 
-        const discoveryAi = await runAgent(
-          { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
-          {
-            requirements: confirmedRequirements.data ?? [],
-            research_results: results.map((item) => ({
-              source_name: item.sourceName,
-              source_url: item.sourceUrl,
-              finding: item.finding,
-              structured_data: item.structuredData,
-              relevance: item.relevance,
-              confidence: item.confidence,
-              evidence: item.evidence,
-            })),
-            instructions: [
-              'Select only real companies that can plausibly supply, manufacture, or officially distribute the requested products.',
-              'Reject marketplaces, government sites, banks, dictionaries, documentation sites, generic directories, media, research portals, and unrelated information pages.',
-              'For every selected candidate, extract the company/supplier name into the required name field. Prefer the explicit company name shown in source_name, page title, finding, or evidence.',
-              'If the model uses an alternate key such as supplierName or companyName, it is normalized by the schema, but always prefer the canonical name field.',
-              'A source URL is evidence, not proof of supplier identity. The candidate must be supported by the supplied evidence.',
-              'Use only an exact source URL from the supplied research results as sourceUrl. Never invent a URL.',
-              'Use the supplier website only when the evidence supports that website as the supplier website.',
-              'Do not create a supplier merely because its page contains the word manufacturer, supplier, or distributor.',
-              'Return no candidate when the evidence is insufficient; never invent a company name.',
-            ],
-          },
-          supplierDiscoveryOutputSchema,
-        );
+        const productRequirements = (confirmedRequirements.data ?? []).filter((item) => item.type === 'product');
+        const allowedUrls = new Set((results ?? []).map((item) => item.sourceUrl));
 
-        const allowedUrls = new Set(results.map((item) => item.sourceUrl));
-        for (const candidate of discoveryAi.output.candidates) {
-          if (!allowedUrls.has(candidate.sourceUrl)) continue;
-          discoveryCandidates.set(candidate.sourceUrl, {
-            name: candidate.name.trim(),
-            country: candidate.country?.trim() || undefined,
-            website: candidate.website?.trim() || undefined,
-            evidence: candidate.evidence ?? [],
-          });
+        // Validate each product independently. Research evidence carries the exact
+        // product requirement id so candidates cannot be accidentally attributed to
+        // another requested item.
+        for (const productRequirement of productRequirements) {
+          const productResults = (results ?? []).filter((item) =>
+            (item.structuredData?.arat_requirement_id as string | undefined) === productRequirement.id
+          );
+          if (!productResults.length) continue;
+
+          const discoveryAi = await runAgent(
+            { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
+            {
+              requirements: (confirmedRequirements.data ?? []).filter((item) => item.source_ref === productRequirement.source_ref),
+              target_product: productRequirement,
+              research_results: productResults.map((item) => ({
+                source_name: item.sourceName,
+                source_url: item.sourceUrl,
+                finding: item.finding,
+                structured_data: item.structuredData,
+                relevance: item.relevance,
+                confidence: item.confidence,
+                evidence: item.evidence,
+              })),
+              instructions: [
+                'Research and validate suppliers for THIS PRODUCT ONLY. Never mix evidence from another product.',
+                'Identify manufacturers, official distributors, distributors, dealers, or credible commercial suppliers that can supply the requested product/brand/model.',
+                'Prioritize Turkey/Türkiye suppliers first. If no valid Turkish supplier is supported by evidence, include credible international suppliers.',
+                'Prefer official manufacturer/distributor evidence over generic directories or marketplaces.',
+                'Reject marketplaces, government sites, banks, dictionaries, documentation sites, generic directories, media, research portals, and unrelated information pages.',
+                'Every candidate must have an explicit company name supported by the supplied evidence.',
+                'Never invent a company name, website, email, phone, contact person, job title, or supplier relationship.',
+                'Use only an exact source URL from the supplied research results as sourceUrl.',
+                'Return the exact target product requirement id in requirementId.',
+              ],
+            },
+            supplierDiscoveryOutputSchema,
+          );
+
+          const allowedUrls = new Set(productResults.map((item) => item.sourceUrl));
+          for (const candidate of discoveryAi.output.candidates) {
+            if (!allowedUrls.has(candidate.sourceUrl)) continue;
+            discoveryCandidates.set(`${candidate.sourceUrl}::${productRequirement.id}`, {
+              name: candidate.name.trim(),
+              country: candidate.country?.trim() || undefined,
+              website: candidate.website?.trim() || undefined,
+              evidence: candidate.evidence ?? [],
+              requirementId: productRequirement.id,
+            });
+          }
         }
         // If the broad discovery pass was overly conservative, run a focused
         // extraction pass over the strongest evidence instead of concluding that
@@ -2050,12 +2065,17 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             );
 
             for (const candidate of repairAi.output.candidates) {
+              if (!candidate.name?.trim()) continue;
               if (!allowedUrls.has(candidate.sourceUrl)) continue;
-              discoveryCandidates.set(candidate.sourceUrl, {
+              const matchingResult = results.find((item) => item.source_url === candidate.sourceUrl);
+              const requirementId = String(matchingResult?.structuredData?.arat_requirement_id ?? candidate.requirementId ?? '');
+              if (!requirementId) continue;
+              discoveryCandidates.set(`${candidate.sourceUrl}::${requirementId}`, {
                 name: candidate.name.trim(),
                 country: candidate.country?.trim() || undefined,
                 website: candidate.website?.trim() || undefined,
                 evidence: candidate.evidence ?? [],
+                requirementId,
               });
             }
           }
@@ -2113,15 +2133,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const name = companyNameFromFinding(result.finding ?? '', matchedBrand);
             if (!name) continue;
 
-            discoveryCandidates.set(result.sourceUrl, {
+            const requirementId = String(result.structuredData?.arat_requirement_id ?? '');
+            if (!requirementId) continue;
+            discoveryCandidates.set(`${result.sourceUrl}::${requirementId}`, {
               name,
               website: /^https?:\/\//i.test(result.sourceUrl) ? result.sourceUrl : undefined,
               evidence: [result.finding].filter(Boolean),
+              requirementId,
             });
           }
         }
 
-        selectedResults = results.filter((item) => discoveryCandidates.has(item.sourceUrl));
+        selectedResults = results.filter((item) => discoveryCandidates.has(`${item.source_url}::${String(item.structuredData?.arat_requirement_id ?? '')}`));
       }
 
       for (const result of selectedResults) {
@@ -2141,7 +2164,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         const genericInformationSource = /(dictionary|survey|government|regulation|documentation|glossary|reference)/i.test(text);
         if (blockedSource || !supplierSignal || (!commercialSignal && genericInformationSource)) continue;
 
-        const aiCandidate = discoveryCandidates.get(result.source_url);
+        const requirementId = String(result.structuredData?.arat_requirement_id ?? '');
+        const aiCandidate = discoveryCandidates.get(`${result.source_url}::${requirementId}`) ?? [...discoveryCandidates.values()].find((candidate) => candidate.website === result.source_url && candidate.requirementId === requirementId);
         if (!aiCandidate?.name) continue;
 
         const proposedName = aiCandidate.name.slice(0, 240);
@@ -2377,6 +2401,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         const { error } = await supabase.from('supplier_candidates').upsert({
           inquiry_id: inquiryId,
+          requirement_id: aiCandidate.requirementId ?? null,
           supplier_id: supplierId,
           proposed_name: proposedName.slice(0, 240),
           proposed_country: country,
@@ -2393,7 +2418,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             source_name: result.source_name,
           },
           status: 'finalized',
-        }, { onConflict: 'inquiry_id,proposed_name', ignoreDuplicates: false });
+        }, { onConflict: 'inquiry_id,proposed_name,requirement_id', ignoreDuplicates: false });
 
         if (!error) createdCount++;
       }
@@ -2485,7 +2510,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       if (provider) {
         const { data: requirements } = await supabase
           .from('requirements')
-          .select('type,value')
+          .select('id,type,value,source_ref')
           .eq('inquiry_id', inquiryId)
           .eq('status', 'confirmed')
           .order('created_at', { ascending: true });
@@ -2523,29 +2548,60 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         // "temperature sensor Hansford HS-210 ... manufacturer supplier distributor official".
         // Search engines often interpret that as a generic information query and return
         // unrelated technical pages. Use a few focused commercial queries per item instead.
-        const focusedQueries = productItems.flatMap(({ product, brand, model }) => {
-          const queries = [
-            [brand, model, product].filter(Boolean).join(' '),
-            [brand, product, 'manufacturer'].filter(Boolean).join(' '),
-            [model, 'supplier distributor'].filter(Boolean).join(' '),
-            [brand, product, 'official distributor'].filter(Boolean).join(' '),
+        const productQueries = productItems.map((item) => {
+          const commercial = [
+            [item.brand, item.model, item.product].filter(Boolean).join(' '),
+            [item.brand, item.model, 'supplier Turkey'].filter(Boolean).join(' '),
+            [item.brand, 'Turkey distributor supplier'].filter(Boolean).join(' '),
+            [item.product, 'manufacturer Turkey'].filter(Boolean).join(' '),
+            [item.product, 'supplier Turkey'].filter(Boolean).join(' '),
+            [item.brand, item.product, 'official distributor'].filter(Boolean).join(' '),
+            [item.model, 'supplier distributor'].filter(Boolean).join(' '),
+            [item.product, 'manufacturer brand distributor'].filter(Boolean).join(' '),
           ];
-          return [...new Set(queries.map((query) => query.trim()).filter(Boolean))];
-        }).slice(0, 12);
+          return {
+            requirementId: (confirmedRequirements.find((row) => row.type === 'product' && row.value.trim() === item.product)?.id) ?? null,
+            product: item.product,
+            brand: item.brand,
+            model: item.model,
+            queries: [...new Set(commercial.map((query) => query.trim()).filter(Boolean))],
+          };
+        });
+
+        const queryJobs = productQueries.flatMap((item) =>
+          item.queries.map((query) => ({ ...item, query })),
+        );
 
         const resultBatches = await Promise.all(
-          focusedQueries.map((supplierSearchQuery) =>
-            provider.search({ inquiryId, query: supplierSearchQuery, limit: 8 }),
+          queryJobs.map((job) =>
+            provider.search({ inquiryId, query: job.query, limit: 8 }).then((results) => ({ job, results })),
           ),
         );
 
-        const resultMap = new Map<string, ResearchResult>();
+        const resultMap = new Map<string, { result: ResearchResult; requirementId: string | null; product: string; query: string }>();
         for (const batch of resultBatches) {
-          for (const result of batch) {
-            if (result.sourceUrl && !resultMap.has(result.sourceUrl)) resultMap.set(result.sourceUrl, result);
+          for (const result of batch.results) {
+            if (!result.sourceUrl) continue;
+            const key = `${batch.job.requirementId ?? batch.job.product}::${result.sourceUrl}`;
+            if (!resultMap.has(key)) {
+              resultMap.set(key, {
+                result,
+                requirementId: batch.job.requirementId,
+                product: batch.job.product,
+                query: batch.job.query,
+              });
+            }
           }
         }
-        const results = [...resultMap.values()].slice(0, 30);
+        const results = [...resultMap.values()].slice(0, 80).map((entry) => ({
+          ...entry.result,
+          structuredData: {
+            ...(entry.result.structuredData ?? {}),
+            arat_product: entry.product,
+            arat_requirement_id: entry.requirementId,
+            arat_query: entry.query,
+          },
+        }));
 
         for (const result of results) {
           await supabase.from('research_results').insert({
