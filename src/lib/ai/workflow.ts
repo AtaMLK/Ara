@@ -2135,7 +2135,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }
         }
 
-        selectedResults = results.filter((item) => discoveryCandidates.has(item.sourceUrl));
+        selectedResults = results.filter((item) => discoveryCandidates.has(`${item.source_url}::${String(item.structuredData?.arat_requirement_id ?? '')}`));
       }
 
       for (const result of selectedResults) {
@@ -2155,7 +2155,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         const genericInformationSource = /(dictionary|survey|government|regulation|documentation|glossary|reference)/i.test(text);
         if (blockedSource || !supplierSignal || (!commercialSignal && genericInformationSource)) continue;
 
-        const aiCandidate = discoveryCandidates.get(result.source_url) ?? [...discoveryCandidates.values()].find((candidate) => candidate.website === result.source_url);
+        const requirementId = String(result.structuredData?.arat_requirement_id ?? '');
+        const aiCandidate = discoveryCandidates.get(`${result.source_url}::${requirementId}`) ?? [...discoveryCandidates.values()].find((candidate) => candidate.website === result.source_url && candidate.requirementId === requirementId);
         if (!aiCandidate?.name) continue;
 
         const proposedName = aiCandidate.name.slice(0, 240);
