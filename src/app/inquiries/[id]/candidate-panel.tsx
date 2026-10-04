@@ -59,6 +59,22 @@ function label(value: string) {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function matchMeta(candidate: Candidate) {
+  const evidence = (candidate.match_evidence ?? {}) as Record<string, unknown>;
+  const type = typeof evidence.match_type === 'string' ? evidence.match_type : 'same_brand_distributor';
+  const score = typeof evidence.match_score === 'number' ? evidence.match_score : null;
+  const note = typeof evidence.match_note === 'string' ? evidence.match_note : '';
+  const coverageCount = typeof evidence.coverage_count === 'number' ? evidence.coverage_count : 1;
+  const coverageTotal = typeof evidence.coverage_total === 'number' ? evidence.coverage_total : 1;
+  const labels: Record<string, string> = {
+    exact_product: 'Exact product match',
+    same_brand_distributor: 'Same brand / supplier',
+    same_brand_similar: 'Same brand / similar product',
+    related_alternative: 'Related alternative',
+  };
+  return { type, label: labels[type] ?? 'Supplier match', score, note, coverageCount, coverageTotal };
+}
+
 function emailFor(candidate: Candidate) {
   return candidate.suppliers?.supplier_contacts.find((contact) => contact.email && contact.status === 'active')?.email
     ?? candidate.suppliers?.supplier_emails.find((email) => email.status === 'active' && email.is_primary)?.email
@@ -179,7 +195,7 @@ export function CandidatePanel({
           <h2>Supplier Candidates</h2>
           <div className="muted">Suppliers are researched per product and consolidated here.</div>
         </div>
-        <span className="badge">{candidates.filter(valid).length} valid</span>
+        <span className="badge">{candidates.length} candidates · {candidates.filter(valid).length} ready</span>
       </div>
 
       {error && <div className="error-inline">{error}</div>}
@@ -188,10 +204,10 @@ export function CandidatePanel({
         <div className="detail-card"><div className="empty">No product requirements are confirmed yet.</div></div>
       ) : (
         <div className="table supplier-product-table">
-          <div className="row header"><div>Product</div><div>Brand / Model</div><div>Valid Suppliers</div><div>Status</div></div>
+          <div className="row header"><div>Product</div><div>Brand / Model</div><div>Suppliers Found</div><div>Status</div></div>
           {products.map((product) => {
             const rows = grouped.get(product.id) ?? [];
-            const validCount = rows.filter(valid).length;
+            const validCount = rows.length;
             const model = requirements.find((item) => item.type === 'model_part_number' && item.source_ref === product.source_ref)?.value;
             return (
               <div className="row" key={product.id}>
@@ -202,7 +218,7 @@ export function CandidatePanel({
                     {validCount}
                   </button>
                 </div>
-                <div>{validCount ? <span className="badge status-approved">Ready</span> : <span className="badge">Researching</span>}</div>
+                <div>{validCount ? <span className="badge status-approved">Candidates found</span> : <span className="badge">Researching</span>}</div>
               </div>
             );
           })}
@@ -241,6 +257,18 @@ export function CandidatePanel({
                           <strong>{candidate.suppliers?.legal_name || candidate.proposed_name}</strong>
                           <div className="muted">{label(candidate.suppliers?.supplier_type || 'unknown')} · {candidate.proposed_country || candidate.suppliers?.primary_country || '—'}</div>
                           <div className="muted">{candidate.proposed_website || 'No website'}</div>
+                          {(() => {
+                            const meta = matchMeta(candidate);
+                            return (
+                              <>
+                                <div className="supplier-match-line"><strong>{meta.label}</strong>{meta.score !== null ? ` · ${meta.score}/100` : ''} · Covers {meta.coverageCount}/{meta.coverageTotal} products</div>
+                                {meta.type !== 'exact_product' && (
+                                  <div className="supplier-match-warning">⚠ Exact requested product is not confirmed. This supplier is relevant to the brand/product family.</div>
+                                )}
+                                {meta.note && <div className="muted">{meta.note}</div>}
+                              </>
+                            );
+                          })()}
                           {contact?.name && <div className="muted">Contact: {contact.name}{contact.job_title ? ` · ${contact.job_title}` : ''}{contact.department ? ` · ${contact.department}` : ''}</div>}
                           {contact?.phone && <div className="muted">{contact.phone}</div>}
                         </div>
