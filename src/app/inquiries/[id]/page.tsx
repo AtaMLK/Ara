@@ -51,7 +51,7 @@ export default async function InquiryDetailPage({ params }: Props) {
         <div className="topbar-actions"><span className={`badge status-badge status-${inquiry.status}`}>{label(inquiry.status)}</span><InquiryEditForm inquiryId={inquiry.id} title={inquiry.title} description={inquiry.description ?? ""} version={inquiry.current_version} /></div>
       </header>
 
-      <CandidatePanel inquiryId={inquiry.id} candidates={candidatesResult.data ?? []} />
+      <CandidatePanel inquiryId={inquiry.id} requirements={requirementsResult.data ?? []} candidates={candidatesResult.data ?? []} />
 
       <WorkflowPanel
         inquiryId={inquiry.id}
