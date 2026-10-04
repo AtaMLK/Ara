@@ -53,7 +53,7 @@ export async function applyCustomerClarificationAnswer(input: {
 
   const { data: clarification, error: clarificationError } = await supabase
     .from('clarifications')
-    .select('id,inquiry_id,requirement_id,status')
+    .select('id,inquiry_id,requirement_id,status,question')
     .eq('id', input.clarificationId)
     .eq('inquiry_id', input.inquiryId)
     .single();
@@ -72,7 +72,7 @@ export async function applyCustomerClarificationAnswer(input: {
 
   const { data: requirement, error: requirementError } = await supabase
     .from('requirements')
-    .select('id,value,status,current_version,admin_edited')
+    .select('id,type,value,status,current_version,admin_edited,source_ref')
     .eq('id', clarification.requirement_id)
     .eq('inquiry_id', input.inquiryId)
     .single();
@@ -80,22 +80,101 @@ export async function applyCustomerClarificationAnswer(input: {
   if (requirementError || !requirement) throw new ToolError('NOT_FOUND', 'Requirement not found');
   if (requirement.admin_edited) throw new ToolError('AUTHORIZATION', 'Admin-edited Requirement is authoritative');
 
-  const { data: updated, error: updateError } = await supabase
-    .from('requirements')
-    .update({
-      value: answer,
-      source: 'clarification',
-      source_ref: clarification.id,
-      status: 'confirmed',
-      current_version: requirement.current_version + 1,
-    })
-    .eq('id', requirement.id)
-    .eq('current_version', requirement.current_version)
-    .eq('admin_edited', false)
-    .select('id,status,current_version')
-    .single();
+  const isModelClarification =
+    requirement.type === 'product' &&
+    /(model|part\s*number|part\s*no\.?)/i.test(clarification.question ?? '');
 
-  if (updateError || !updated) throw new ToolError('CONFLICT', 'Requirement changed before the customer answer was applied');
+  let appliedRequirementId = requirement.id;
+
+  if (isModelClarification) {
+    // A model/part-number answer must never replace the product itself.
+    // Keep the product requirement intact and store the answer as a dedicated
+    // model_part_number requirement linked to the same source item.
+    const { data: existingModel } = await supabase
+      .from('requirements')
+      .select('id,value,status,current_version,admin_edited')
+      .eq('inquiry_id', input.inquiryId)
+      .eq('type', 'model_part_number')
+      .eq('source_ref', requirement.source_ref)
+      .maybeSingle();
+
+    if (existingModel) {
+      const { data: updatedModel, error: modelError } = await supabase
+        .from('requirements')
+        .update({
+          value: answer,
+          source: 'clarification',
+          source_ref: requirement.source_ref,
+          status: 'confirmed',
+          current_version: existingModel.current_version + 1,
+        })
+        .eq('id', existingModel.id)
+        .eq('current_version', existingModel.current_version)
+        .eq('admin_edited', false)
+        .select('id')
+        .single();
+
+      if (modelError || !updatedModel) {
+        throw new ToolError('CONFLICT', 'Model/part number requirement changed before the customer answer was applied');
+      }
+      appliedRequirementId = updatedModel.id;
+    } else {
+      const { data: createdModel, error: modelError } = await supabase
+        .from('requirements')
+        .insert({
+          inquiry_id: input.inquiryId,
+          type: 'model_part_number',
+          value: answer,
+          source: 'clarification',
+          source_ref: requirement.source_ref,
+          status: 'confirmed',
+          admin_edited: false,
+        })
+        .select('id')
+        .single();
+
+      if (modelError || !createdModel) {
+        throw new ToolError('CONFLICT', modelError?.message ?? 'Could not save model/part number');
+      }
+      appliedRequirementId = createdModel.id;
+
+      await supabase.from('requirement_history').insert({
+        requirement_id: createdModel.id,
+        old_value: null,
+        new_value: answer,
+        old_status: 'open',
+        new_status: 'confirmed',
+        actor_type: 'customer',
+        actor_user_id: input.customerUserId ?? null,
+        reason: 'Customer clarification answer applied as model/part number',
+      });
+    }
+
+    // The product itself is now sufficiently specified.
+    await supabase
+      .from('requirements')
+      .update({ status: 'confirmed' })
+      .eq('id', requirement.id)
+      .eq('inquiry_id', input.inquiryId)
+      .eq('admin_edited', false);
+  } else {
+    const { data: updated, error: updateError } = await supabase
+      .from('requirements')
+      .update({
+        value: answer,
+        source: 'clarification',
+        source_ref: clarification.id,
+        status: 'confirmed',
+        current_version: requirement.current_version + 1,
+      })
+      .eq('id', requirement.id)
+      .eq('current_version', requirement.current_version)
+      .eq('admin_edited', false)
+      .select('id,status,current_version')
+      .single();
+
+    if (updateError || !updated) throw new ToolError('CONFLICT', 'Requirement changed before the customer answer was applied');
+  }
 
   const { data: clarificationUpdated, error: clarificationUpdateError } = await supabase
     .from('clarifications')
@@ -147,7 +226,7 @@ export async function applyCustomerClarificationAnswer(input: {
 
   await continueInquiryWorkflow(input.inquiryId);
 
-  return { ok: true, duplicate: false, requirementId: requirement.id };
+  return { ok: true, duplicate: false, requirementId: appliedRequirementId };
 }
 
 export async function findCustomerClarificationForEmail(input: {
