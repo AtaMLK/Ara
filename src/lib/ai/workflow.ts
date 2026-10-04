@@ -2963,13 +2963,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         const normalizeResearchText = (value: string) =>
           value.toLowerCase()
             .normalize('NFKD')
-            .replace(/[\\u0300-\\u036f]/g, '')
+            .replace(/[\u0300-\u036f]/g, '')
             .replace(/[^a-z0-9]+/g, ' ')
             .trim();
 
         const meaningfulProductTokens = (value: string) =>
           normalizeResearchText(value)
-            .split(/\\s+/)
+             .split(/\s+/)
             .filter((token) => token.length >= 4 && !['temperature', 'sensor', 'portable', 'power', 'station', 'product', 'official', 'supplier', 'distributor', 'manufacturer'].includes(token));
 
         // Search results are external evidence, so we apply a deterministic
@@ -3056,7 +3056,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           });
         }
 
-        console.log('\\n[ARAT][research] ===== RESEARCH RESULTS BY PRODUCT =====');
+        console.log('\n[ARAT][research] ===== RESEARCH RESULTS BY PRODUCT =====');
         console.table(researchLog);
         console.log('[ARAT][research] unique accepted results:', resultMap.size);
 
