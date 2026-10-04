@@ -2061,6 +2061,66 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }
         }
 
+        // Final evidence-bound fallback: if AI still returns no candidates,
+        // extract an explicitly named company from the research finding itself.
+        // This is not supplier invention: the name must appear in the evidence
+        // and the result must match one of the confirmed requested brands.
+        if (discoveryCandidates.size === 0 && results.length > 0) {
+          const confirmedBrands = (confirmedRequirements.data ?? [])
+            .filter((item) => item.type === 'specification')
+            .map((item) => item.value.match(/brand\\s*:\\s*(.+)/i)?.[1]?.trim())
+            .filter((value): value is string => Boolean(value))
+            .map((value) => value.toLowerCase());
+
+          const companyNameFromFinding = (finding: string, brand?: string) => {
+            const sentences = finding
+              .split(/[.!?\\n]+/)
+              .map((sentence) => sentence.trim())
+              .filter(Boolean);
+
+            const verbPattern =
+              /\\s+(?:is|are|offers|offer|specialises|specializes|manufactures|manufacture|supplies|supply|designs|design|provides|provide)\\s+/i;
+
+            for (const sentence of sentences) {
+              const match = sentence.match(new RegExp(
+                '^(.{2,120}?)' + verbPattern.source,
+                'i',
+              ));
+              if (match?.[1]) {
+                const name = match[1].trim().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, '');
+                if (
+                  name.length >= 2 &&
+                  (!brand || name.toLowerCase().includes(brand) || brand.includes(name.toLowerCase()))
+                ) {
+                  return name;
+                }
+              }
+            }
+
+            return undefined;
+          };
+
+          for (const result of results) {
+            const haystack = [
+              result.source_name ?? '',
+              result.finding ?? '',
+              result.source_url ?? '',
+            ].join(' ').toLowerCase();
+
+            const matchedBrand = confirmedBrands.find((brand) => haystack.includes(brand));
+            if (!matchedBrand) continue;
+
+            const name = companyNameFromFinding(result.finding ?? '', matchedBrand);
+            if (!name) continue;
+
+            discoveryCandidates.set(result.sourceUrl, {
+              name,
+              website: /^https?:\\/\\//i.test(result.sourceUrl) ? result.sourceUrl : undefined,
+              evidence: [result.finding].filter(Boolean),
+            });
+          }
+        }
+
         selectedResults = results.filter((item) => discoveryCandidates.has(item.sourceUrl));
       }
 
