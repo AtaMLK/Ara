@@ -24,7 +24,11 @@ export default async function CustomerInquiryPage({ params }: Props) {
 
   if (inquiryResult.error || !inquiryResult.data) notFound();
 
-  const clarifications = (clarificationsResult.data ?? []).filter((item) => ['sent'].includes(item.status));
+  const clarifications = (clarificationsResult.data ?? []).filter((item) => item.status === 'sent');
+  const visibleRequirements = (requirementsResult.data ?? []).filter((item) => {
+    const value = String(item.value ?? '').trim();
+    return value && !/^(null|undefined|n\/a|na)$/i.test(value);
+  });
   const { data: latestQuote } = await supabase
     .from('customer_quotes')
     .select('id,reference,status,revision_number')
@@ -95,7 +99,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
         </div>
         <div className="detail-card">
           <div className="section-head"><h2>Requirements</h2></div>
-          {(requirementsResult.data ?? []).map((item) => (
+          {visibleRequirements.map((item) => (
             <div className="list-item" key={item.id}>
               <strong>{item.type.replaceAll('_',' ')}</strong>
               <span>{item.value}</span>
