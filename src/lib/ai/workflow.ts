@@ -803,7 +803,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           inquiry_id: inquiryId,
           requirement_id: requirement.id,
           question: question.question,
-          status: 'draft',
+          status: 'sent',
         });
         if (insertError) throw new ToolError('CONFLICT', insertError.message);
       }
