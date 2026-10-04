@@ -2446,7 +2446,39 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .update({ status: 'completed', completed_at: new Date().toISOString() })
           .eq('id', researchCase.id);
 
-        const discovery = await enqueueWorkflow(inquiryId, 'supplier_discovery');
+        let discovery = await enqueueWorkflow(inquiryId, 'supplier_discovery');
+
+        // A previous discovery run may have completed successfully with zero
+        // candidates. Reopen it after fresh research so the new evidence is
+        // actually evaluated instead of enqueueWorkflow returning the old
+        // succeeded execution unchanged.
+        const previousCandidateCount = Number(
+          (discovery.output_ref as { candidate_count?: number } | null)?.candidate_count ?? 0,
+        );
+        if (discovery.status === 'succeeded' && previousCandidateCount === 0) {
+          const reopened = await supabase
+            .from('ai_executions')
+            .update({
+              status: 'queued',
+              error_code: null,
+              error_message: null,
+              completed_at: null,
+              started_at: null,
+            })
+            .eq('id', discovery.id)
+            .eq('status', 'succeeded')
+            .select('*')
+            .single();
+
+          if (reopened.error || !reopened.data) {
+            throw new ToolError(
+              'CONFLICT',
+              reopened.error?.message ?? 'Failed to requeue supplier discovery after fresh research',
+            );
+          }
+          discovery = reopened.data;
+        }
+
         await markExecutionSuccess(running.id, {
           research_case_id: researchCase.id,
           result_count: results.length,
