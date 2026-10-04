@@ -2693,6 +2693,21 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         coverageBySupplier.set(candidate.supplier_id, set);
       }
 
+      console.log('\n[ARAT][supplier-discovery] ===== SUPPLIER CANDIDATES =====');
+      console.table((rankedCandidates ?? []).map((candidate) => {
+        const evidence = (candidate.match_evidence ?? {}) as Record<string, unknown>;
+        return {
+          supplier_id: candidate.supplier_id,
+          requirement_id: candidate.requirement_id,
+          match_type: evidence.match_type ?? '-',
+          score: evidence.match_score ?? '-',
+          coverage: evidence.coverage_count ?? '-',
+          name: evidence.supplier_name ?? '-',
+        };
+      }));
+      console.log('[ARAT][supplier-discovery] candidate rows:', rankedCandidates?.length ?? 0);
+      console.log('[ARAT][supplier-discovery] ================================\n');
+
       for (const candidate of rankedCandidates ?? []) {
         if (!candidate.supplier_id) continue;
         const coverageCount = coverageBySupplier.get(candidate.supplier_id)?.size ?? 1;
