@@ -2662,6 +2662,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               .map((item) => item.value.trim());
 
             return {
+              requirementId: product.id,
               product: product.value.trim(),
               brand,
               model,
@@ -2707,7 +2708,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           ];
 
           return {
-            requirementId: product.id,
+            requirementId: item.requirementId,
             product: item.product,
             brand: item.brand,
             model: item.model,
