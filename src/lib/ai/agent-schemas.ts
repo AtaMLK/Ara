@@ -188,6 +188,9 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
   website: z.string().url().optional(),
   sourceUrl: z.string().url(),
   requirementId: z.string().uuid().optional(),
+  matchType: z.enum(['exact_product', 'same_brand_distributor', 'same_brand_similar', 'related_alternative']).optional(),
+  matchScore: z.number().min(0).max(100).optional(),
+  matchNote: z.string().optional(),
   // Some models return a single evidence sentence instead of an array.
   evidence: z.preprocess(
     (value) => typeof value === 'string' ? [value] : value,
