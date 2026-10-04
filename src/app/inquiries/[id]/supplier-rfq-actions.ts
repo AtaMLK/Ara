@@ -187,11 +187,11 @@ export async function sendSupplierRfqAction(input: {
 
     // Explicit admin action has already happened in the UI. The RFQ is now sent.
     const sent = await provider.send({
-      to: recipient,
+      to: [recipient],
       subject: email.subject,
       html: email.html,
       text: email.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
-      from: process.env.SMTP_FROM || undefined,
+      from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
       idempotencyKey: `rfq:${rfq.id}`,
     });
 
