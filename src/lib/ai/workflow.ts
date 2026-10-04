@@ -2002,6 +2002,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 'Never invent a company name, website, email, phone, contact person, job title, or supplier relationship.',
                 'Use only an exact source URL from the supplied research results as sourceUrl.',
                 'Return the exact target product requirement id in requirementId.',
+                'Classify the candidate using exactly one matchType: exact_product, same_brand_distributor, same_brand_similar, or related_alternative.',
+                'Use matchScore as a 0-100 fit score: exact_product 95-100; same_brand_distributor 80-94; same_brand_similar 65-79; related_alternative 50-64.',
+                'matchScore must reflect evidence, not optimism. If the exact requested model is not confirmed, do not call it exact_product.',
+                'Write matchNote as a short factual explanation of what is confirmed and what is not confirmed.',
               ],
             },
             supplierDiscoveryOutputSchema,
@@ -2016,6 +2020,9 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               website: candidate.website?.trim() || undefined,
               evidence: candidate.evidence ?? [],
               requirementId: productRequirement.id,
+              matchType: candidate.matchType,
+              matchScore: candidate.matchScore,
+              matchNote: candidate.matchNote,
             });
           }
         }
@@ -2076,6 +2083,9 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 website: candidate.website?.trim() || undefined,
                 evidence: candidate.evidence ?? [],
                 requirementId,
+                matchType: candidate.matchType,
+                matchScore: candidate.matchScore,
+                matchNote: candidate.matchNote,
               });
             }
           }
@@ -2140,6 +2150,9 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               website: /^https?:\/\//i.test(result.sourceUrl) ? result.sourceUrl : undefined,
               evidence: [result.finding].filter(Boolean),
               requirementId,
+              matchType: /\bmanufacturer\b|\bofficial\b|\bproduct\b/i.test(result.finding ?? '') ? 'exact_product' : 'same_brand_distributor',
+              matchScore: /\bmanufacturer\b|\bofficial\b|\bproduct\b/i.test(result.finding ?? '') ? 96 : 86,
+              matchNote: 'Candidate derived directly from the research evidence; exactness should be confirmed from the cited source.',
             });
           }
         }
@@ -2411,6 +2424,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             finding: result.finding,
             relevance: result.relevance,
             confidence: result.confidence,
+            match_type: aiCandidate.matchType ?? 'same_brand_distributor',
+            match_score: aiCandidate.matchScore ?? 75,
+            match_note: aiCandidate.matchNote ?? null,
+            coverage_count: 1,
+            coverage_total: 1,
           },
           availability_evidence: {},
           verification_evidence: {
@@ -2550,14 +2568,15 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         // unrelated technical pages. Use a few focused commercial queries per item instead.
         const productQueries = productItems.map((item) => {
           const commercial = [
-            [item.brand, item.model, item.product].filter(Boolean).join(' '),
-            [item.brand, item.model, 'supplier Turkey'].filter(Boolean).join(' '),
-            [item.brand, 'Turkey distributor supplier'].filter(Boolean).join(' '),
+            [item.model, item.brand, item.product].filter(Boolean).join(' '),
+            [item.model, item.brand, 'supplier Turkey'].filter(Boolean).join(' '),
+            [item.model, item.brand, 'distributor Turkey'].filter(Boolean).join(' '),
+            [item.model, item.brand, 'official distributor'].filter(Boolean).join(' '),
+            [item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
+            [item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
             [item.product, 'manufacturer Turkey'].filter(Boolean).join(' '),
             [item.product, 'supplier Turkey'].filter(Boolean).join(' '),
-            [item.brand, item.product, 'official distributor'].filter(Boolean).join(' '),
-            [item.model, 'supplier distributor'].filter(Boolean).join(' '),
-            [item.product, 'manufacturer brand distributor'].filter(Boolean).join(' '),
+            [item.brand, item.product, 'manufacturer distributor'].filter(Boolean).join(' '),
           ];
           return {
             requirementId: (confirmedRequirements.find((row) => row.type === 'product' && row.value.trim() === item.product)?.id) ?? null,
@@ -2593,7 +2612,17 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             }
           }
         }
-        const results = [...resultMap.values()].slice(0, 80).map((entry) => ({
+        // Keep a fair evidence budget for every requested product. A global slice can
+        // starve the second product when the first product returns many duplicates.
+        const perRequirement = new Map<string, typeof resultMap extends Map<any, infer V> ? V[] : never>();
+        for (const entry of resultMap.values()) {
+          const key = entry.requirementId ?? entry.product;
+          const bucket = perRequirement.get(key) ?? [];
+          if (bucket.length < 80) bucket.push(entry);
+          perRequirement.set(key, bucket);
+        }
+        const balancedResults = [...perRequirement.values()].flat();
+        const results = balancedResults.map((entry) => ({
           ...entry.result,
           structuredData: {
             ...(entry.result.structuredData ?? {}),
