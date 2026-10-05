@@ -197,14 +197,37 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
     ? normalizedMatchType
         .replace(/\([^)]*\)/g, '')
         .replace(/\[[^\]]*\]/g, '')
+        .replace(/[|/:]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '')
         .trim()
     : normalizedMatchType;
+  const matchTypeAliases: Record<string, string> = {
+    ...matchTypeAliases,
+    exact_product_supplier: 'exact_product',
+    exact_product_manufacturer: 'exact_product',
+    exact_product_match_supplier: 'exact_product',
+    same_brand_distributor_supplier: 'same_brand_distributor',
+    same_brand_distributor_match: 'same_brand_distributor',
+    same_brand_or_distributor: 'same_brand_distributor',
+    same_brand_or_official_distributor: 'same_brand_distributor',
+    same_brand_supplier: 'same_brand_distributor',
+    same_brand_similar_match: 'same_brand_similar',
+    same_brand_similar_product_match: 'same_brand_similar',
+    related_alternative_product: 'related_alternative',
+    related_alternative_match: 'related_alternative',
+  };
   const matchType = typeof canonicalMatchType === 'string'
-    ? matchTypeAliases[canonicalMatchType] ?? (
-        ['exact_product', 'same_brand_distributor', 'same_brand_similar', 'related_alternative'].includes(canonicalMatchType)
-          ? canonicalMatchType
-          : undefined
-      )
+    ? matchTypeAliases[canonicalMatchType] ??
+      (canonicalMatchType.includes('exact_product') || canonicalMatchType.includes('exact_manufacturer')
+        ? 'exact_product'
+        : canonicalMatchType.includes('same_brand_distributor') || canonicalMatchType.includes('brand_distributor')
+          ? 'same_brand_distributor'
+          : canonicalMatchType.includes('same_brand_similar')
+            ? 'same_brand_similar'
+            : canonicalMatchType.includes('related_alternative')
+              ? 'related_alternative'
+              : undefined)
     : undefined;
 
   return {
