@@ -14,6 +14,21 @@ import {
   type WorkflowStage,
 } from './orchestrator';
 
+function normalizeEvidence(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  }
+  if (typeof value === 'string' && value.trim()) return [value];
+  if (value && typeof value === 'object') {
+    try {
+      return [JSON.stringify(value)];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 type RequirementRow = {
   id: string;
   type: string;
@@ -2047,7 +2062,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 structured_data: item.structured_data,
                 relevance: item.relevance,
                 confidence: item.confidence,
-                evidence: item.evidence,
+                evidence: normalizeEvidence(item.evidence),
               })),
               instructions: [
                 'Research and validate suppliers for THIS PRODUCT ONLY. Never mix evidence from another product.',
@@ -2161,7 +2176,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               : null;
 
             for (const item of scoped) {
-              const evidenceText = [item.source_name, item.finding, item.structured_data?.title, ...(item.evidence ?? [])]
+              const evidenceText = [item.source_name, item.finding, item.structured_data?.title, ...normalizeEvidence(item.evidence)]
                 .filter(Boolean).join(' ');
               if (!evidenceText.trim()) continue;
 
@@ -2196,7 +2211,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               discoveryCandidates.set(key, {
                 name,
                 website: item.source_url,
-                evidence: [item.finding, ...(item.evidence ?? [])].filter(Boolean).slice(0, 5),
+                evidence: [item.finding, ...normalizeEvidence(item.evidence)].filter(Boolean).slice(0, 5),
                 requirementId: productRequirement.id,
                 matchType,
                 matchScore: score,
@@ -2431,7 +2446,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               : undefined) ??
             candidateScopedResults.find((item) => item.source_url === candidate.website) ??
             candidateScopedResults.find((item) =>
-              candidate.evidence.some((e) => Boolean(e) && (
+              normalizeEvidence(candidate.evidence).some((e) => Boolean(e) && (
                 item.finding?.includes(e) ||
                 e.includes(item.finding ?? '')
               ))
@@ -2476,7 +2491,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         const commercialSignal = /(sales|contact|products?|catalog|quote|quotation|rfq|buy|stock|inventory|dealer|distributor|manufacturer)/i.test(text);
         const genericInformationSource = /(dictionary|survey|government|regulation|documentation|glossary|reference)/i.test(text);
         const resultRequirementId = String(result.structured_data?.arat_requirement_id ?? result.structured_data?.source_ref ?? '');
-        const validatedCandidate = [...discoveryCandidates.values()].find((candidate) => candidate.requirementId === resultRequirementId && (candidate.website === result.source_url || candidate.evidence.includes(result.finding ?? '')));
+        const validatedCandidate = [...discoveryCandidates.values()].find((candidate) => candidate.requirementId === resultRequirementId && (candidate.website === result.source_url || normalizeEvidence(candidate.evidence).includes(result.finding ?? '')));
         if (blockedSource || (!supplierSignal && !validatedCandidate?.name) || (!commercialSignal && genericInformationSource)) continue;
 
         const requirementId = String(result.structured_data?.arat_requirement_id ?? result.structured_data?.source_ref ?? '');
@@ -2791,7 +2806,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           relevance: source?.relevance ?? '-',
           confidence: source?.confidence ?? '-',
           source: source?.source_url ?? candidate.website ?? '-',
-          evidence: (candidate.evidence?.[0] ?? source?.finding ?? '-').slice(0, 180),
+          evidence: (normalizeEvidence(candidate.evidence)[0] ?? source?.finding ?? '-').slice(0, 180),
         };
       }));
       console.log('[ARAT][supplier-discovery] discovered candidate count:', discoveryCandidates.size);
