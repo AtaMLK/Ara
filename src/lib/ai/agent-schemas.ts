@@ -202,8 +202,7 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
         .replace(/^_+|_+$/g, '')
         .trim()
     : normalizedMatchType;
-  const matchTypeAliases: Record<string, string> = {
-    ...matchTypeAliases,
+  const extendedMatchTypeAliases: Record<string, string> = {
     exact_product_supplier: 'exact_product',
     exact_product_manufacturer: 'exact_product',
     exact_product_match_supplier: 'exact_product',
@@ -218,7 +217,7 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
     related_alternative_match: 'related_alternative',
   };
   const matchType = typeof canonicalMatchType === 'string'
-    ? matchTypeAliases[canonicalMatchType] ??
+    ? (matchTypeAliases[canonicalMatchType] ?? extendedMatchTypeAliases[canonicalMatchType]) ??
       (canonicalMatchType.includes('exact_product') || canonicalMatchType.includes('exact_manufacturer')
         ? 'exact_product'
         : canonicalMatchType.includes('same_brand_distributor') || canonicalMatchType.includes('brand_distributor')
