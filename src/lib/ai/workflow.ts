@@ -1967,14 +1967,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .eq('status', 'confirmed');
 
         const productRequirements = (confirmedRequirements.data ?? []).filter((item) => item.type === 'product');
-        const allowedUrls = new Set((results ?? []).map((item) => item.sourceUrl));
+        const allowedUrls = new Set((results ?? []).map((item) => item.source_url));
 
         // Validate each product independently. Research evidence carries the exact
         // product requirement id so candidates cannot be accidentally attributed to
         // another requested item.
         for (const productRequirement of productRequirements) {
           const productResults = (results ?? []).filter((item) =>
-            (item.structuredData?.arat_requirement_id as string | undefined) === productRequirement.id
+            (item.structured_data?.arat_requirement_id as string | undefined) === productRequirement.id
           );
           if (!productResults.length) continue;
 
@@ -1984,10 +1984,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               requirements: (confirmedRequirements.data ?? []).filter((item) => item.source_ref === productRequirement.source_ref),
               target_product: productRequirement,
               research_results: productResults.map((item) => ({
-                source_name: item.sourceName,
-                source_url: item.sourceUrl,
+                source_name: item.source_name,
+                source_url: item.source_url,
                 finding: item.finding,
-                structured_data: item.structuredData,
+                structured_data: item.structured_data,
                 relevance: item.relevance,
                 confidence: item.confidence,
                 evidence: item.evidence,
@@ -2011,7 +2011,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             supplierDiscoveryOutputSchema,
           );
 
-          const allowedUrls = new Set(productResults.map((item) => item.sourceUrl));
+          const allowedUrls = new Set(productResults.map((item) => item.source_url));
           for (const candidate of discoveryAi.output.candidates) {
             if (!allowedUrls.has(candidate.sourceUrl)) continue;
             const name = candidate.name?.trim();
@@ -2036,7 +2036,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (results.length > 0) {
           for (const productRequirement of productRequirements) {
             const productResults = results.filter((item) =>
-              (item.structuredData?.arat_requirement_id as string | undefined) === productRequirement.id
+              (item.structured_data?.arat_requirement_id as string | undefined) === productRequirement.id
             );
             const currentCount = [...discoveryCandidates.values()].filter(
               (candidate) => candidate.requirementId === productRequirement.id,
@@ -2048,10 +2048,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               {
                 target_product: productRequirement,
                 research_results: productResults.slice(0, 80).map((item) => ({
-                  source_name: item.sourceName,
-                  source_url: item.sourceUrl,
+                  source_name: item.source_name,
+                  source_url: item.source_url,
                   finding: item.finding,
-                  structured_data: item.structuredData,
+                  structured_data: item.structured_data,
                   relevance: item.relevance,
                   confidence: item.confidence,
                   evidence: item.evidence,
@@ -2072,11 +2072,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               supplierDiscoveryOutputSchema,
             );
 
-            const allowedProductUrls = new Set(productResults.map((item) => item.sourceUrl));
+            const allowedProductUrls = new Set(productResults.map((item) => item.source_url));
             for (const candidate of extractionAi.output.candidates) {
               const name = candidate.name?.trim();
               if (!name || !allowedProductUrls.has(candidate.sourceUrl)) continue;
-              const source = productResults.find((item) => item.sourceUrl === candidate.sourceUrl);
+              const source = productResults.find((item) => item.source_url === candidate.sourceUrl);
               const key = productRequirement.id + '::' + name.toLowerCase();
               discoveryCandidates.set(key, {
                 name,
@@ -2097,7 +2097,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           const confirmedRequirementsForRecovery = confirmedRequirements.data ?? [];
           for (const productRequirement of productRequirements) {
             const scoped = results.filter((item) =>
-              String(item.structuredData?.arat_requirement_id ?? '') === productRequirement.id
+              String(item.structured_data?.arat_requirement_id ?? '') === productRequirement.id
             );
             const brandValues = confirmedRequirementsForRecovery
               .filter((item) => item.source_ref === productRequirement.source_ref && item.type === 'specification')
@@ -2108,12 +2108,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               : null;
 
             for (const item of scoped) {
-              const evidenceText = [item.sourceName, item.finding, item.structuredData?.title, ...(item.evidence ?? [])]
+              const evidenceText = [item.source_name, item.finding, item.structured_data?.title, ...(item.evidence ?? [])]
                 .filter(Boolean).join(' ');
               if (!evidenceText.trim()) continue;
 
               let host = '';
-              try { host = new URL(item.sourceUrl).hostname.replace(/^www\./, ''); } catch { continue; }
+              try { host = new URL(item.source_url).hostname.replace(/^www\./, ''); } catch { continue; }
               if (/(wikipedia|facebook|instagram|ebay|walmart|alibaba|manuals\.plus|researchgate|academia|britannica|\.gov\b)/i.test(host)) continue;
 
               const companyMatches = [
@@ -2142,7 +2142,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
               discoveryCandidates.set(key, {
                 name,
-                website: item.sourceUrl,
+                website: item.source_url,
                 evidence: [item.finding, ...(item.evidence ?? [])].filter(Boolean).slice(0, 5),
                 requirementId: productRequirement.id,
                 matchType,
@@ -2166,7 +2166,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             if (alreadyHasCandidate) continue;
 
             const productResults = results.filter((item) =>
-              (item.structuredData?.arat_requirement_id as string | undefined) === productRequirement.id
+              (item.structured_data?.arat_requirement_id as string | undefined) === productRequirement.id
             );
             if (!productResults.length) continue;
 
@@ -2175,10 +2175,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               {
                 target_product: productRequirement,
                 research_results: productResults.map((item) => ({
-                  source_name: item.sourceName,
-                  source_url: item.sourceUrl,
+                  source_name: item.source_name,
+                  source_url: item.source_url,
                   finding: item.finding,
-                  structured_data: item.structuredData,
+                  structured_data: item.structured_data,
                   relevance: item.relevance,
                   confidence: item.confidence,
                   evidence: item.evidence,
@@ -2199,7 +2199,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               supplierDiscoveryOutputSchema,
             );
 
-            const productAllowedUrls = new Set(productResults.map((item) => item.sourceUrl));
+            const productAllowedUrls = new Set(productResults.map((item) => item.source_url));
             for (const candidate of focusedAi.output.candidates) {
               const name = candidate.name?.trim();
               if (!name || !productAllowedUrls.has(candidate.sourceUrl)) continue;
@@ -2241,10 +2241,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               {
                 requirements: confirmedRequirements.data ?? [],
                 research_results: strongResults.map((item) => ({
-                  source_name: item.sourceName,
-                  source_url: item.sourceUrl,
+                  source_name: item.source_name,
+                  source_url: item.source_url,
                   finding: item.finding,
-                  structured_data: item.structuredData,
+                  structured_data: item.structured_data,
                   confidence: item.confidence,
                   evidence: item.evidence,
                 })),
@@ -2334,11 +2334,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const name = companyNameFromFinding(result.finding ?? '', matchedBrand);
             if (!name) continue;
 
-            const requirementId = String(result.structuredData?.arat_requirement_id ?? '');
+            const requirementId = String(result.structured_data?.arat_requirement_id ?? '');
             if (!requirementId) continue;
-            discoveryCandidates.set(`${result.sourceUrl}::${requirementId}`, {
+            discoveryCandidates.set(`${result.source_url}::${requirementId}`, {
               name,
-              website: /^https?:\/\//i.test(result.sourceUrl) ? result.sourceUrl : undefined,
+              website: /^https?:\/\//i.test(result.source_url) ? result.source_url : undefined,
               evidence: [result.finding].filter(Boolean),
               requirementId,
               matchType: /\bmanufacturer\b|\bofficial\b|\bproduct\b/i.test(result.finding ?? '') ? 'exact_product' : 'same_brand_distributor',
@@ -2371,16 +2371,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           const candidateSource =
             (sourceUrlFromKey
               ? results.find((item) =>
-                  String(item.structuredData?.arat_requirement_id ?? '') === candidate.requirementId &&
+                  String(item.structured_data?.arat_requirement_id ?? '') === candidate.requirementId &&
                   item.source_url === sourceUrlFromKey
                 )
               : undefined) ??
             results.find((item) =>
-              String(item.structuredData?.arat_requirement_id ?? '') === candidate.requirementId &&
+              String(item.structured_data?.arat_requirement_id ?? '') === candidate.requirementId &&
               item.source_url === candidate.website
             ) ??
             results.find((item) =>
-              String(item.structuredData?.arat_requirement_id ?? '') === candidate.requirementId &&
+              String(item.structured_data?.arat_requirement_id ?? '') === candidate.requirementId &&
               candidate.evidence.some((e) => Boolean(e) && (
                 item.finding?.includes(e) ||
                 e.includes(item.finding ?? '')
@@ -2420,16 +2420,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           continue;
         }
 
-        const text = `${result.source_name ?? ''} ${result.finding ?? ''} ${result.structuredData?.title ?? ''}`.toLowerCase();
+        const text = `${result.source_name ?? ''} ${result.finding ?? ''} ${result.structured_data?.title ?? ''}`.toLowerCase();
         const blockedSource = /(scribd|manualslib|manualmachine|pdfcoffee|researchgate|academia\\.edu|merriam-webster|newyorkfed|irs|sba|developer\\.android|arenasolutions)/i.test(hostname);
         const supplierSignal = /(manufacturer|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?|electronics|sensor|instrumentation|power station|portable power|battery|energy storage|inverter|brand|product)/i.test(text);
         const commercialSignal = /(sales|contact|products?|catalog|quote|quotation|rfq|buy|stock|inventory|dealer|distributor|manufacturer)/i.test(text);
         const genericInformationSource = /(dictionary|survey|government|regulation|documentation|glossary|reference)/i.test(text);
-        const resultRequirementId = String(result.structuredData?.arat_requirement_id ?? '');
+        const resultRequirementId = String(result.structured_data?.arat_requirement_id ?? '');
         const validatedCandidate = [...discoveryCandidates.values()].find((candidate) => candidate.requirementId === resultRequirementId && (candidate.website === result.source_url || candidate.evidence.includes(result.finding ?? '')));
         if (blockedSource || (!supplierSignal && !validatedCandidate?.name) || (!commercialSignal && genericInformationSource)) continue;
 
-        const requirementId = String(result.structuredData?.arat_requirement_id ?? '');
+        const requirementId = String(result.structured_data?.arat_requirement_id ?? '');
         const aiCandidate =
           discoveryCandidates.get(`${result.source_url}::${requirementId}`) ??
           [...discoveryCandidates.values()].find((candidate) =>
@@ -2451,7 +2451,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         const website = aiCandidate.website || `https://${hostname}`;
         const country = aiCandidate.country ||
-          (result.structuredData?.country as string | undefined)?.trim() ||
+          (result.structured_data?.country as string | undefined)?.trim() ||
           null;
 
         // Supplier discovery is an AI preparation step, not an Admin approval
@@ -2567,10 +2567,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                   country,
                 },
                 search_results: contactResults.map((item) => ({
-                  source_name: item.sourceName,
-                  source_url: item.sourceUrl,
+                  source_name: item.source_name,
+                  source_url: item.source_url,
                   finding: item.finding,
-                  structured_data: item.structuredData,
+                  structured_data: item.structured_data,
                   evidence: item.evidence,
                 })),
                 instructions: [
@@ -2729,7 +2729,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       console.log('\n[ARAT][supplier-discovery] ===== DISCOVERED SUPPLIERS =====');
       console.table([...discoveryCandidates.values()].map((candidate) => {
         const source = results.find((item) =>
-          String(item.structuredData?.arat_requirement_id ?? '') === String(candidate.requirementId ?? '') &&
+          String(item.structured_data?.arat_requirement_id ?? '') === String(candidate.requirementId ?? '') &&
           (item.source_url === candidate.website ||
             candidate.evidence.some((e) => Boolean(e) && item.finding?.includes(e)))
         );
