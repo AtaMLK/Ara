@@ -262,10 +262,22 @@ export const supplierContactResearchOutputSchema = z.object({
     professionalProfile: z.string().url().optional(),
     evidence: z.array(z.string()).default([]),
   })).default([]),
-  emails: z.array(z.object({
-    email: z.string().email(),
-    evidence: z.string().min(1),
-  })).default([]),
+  emails: z.array(z.preprocess(
+    (value) => {
+      if (typeof value === 'string') {
+        const email = value.trim();
+        return {
+          email,
+          evidence: email,
+        };
+      }
+      return value;
+    },
+    z.object({
+      email: z.string().email(),
+      evidence: z.string().min(1),
+    }),
+  )).default([]),
 });
 
 export const supplierVerificationOutputSchema = z.object({
