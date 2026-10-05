@@ -1988,12 +1988,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           const identityValues = relatedRequirements
             .filter((item) => item.type === 'product' || item.type === 'model_part_number' || item.type === 'specification')
             .flatMap((item) => {
-              const brand = item.value.match(/brand\\s*:\\s*(.+)/i)?.[1]?.trim();
-              return [brand ?? '', item.value.replace(/^brand\\s*:\\s*/i, '').trim()];
+              const brand = item.value.match(/brand\s*:\\s*(.+)/i)?.[1]?.trim();
+              return [brand ?? '', item.value.replace(/^brand\s*:\\s*/i, '').trim()];
             })
             .map((value) => value.toLowerCase())
             .filter((value) => value.length >= 3);
-          const productTokens = requirement.value.toLowerCase().split(/\\s+/).filter((token) => token.length >= 4);
+          const productTokens = requirement.value.toLowerCase().split(/\s+/).filter((token) => token.length >= 4);
 
           return (results ?? []).filter((item) => {
             const haystack = [
@@ -2414,19 +2414,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               ? candidateKey.slice(0, candidateKey.lastIndexOf(`::${candidate.requirementId}`))
               : undefined;
 
+          const candidateRequirement = productRequirements.find(
+            (item) => item.id === candidate.requirementId,
+          );
+          const candidateScopedResults = candidateRequirement
+            ? resultsForRequirement(candidateRequirement)
+            : [];
           const candidateSource =
             (sourceUrlFromKey
-              ? results.find((item) =>
-                  String(item.structured_data?.arat_requirement_id ?? '') === candidate.requirementId &&
-                  item.source_url === sourceUrlFromKey
-                )
+              ? candidateScopedResults.find((item) => item.source_url === sourceUrlFromKey)
               : undefined) ??
-            results.find((item) =>
-              String(item.structured_data?.arat_requirement_id ?? '') === candidate.requirementId &&
-              item.source_url === candidate.website
-            ) ??
-            results.find((item) =>
-              String(item.structured_data?.arat_requirement_id ?? '') === candidate.requirementId &&
+            candidateScopedResults.find((item) => item.source_url === candidate.website) ??
+            candidateScopedResults.find((item) =>
               candidate.evidence.some((e) => Boolean(e) && (
                 item.finding?.includes(e) ||
                 e.includes(item.finding ?? '')
