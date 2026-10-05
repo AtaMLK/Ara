@@ -1967,15 +1967,67 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .eq('status', 'confirmed');
 
         const productRequirements = (confirmedRequirements.data ?? []).filter((item) => item.type === 'product');
+
+        // Research results normally carry arat_requirement_id. Older/partial
+        // research rows may not, so scope them by source_ref and product identity
+        // before giving up. Supplier discovery must never silently skip a product.
+        const resultsForRequirement = (requirement: { id: string; value: string; source_ref: string | null }) => {
+          const byId = (results ?? []).filter((item) =>
+            String(item.structured_data?.arat_requirement_id ?? '') === requirement.id
+          );
+          if (byId.length) return byId;
+
+          const sameSource = (results ?? []).filter((item) =>
+            String(item.structured_data?.source_ref ?? item.structured_data?.arat_source_ref ?? '') === String(requirement.source_ref ?? '')
+          );
+          if (sameSource.length) return sameSource;
+
+          const relatedRequirements = (confirmedRequirements.data ?? []).filter(
+            (item) => item.source_ref === requirement.source_ref,
+          );
+          const identityValues = relatedRequirements
+            .filter((item) => item.type === 'product' || item.type === 'model_part_number' || item.type === 'specification')
+            .flatMap((item) => {
+              const brand = item.value.match(/brand\\s*:\\s*(.+)/i)?.[1]?.trim();
+              return [brand ?? '', item.value.replace(/^brand\\s*:\\s*/i, '').trim()];
+            })
+            .map((value) => value.toLowerCase())
+            .filter((value) => value.length >= 3);
+          const productTokens = requirement.value.toLowerCase().split(/\\s+/).filter((token) => token.length >= 4);
+
+          return (results ?? []).filter((item) => {
+            const haystack = [
+              item.source_name ?? '',
+              item.source_url ?? '',
+              item.finding ?? '',
+              item.structured_data?.title ?? '',
+              item.structured_data?.product ?? '',
+              item.structured_data?.brand ?? '',
+              item.structured_data?.model ?? '',
+              item.structured_data?.model_part_number ?? '',
+            ].join(' ').toLowerCase();
+            const strongIdentity = identityValues.some((value) => value && haystack.includes(value));
+            const productMatch = productTokens.length > 0 && productTokens.some((token) => haystack.includes(token));
+            return strongIdentity || productMatch;
+          });
+        };
+
+        for (const productRequirement of productRequirements) {
+          const scopedCount = resultsForRequirement(productRequirement).length;
+          console.log('[ARAT][supplier-discovery] PRODUCT SCOPE', {
+            product: productRequirement.value,
+            requirement_id: productRequirement.id,
+            source_ref: productRequirement.source_ref,
+            research_results: scopedCount,
+          });
+        }
         const allowedUrls = new Set((results ?? []).map((item) => item.source_url));
 
         // Validate each product independently. Research evidence carries the exact
         // product requirement id so candidates cannot be accidentally attributed to
         // another requested item.
         for (const productRequirement of productRequirements) {
-          const productResults = (results ?? []).filter((item) =>
-            (item.structured_data?.arat_requirement_id as string | undefined) === productRequirement.id
-          );
+          const productResults = resultsForRequirement(productRequirement);
           if (!productResults.length) continue;
 
           const discoveryAi = await runAgent(
@@ -2035,9 +2087,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         // supplier-discovery stage as empty.
         if (results.length > 0) {
           for (const productRequirement of productRequirements) {
-            const productResults = results.filter((item) =>
-              (item.structured_data?.arat_requirement_id as string | undefined) === productRequirement.id
-            );
+            const productResults = resultsForRequirement(productRequirement);
             const currentCount = [...discoveryCandidates.values()].filter(
               (candidate) => candidate.requirementId === productRequirement.id,
             ).length;
@@ -2096,9 +2146,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (results.length > 0) {
           const confirmedRequirementsForRecovery = confirmedRequirements.data ?? [];
           for (const productRequirement of productRequirements) {
-            const scoped = results.filter((item) =>
-              String(item.structured_data?.arat_requirement_id ?? '') === productRequirement.id
-            );
+            const scoped = resultsForRequirement(productRequirement);
             const brandValues = confirmedRequirementsForRecovery
               .filter((item) => item.source_ref === productRequirement.source_ref && item.type === 'specification')
               .map((item) => item.value.match(/brand\s*:\s*(.+)/i)?.[1]?.trim())
@@ -2165,9 +2213,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               .some((candidate) => candidate.requirementId === productRequirement.id);
             if (alreadyHasCandidate) continue;
 
-            const productResults = results.filter((item) =>
-              (item.structured_data?.arat_requirement_id as string | undefined) === productRequirement.id
-            );
+            const productResults = resultsForRequirement(productRequirement);
             if (!productResults.length) continue;
 
             const focusedAi = await runAgent(
@@ -2266,7 +2312,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               if (!candidate.name?.trim()) continue;
               if (!allowedUrls.has(candidate.sourceUrl)) continue;
               const matchingResult = results.find((item) => item.source_url === candidate.sourceUrl);
-              const requirementId = String(matchingResult?.structuredData?.arat_requirement_id ?? candidate.requirementId ?? '');
+              const requirementId = String(matchingResult?.structured_data?.arat_requirement_id ?? candidate.requirementId ?? '');
               if (!requirementId) continue;
               discoveryCandidates.set(`${candidate.sourceUrl}::${requirementId}`, {
                 name: candidate.name.trim(),
@@ -2334,7 +2380,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const name = companyNameFromFinding(result.finding ?? '', matchedBrand);
             if (!name) continue;
 
-            const requirementId = String(result.structured_data?.arat_requirement_id ?? '');
+            const requirementId = String(result.structured_data?.arat_requirement_id ?? result.structured_data?.source_ref ?? '');
             if (!requirementId) continue;
             discoveryCandidates.set(`${result.source_url}::${requirementId}`, {
               name,
@@ -2425,11 +2471,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         const supplierSignal = /(manufacturer|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?|electronics|sensor|instrumentation|power station|portable power|battery|energy storage|inverter|brand|product)/i.test(text);
         const commercialSignal = /(sales|contact|products?|catalog|quote|quotation|rfq|buy|stock|inventory|dealer|distributor|manufacturer)/i.test(text);
         const genericInformationSource = /(dictionary|survey|government|regulation|documentation|glossary|reference)/i.test(text);
-        const resultRequirementId = String(result.structured_data?.arat_requirement_id ?? '');
+        const resultRequirementId = String(result.structured_data?.arat_requirement_id ?? result.structured_data?.source_ref ?? '');
         const validatedCandidate = [...discoveryCandidates.values()].find((candidate) => candidate.requirementId === resultRequirementId && (candidate.website === result.source_url || candidate.evidence.includes(result.finding ?? '')));
         if (blockedSource || (!supplierSignal && !validatedCandidate?.name) || (!commercialSignal && genericInformationSource)) continue;
 
-        const requirementId = String(result.structured_data?.arat_requirement_id ?? '');
+        const requirementId = String(result.structured_data?.arat_requirement_id ?? result.structured_data?.source_ref ?? '');
         const aiCandidate =
           discoveryCandidates.get(`${result.source_url}::${requirementId}`) ??
           [...discoveryCandidates.values()].find((candidate) =>
