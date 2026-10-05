@@ -1939,9 +1939,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .eq('research_case_id', research.id)
         .order('confidence', { ascending: false, nullsFirst: false });
 
-      const discoveryProvider = getResearchProvider();
-
       if (resultsError) throw new ToolError('TRANSIENT', resultsError.message);
+
+      console.log('[ARAT][supplier-discovery] RESEARCH INPUT', {
+        research_case_id: research.id,
+        research_status: research.status,
+        research_result_count: results?.length ?? 0,
+        ai_provider_configured: Boolean(process.env.OPENAI_API_KEY),
+      });
 
       const { data: existingCandidates } = await supabase
         .from('supplier_candidates')
@@ -1959,7 +1964,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       const discoveryCandidates = new Map<string, { name: string; country?: string; website?: string; evidence: string[]; requirementId?: string; matchType?: 'exact_product' | 'same_brand_distributor' | 'same_brand_similar' | 'related_alternative'; matchScore?: number; matchNote?: string }>();
 
       let selectedResults = results ?? [];
-      if (process.env.OPENAI_API_KEY && results?.length) {
+      if (results?.length) {
         const confirmedRequirements = await supabase
           .from('requirements')
           .select('id,type,value,source_ref')
