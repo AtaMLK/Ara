@@ -193,9 +193,19 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
     alternative: 'related_alternative',
     related: 'related_alternative',
   };
-  const matchType = typeof normalizedMatchType === 'string'
-    ? matchTypeAliases[normalizedMatchType] ?? normalizedMatchType
+  const canonicalMatchType = typeof normalizedMatchType === 'string'
+    ? normalizedMatchType
+        .replace(/\([^)]*\)/g, '')
+        .replace(/\[[^\]]*\]/g, '')
+        .trim()
     : normalizedMatchType;
+  const matchType = typeof canonicalMatchType === 'string'
+    ? matchTypeAliases[canonicalMatchType] ?? (
+        ['exact_product', 'same_brand_distributor', 'same_brand_similar', 'related_alternative'].includes(canonicalMatchType)
+          ? canonicalMatchType
+          : undefined
+      )
+    : undefined;
 
   return {
     ...record,
@@ -251,7 +261,7 @@ export const supplierContactResearchOutputSchema = z.object({
     country: z.string().optional(),
     professionalProfile: z.string().url().optional(),
     evidence: z.array(z.string()).default([]),
-  })),
+  })).default([]),
   emails: z.array(z.object({
     email: z.string().email(),
     evidence: z.string().min(1),
