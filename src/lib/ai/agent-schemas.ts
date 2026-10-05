@@ -176,7 +176,7 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
   const sourceUrl = record.sourceUrl ?? record.source_url ?? record.source;
   const rawMatchType = record.matchType ?? record.match_type ?? record.match;
   const normalizedMatchType = typeof rawMatchType === 'string'
-    ? rawMatchType.trim().toLowerCase().replace(/[\\s-]+/g, '_')
+    ? rawMatchType.trim().toLowerCase().replace(/\s+/g, '_').replace(/-+/g, '_')
     : rawMatchType;
   const matchTypeAliases: Record<string, string> = {
     exact: 'exact_product',
