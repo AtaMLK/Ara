@@ -1963,6 +1963,9 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         ai_provider_configured: Boolean(process.env.OPENAI_API_KEY),
       });
 
+      // Reuse the configured research provider for supplier and contact discovery.
+      const discoveryProvider = getResearchProvider();
+
       const { data: existingCandidates } = await supabase
         .from('supplier_candidates')
         .select('proposed_name,status')
