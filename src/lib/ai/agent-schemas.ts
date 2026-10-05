@@ -174,6 +174,28 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
   const country = record.country ?? record.primaryCountry ?? record.primary_country;
   const website = record.website ?? record.supplierWebsite ?? record.supplier_website;
   const sourceUrl = record.sourceUrl ?? record.source_url ?? record.source;
+  const rawMatchType = record.matchType ?? record.match_type ?? record.match;
+  const normalizedMatchType = typeof rawMatchType === 'string'
+    ? rawMatchType.trim().toLowerCase().replace(/[\\s-]+/g, '_')
+    : rawMatchType;
+  const matchTypeAliases: Record<string, string> = {
+    exact: 'exact_product',
+    exact_match: 'exact_product',
+    exact_product_match: 'exact_product',
+    manufacturer: 'exact_product',
+    official_manufacturer: 'exact_product',
+    distributor: 'same_brand_distributor',
+    brand_distributor: 'same_brand_distributor',
+    same_brand: 'same_brand_distributor',
+    same_brand_distribution: 'same_brand_distributor',
+    similar: 'same_brand_similar',
+    same_brand_similar_product: 'same_brand_similar',
+    alternative: 'related_alternative',
+    related: 'related_alternative',
+  };
+  const matchType = typeof normalizedMatchType === 'string'
+    ? matchTypeAliases[normalizedMatchType] ?? normalizedMatchType
+    : normalizedMatchType;
 
   return {
     ...record,
@@ -181,6 +203,7 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
     ...(country !== undefined ? { country } : {}),
     ...(website !== undefined ? { website } : {}),
     ...(sourceUrl !== undefined ? { sourceUrl } : {}),
+    ...(matchType !== undefined ? { matchType } : {}),
   };
 }, z.object({
   name: z.string().optional().default(''),
