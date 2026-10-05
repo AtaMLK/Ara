@@ -2619,11 +2619,23 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         } = { contacts: [], emails: [] };
 
         if (discoveryProvider) {
-          const contactResults = await discoveryProvider.search({
-            inquiryId,
-            query: `site:${hostname} (contact OR sales OR "sales email" OR "email us" OR distributor OR "request a quote")`,
-            limit: 8,
-          });
+          let contactResults: ResearchResult[] = [];
+          try {
+            contactResults = await discoveryProvider.search({
+              inquiryId,
+              query: `site:${hostname} (contact OR sales OR "sales email" OR "email us" OR distributor OR "request a quote")`,
+              limit: 8,
+            });
+          } catch (error) {
+            // Contact discovery is enrichment, not a hard prerequisite for the
+            // supplier candidate. A temporary provider failure must not fail the
+            // whole supplier-discovery workflow.
+            console.warn('[ARAT][supplier-discovery] contact research failed; continuing', {
+              supplier: proposedName,
+              website,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
 
           if (contactResults.length > 0) {
             const contactAi = await runAgent(
