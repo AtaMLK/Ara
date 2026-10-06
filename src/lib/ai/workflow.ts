@@ -2977,7 +2977,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         inquiry_id: inquiryId,
         agent_id: 'supplier_discovery',
         alert_type: 'SUPPLIER_CANDIDATES_READY',
-        message: `${createdCount} supplier(s) were discovered and added to Suppliers. RFQ drafts will be prepared automatically; Admin approval is required only before sending supplier email.`,
+        message: `${createdCount} supplier(s) were discovered and enriched. Admin verification is required before an RFQ can be created or sent.`,
         priority: 'normal',
       });
       await timeline(inquiryId, 'workflow_supplier_candidates_ready', {
@@ -2986,13 +2986,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         admin_approval_required_at: 'rfq_send',
       }, 'supplier_discovery');
 
-      const rfq = await enqueueWorkflow(inquiryId, 'rfq');
-      await timeline(inquiryId, 'workflow_rfq_queued', {
-        rfq_execution_id: rfq.id,
+      await timeline(inquiryId, 'workflow_supplier_discovery_waiting_for_admin_verification', {
+        research_case_id: research.id,
+        candidate_count: createdCount,
         approval_required: true,
       }, 'supplier_discovery');
 
-      return { execution: running, outcome: 'rfq_queued' as const };
+      return { execution: running, outcome: 'awaiting_admin_verification' as const };
     }
 
 
