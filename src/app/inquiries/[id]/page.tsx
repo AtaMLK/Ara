@@ -58,17 +58,17 @@ export default async function InquiryDetailPage({ params }: Props) {
         <div className="section-head">
           <div>
             <div className="eyebrow">RFQ</div>
-            <h2>RFQ Drafts</h2>
-            <div className="muted">Drafts are prepared by ARAT and require Admin approval before sending.</div>
+            <h2>RFQs</h2>
+            <div className="muted">RFQs created by Admin after supplier verification and email confirmation.</div>
           </div>
-          <span className="badge">{rfqsResult.data?.filter((rfq) => ['draft', 'pending_approval'].includes(rfq.status)).length ?? 0} pending approval</span>
+          <span className="badge">{rfqsResult.data?.filter((rfq) => ['draft', 'pending_approval', 'approved', 'sent'].includes(rfq.status)).length ?? 0} active</span>
         </div>
-        {(rfqsResult.data ?? []).length === 0 ? (
-          <div className="detail-card"><div className="empty">No RFQ drafts have been created for this inquiry.</div></div>
+        {(rfqsResult.data ?? []).filter((rfq) => rfq.status !== 'cancelled').length === 0 ? (
+          <div className="detail-card"><div className="empty">No RFQ has been sent for this inquiry yet.</div></div>
         ) : (
           <div className="table">
             <div className="row header"><div>Supplier</div><div>Recipient</div><div>Status</div><div>Created</div></div>
-            {(rfqsResult.data ?? []).map((rfq) => (
+            {(rfqsResult.data ?? []).filter((rfq) => rfq.status !== 'cancelled').map((rfq) => (
               <div className="row" key={rfq.id}>
                 <div><strong>{rfq.suppliers?.legal_name ?? '—'}</strong><div className="muted">{rfq.subject}</div></div>
                 <div>{rfq.recipient_email || 'No recipient email'}</div>
