@@ -69,7 +69,25 @@ export async function createCustomerInquiryAction(input: {
     }
 
     try {
-      await startInquiryWorkflow(inquiry.id);
+      await startInquiryWorkflow(inquiry.id, 'inquiry_submission');
+
+      // In local development there may be no scheduled worker running.
+      // Process this inquiry immediately so the customer submission can advance
+      // through intake/research/supplier discovery without requiring Admin to
+      // press Continue manually. The same queue remains idempotent in production.
+      const worker = await processQueuedWorkflow(10, inquiry.id);
+
+      await createSupabaseAdminClient().from('timeline_events').insert({
+        inquiry_id: inquiry.id,
+        event_type: 'workflow_auto_processed',
+        visibility: 'admin',
+        actor_type: 'system',
+        metadata: {
+          processed: worker.results.length,
+          last_stage: worker.results.at(-1)?.stage ?? null,
+          last_outcome: worker.results.at(-1)?.outcome ?? null,
+        },
+      });
     } catch (workflowError) {
       const message = workflowError instanceof Error ? workflowError.message : 'Workflow start failed';
 
