@@ -92,7 +92,7 @@ export async function listSuppliers(search?: string, status?: string) {
   const { supabase } = await requireAdminPage();
   let query = supabase
     .from('suppliers')
-    .select('id,legal_name,primary_country,status,supplier_type,verification_status,updated_at')
+    .select('id,legal_name,primary_country,primary_email_id,primary_phone_id,primary_address_id,status,supplier_type,verification_status,updated_at')
     .order('updated_at', { ascending: false })
     .limit(100);
 
