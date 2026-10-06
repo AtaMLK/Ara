@@ -2724,13 +2724,24 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
 
         for (const contact of contactResearch.contacts) {
-          if (!contact.email && !contact.name && !contact.phone && !contact.professionalProfile) continue;
+          // supplier_contacts.name is required by the database. Only persist a
+          // contact when the AI has evidence for an actual contact name.
+          // Never invent a person name from an email, phone, department, or supplier name.
+          if (!contact.name?.trim()) {
+            console.log('[ARAT][supplier-discovery] skipping unnamed supplier contact', {
+              supplier: proposedName,
+              email: contact.email ?? null,
+              phone: contact.phone ?? null,
+            });
+            continue;
+          }
 
+          const contactName = contact.name.trim();
           const { data: existingContact } = await supabase
             .from('supplier_contacts')
             .select('id')
             .eq('supplier_id', supplierId)
-            .eq('email', contact.email ?? '')
+            .eq('name', contactName)
             .maybeSingle();
 
           if (!existingContact) {
@@ -2738,7 +2749,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               .from('supplier_contacts')
               .insert({
                 supplier_id: supplierId,
-                name: contact.name ?? null,
+                name: contactName,
                 email: contact.email ?? null,
                 phone: contact.phone ?? null,
                 job_title: contact.jobTitle ?? null,
