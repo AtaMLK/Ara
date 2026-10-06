@@ -19,7 +19,8 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const canStart = !['converted', 'closed'].includes(status);
+  // RFQ is a persisted approval state; Admin continues through RFQ controls.
+  const canStart = !['converted', 'closed', 'rfq'].includes(status);
   const latestExecution = executions[0];
   const actionLabel = status === 'processing' ? 'Start workflow' : status === 'clarification_required' || status === 'researching' ? 'Continue workflow' : 'Run workflow';
 
