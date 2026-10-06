@@ -250,8 +250,18 @@ export function CandidatePanel({
                     const canSend = valid(candidate);
                     const contact = candidate.suppliers?.supplier_contacts.find((item) => item.email && item.status === 'active')
                       ?? candidate.suppliers?.supplier_contacts.find((item) => item.status === 'active');
+                    const email = emailFor(candidate);
+                    const disabledReason = !candidate.supplier_id
+                      ? 'Supplier record not created'
+                      : candidate.suppliers?.verification_status !== 'verified'
+                        ? 'Supplier verification required'
+                        : !email
+                          ? 'No active supplier email found'
+                          : candidate.status !== 'finalized'
+                            ? 'Candidate is not finalized'
+                            : '';
                     return (
-                      <label className="supplier-candidate-row" key={candidate.id}>
+                      <label className="supplier-candidate-row" key={candidate.id} title={disabledReason || 'Select supplier'}>
                         <input type="checkbox" checked={selected.includes(candidate.id)} disabled={!canSend} onChange={() => toggle(candidate.id)} />
                         <div className="supplier-candidate-main">
                           <strong>{candidate.suppliers?.legal_name || candidate.proposed_name}</strong>
@@ -279,8 +289,8 @@ export function CandidatePanel({
                           {contact?.phone && <div className="muted">{contact.phone}</div>}
                         </div>
                         <div className="supplier-candidate-contact">
-                          <span>{emailFor(candidate) || 'No email'}</span>
-                          {candidate.suppliers?.verification_status === 'verified' ? <span className="badge status-approved">Verified</span> : <span className="badge status-pending_approval">Not verified</span>}
+                          <span>{email || 'No active email'}</span>
+                          {candidate.suppliers?.verification_status === 'verified' ? <span className="badge status-approved">Verified</span> : <span className="badge status-pending_approval">Verification required</span>}{!canSend && disabledReason && <span className="muted">{disabledReason}</span>}
                         </div>
                       </label>
                     );
