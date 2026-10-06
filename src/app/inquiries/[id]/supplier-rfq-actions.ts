@@ -133,6 +133,41 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
   return { ok: true, supplierId: supplier.id, candidateId: candidate.id };
 }
 
+export async function getSupplierRfqRecipientsAction(input: { inquiryId: string; candidateIds: string[] }) {
+  await requireAdmin();
+  const admin = createSupabaseAdminClient();
+
+  if (!input.candidateIds?.length) return { recipients: [] as Array<{ candidateId: string; email: string }> };
+
+  const { data: candidates, error: candidateError } = await admin
+    .from('supplier_candidates')
+    .select('id,supplier_id')
+    .eq('inquiry_id', input.inquiryId)
+    .in('id', input.candidateIds);
+
+  if (candidateError) throw new ToolError('TRANSIENT', candidateError.message);
+
+  const supplierIds = [...new Set((candidates ?? []).map((item) => item.supplier_id).filter(Boolean))] as string[];
+  if (!supplierIds.length) return { recipients: [] as Array<{ candidateId: string; email: string }> };
+
+  const [{ data: emails }, { data: contacts }] = await Promise.all([
+    admin.from('supplier_emails').select('supplier_id,email,is_primary,status').in('supplier_id', supplierIds).eq('status', 'active'),
+    admin.from('supplier_contacts').select('supplier_id,email,is_primary,status').in('supplier_id', supplierIds).eq('status', 'active'),
+  ]);
+
+  const recipients = (candidates ?? []).flatMap((candidate) => {
+    if (!candidate.supplier_id) return [];
+    const contact = (contacts ?? []).find((item) => item.supplier_id === candidate.supplier_id && item.email)
+      ?? (contacts ?? []).find((item) => item.supplier_id === candidate.supplier_id && item.is_primary && item.email);
+    const email = contact?.email
+      ?? (emails ?? []).find((item) => item.supplier_id === candidate.supplier_id && item.is_primary)?.email
+      ?? (emails ?? []).find((item) => item.supplier_id === candidate.supplier_id)?.email;
+    return email ? [{ candidateId: candidate.id, email }] : [];
+  });
+
+  return { recipients };
+}
+
 export async function sendSupplierRfqAction(input: {
   inquiryId: string;
   candidateIds: string[];
