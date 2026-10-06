@@ -1,4 +1,5 @@
 import { listSuppliers } from '@/lib/data/admin';
+import { DeleteSupplierButton } from '@/app/admin-record-delete-button';
 
 type Props = { searchParams: Promise<{ q?: string; status?: string }> };
 
@@ -26,7 +27,7 @@ export default async function SuppliersPage({ searchParams }: Props) {
 
       <section className="section">
         <div className="table">
-          <div className="row header"><div>Supplier</div><div>Country</div><div>Contact</div><div>Verification</div><div>Status</div></div>
+          <div className="row header"><div>Supplier</div><div>Country</div><div>Contact</div><div>Verification</div><div>Status</div><div>Action</div></div>
           {items.length === 0 ? <div className="empty">No suppliers found.</div> : items.map((item) => (
             <div className="row" key={item.id}>
               <div><strong>{item.legal_name}</strong><div className="muted">{label(item.supplier_type)}</div></div>
@@ -39,6 +40,7 @@ export default async function SuppliersPage({ searchParams }: Props) {
               </div>
               <div><span className="badge">{item.verification_status === 'verified' ? '✓ Verified' : label(item.verification_status)}</span></div>
               <div><span className="badge">{label(item.status)}</span></div>
+              <div><DeleteSupplierButton id={item.id} name={item.legal_name} /></div>
             </div>
           ))}
         </div>
