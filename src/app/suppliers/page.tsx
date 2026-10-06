@@ -31,7 +31,12 @@ export default async function SuppliersPage({ searchParams }: Props) {
             <div className="row" key={item.id}>
               <div><strong>{item.legal_name}</strong><div className="muted">{label(item.supplier_type)}</div></div>
               <div>{item.primary_country || 'Country not verified'}</div>
-              <div>{(item.primary_email_id || item.primary_phone_id || item.primary_address_id) ? 'Profile enriched' : 'Profile incomplete'}</div>
+              <div>
+                {item.primary_email?.email && <div>{item.primary_email.email}</div>}
+                {item.primary_phone?.phone && <div className="muted">{item.primary_phone.phone}</div>}
+                {item.primary_address?.address && <div className="muted">{item.primary_address.address}</div>}
+                {!item.primary_email?.email && !item.primary_phone?.phone && !item.primary_address?.address && <span className="muted">Profile incomplete</span>}
+              </div>
               <div><span className="badge">{label(item.verification_status)}</span></div>
               <div><span className="badge">{label(item.status)}</span></div>
             </div>
