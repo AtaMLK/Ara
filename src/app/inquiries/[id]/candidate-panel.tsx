@@ -169,6 +169,7 @@ export function CandidatePanel({
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState('');
+  const [sendConfirmation, setSendConfirmation] = useState('');
   const [busy, setBusy] = useState(false);
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifiedIds, setVerifiedIds] = useState<string[]>([]);
@@ -184,7 +185,12 @@ export function CandidatePanel({
     return map;
   }, [candidates, products]);
 
-  function isVerified(candidate: Candidate) {
+  function isRfqSent(candidate: Candidate) {
+  const evidence = (candidate.verification_evidence ?? {}) as Record<string, unknown>;
+  return evidence.rfq_sent === true || typeof evidence.rfq_sent_at === 'string';
+}
+
+function isVerified(candidate: Candidate) {
     const evidence = (candidate.verification_evidence ?? {}) as Record<string, unknown>;
     return candidate.suppliers?.verification_status === 'verified'
       || evidence.verification_status === 'verified'
@@ -250,9 +256,15 @@ export function CandidatePanel({
   async function send() {
     setBusy(true);
     setError('');
+    setSendConfirmation('');
     try {
-      await sendSupplierRfqAction({ inquiryId, candidateIds: selected });
+      const result = await sendSupplierRfqAction({ inquiryId, candidateIds: selected });
       setSelected([]);
+      setSendConfirmation(
+        result.results.length === 1
+          ? `Email sent successfully to ${result.results[0].email}.`
+          : `${result.results.length} supplier emails sent successfully.`,
+      );
       setPreview(null);
       window.location.reload();
     } catch (e) {
@@ -274,6 +286,7 @@ export function CandidatePanel({
       </div>
 
       {error && <div className="error-inline">{error}</div>}
+      {sendConfirmation && <div className="success-inline">{sendConfirmation}</div>}
 
       {products.length === 0 ? (
         <div className="detail-card"><div className="empty">No product requirements are confirmed yet.</div></div>
@@ -333,7 +346,10 @@ export function CandidatePanel({
                       ?? candidate.suppliers?.supplier_contacts.find((item) => item.status === 'active');
                     const email = emailFor(candidate);
                     const verified = isVerified(candidate);
-                    const disabledReason = !candidate.supplier_id
+                    const rfqSent = isRfqSent(candidate);
+                    const disabledReason = rfqSent
+                      ? 'RFQ email already sent'
+                      : !candidate.supplier_id
                       ? 'Supplier record not created'
                       : !verified
                         ? 'Supplier verification required'
@@ -344,7 +360,7 @@ export function CandidatePanel({
                             : '';
                     return (
                       <label className="supplier-candidate-row" key={candidate.id} title={disabledReason || 'Select supplier'}>
-                        <input type="checkbox" checked={selected.includes(candidate.id)} disabled={!canSend} onChange={() => toggle(candidate.id)} />
+                        <input type="checkbox" checked={selected.includes(candidate.id)} disabled={!canSend || rfqSent} onChange={() => toggle(candidate.id)} />
                         <div className="supplier-candidate-main">
                           <strong>{candidate.suppliers?.legal_name || candidate.proposed_name}</strong>
                           <div className="muted">{region(normalizedCountry(candidate))} · {normalizedCountry(candidate) || 'Country not verified'}</div>
@@ -385,7 +401,9 @@ export function CandidatePanel({
                         </div>
                         <div className="supplier-candidate-contact">
                           <span>{email || 'No active email'}</span>
-                          {verified ? (
+                          {rfqSent ? (
+                            <span className="badge status-approved">✓ Email Sent</span>
+                          ) : verified ? (
                             <span className="badge status-approved">✓ Verified</span>
                           ) : (
                             <button
@@ -405,6 +423,7 @@ export function CandidatePanel({
                   {rows.some(valid) && (
                     <button
                       className="primary-button supplier-send-button"
+                      disabled={busy}
                       onClick={() => openPreview(group === 'Turkey' ? 'tr' : 'en')}
                     >
                       Send Email
