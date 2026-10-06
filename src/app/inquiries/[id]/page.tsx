@@ -19,7 +19,7 @@ export default async function InquiryDetailPage({ params }: Props) {
   const { id } = await params;
   const { supabase } = await requireAdminPage();
 
-  const [inquiryResult, requirementsResult, filesResult, timelineResult, executionsResult, alertsResult, clarificationsResult, researchResult, candidatesResult] = await Promise.all([
+  const [inquiryResult, requirementsResult, filesResult, timelineResult, executionsResult, alertsResult, clarificationsResult, researchResult, candidatesResult, rfqsResult] = await Promise.all([
     supabase.from('inquiries').select('id,reference,title,description,status,priority,original_customer_text,current_version,created_at,updated_at,customers(name,company_name,email,country)').eq('id', id).single(),
     supabase.from('requirements').select('id,type,value,status,source,source_ref,admin_edited,updated_at').eq('inquiry_id', id).order('created_at', { ascending: true }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,version,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at', { ascending: false }),
@@ -29,10 +29,11 @@ export default async function InquiryDetailPage({ params }: Props) {
     supabase.from('clarifications').select('id,requirement_id,question,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('research_cases').select('id,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(5),
     supabase.from('supplier_candidates').select('id,requirement_id,proposed_name,proposed_country,proposed_website,status,match_evidence,availability_evidence,verification_evidence,created_at,supplier_id,suppliers(id,legal_name,primary_country,supplier_type,verification_status,supplier_contacts!supplier_contacts_supplier_id_fkey(id,name,email,phone,job_title,department,status,is_primary),supplier_emails!supplier_emails_supplier_id_fkey(email,is_primary,status))').eq('inquiry_id', id).order('created_at', { ascending: true }),
+    supabase.from('rfqs').select('id,status,subject,recipient_email,sender_email,approval_required,created_at,sent_at,suppliers(legal_name)').eq('inquiry_id', id).order('created_at', { ascending: false }),
   ]);
 
   if (inquiryResult.error || !inquiryResult.data) notFound();
-  if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error || candidatesResult.error) throw new Error('Failed to load inquiry details');
+  if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error || candidatesResult.error || rfqsResult.error) throw new Error('Failed to load inquiry details');
 
   const inquiry = inquiryResult.data;
   const customer = inquiry.customers;
@@ -52,6 +53,32 @@ export default async function InquiryDetailPage({ params }: Props) {
       </header>
 
       <CandidatePanel inquiryId={inquiry.id} requirements={requirementsResult.data ?? []} candidates={candidatesResult.data ?? []} />
+
+      <section className="section">
+        <div className="section-head">
+          <div>
+            <div className="eyebrow">RFQ</div>
+            <h2>RFQ Drafts</h2>
+            <div className="muted">Drafts are prepared by ARAT and require Admin approval before sending.</div>
+          </div>
+          <span className="badge">{rfqsResult.data?.filter((rfq) => ['draft', 'pending_approval'].includes(rfq.status)).length ?? 0} pending approval</span>
+        </div>
+        {(rfqsResult.data ?? []).length === 0 ? (
+          <div className="detail-card"><div className="empty">No RFQ drafts have been created for this inquiry.</div></div>
+        ) : (
+          <div className="table">
+            <div className="row header"><div>Supplier</div><div>Recipient</div><div>Status</div><div>Created</div></div>
+            {(rfqsResult.data ?? []).map((rfq) => (
+              <div className="row" key={rfq.id}>
+                <div><strong>{rfq.suppliers?.legal_name ?? '—'}</strong><div className="muted">{rfq.subject}</div></div>
+                <div>{rfq.recipient_email || 'No recipient email'}</div>
+                <div><span className={`badge status-badge status-${rfq.status}`}>{label(rfq.status)}</span></div>
+                <div>{new Date(rfq.created_at).toLocaleString('en-GB')}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <WorkflowPanel
         inquiryId={inquiry.id}
