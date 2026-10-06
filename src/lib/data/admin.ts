@@ -92,18 +92,37 @@ export async function listSuppliers(search?: string, status?: string) {
   const { supabase } = await requireAdminPage();
   let query = supabase
     .from('suppliers')
-    .select('id,legal_name,primary_country,primary_email_id,primary_phone_id,primary_address_id,status,supplier_type,verification_status,updated_at,primary_email:supplier_emails!suppliers_primary_email_fk(email),primary_phone:supplier_phones!suppliers_primary_phone_fk(phone),primary_address:supplier_addresses!suppliers_primary_address_fk(address),primary_website:supplier_websites!suppliers_primary_website_fk(url)')
+    .select('id,legal_name,primary_country,primary_email_id,primary_phone_id,primary_address_id,status,supplier_type,verification_status,updated_at')
     .order('updated_at', { ascending: false })
     .limit(100);
 
   if (status && status !== 'all') query = query.eq('status', status);
-  if (search?.trim()) {
-    query = query.ilike('legal_name', `%${search.trim()}%`);
-  }
+  if (search?.trim()) query = query.ilike('legal_name', `%${search.trim()}%`);
 
   const { data, error } = await query;
   if (error) throw error;
-  return data ?? [];
+
+  const rows = data ?? [];
+  const emailIds = rows.map((row) => row.primary_email_id).filter(Boolean);
+  const phoneIds = rows.map((row) => row.primary_phone_id).filter(Boolean);
+  const addressIds = rows.map((row) => row.primary_address_id).filter(Boolean);
+
+  const [{ data: emails }, { data: phones }, { data: addresses }] = await Promise.all([
+    emailIds.length ? supabase.from('supplier_emails').select('id,email').in('id', emailIds) : Promise.resolve({ data: [] as Array<{ id: string; email: string }> }),
+    phoneIds.length ? supabase.from('supplier_phones').select('id,phone').in('id', phoneIds) : Promise.resolve({ data: [] as Array<{ id: string; phone: string }> }),
+    addressIds.length ? supabase.from('supplier_addresses').select('id,address').in('id', addressIds) : Promise.resolve({ data: [] as Array<{ id: string; address: string }> }),
+  ]);
+
+  const emailMap = new Map((emails ?? []).map((item) => [item.id, item.email]));
+  const phoneMap = new Map((phones ?? []).map((item) => [item.id, item.phone]));
+  const addressMap = new Map((addresses ?? []).map((item) => [item.id, item.address]));
+
+  return rows.map((row) => ({
+    ...row,
+    primary_email: row.primary_email_id ? { email: emailMap.get(row.primary_email_id) ?? null } : null,
+    primary_phone: row.primary_phone_id ? { phone: phoneMap.get(row.primary_phone_id) ?? null } : null,
+    primary_address: row.primary_address_id ? { address: addressMap.get(row.primary_address_id) ?? null } : null,
+  }));
 }
 
 export async function listRfqs(search?: string, status?: string) {
