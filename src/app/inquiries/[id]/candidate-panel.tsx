@@ -261,10 +261,11 @@ function isVerified(candidate: Candidate) {
     try {
       const result = await sendSupplierRfqAction({ inquiryId, candidateIds: selected });
       setSelected([]);
+      setSentIds((current) => [...new Set([...current, ...result.results.map((item) => item.candidateId)])]);
       setSendConfirmation(
         result.results.length === 1
-          ? `Email sent successfully to ${result.results[0].email}.`
-          : `${result.results.length} supplier emails sent successfully.`,
+          ? `✓ Email sent successfully to ${result.results[0].email}.`
+          : `✓ ${result.results.length} supplier emails sent successfully.`,
       );
       setPreview(null);
     } catch (e) {
