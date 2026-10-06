@@ -2101,6 +2101,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 'Prefer official manufacturer/distributor evidence over generic directories or marketplaces.',
                 'Reject marketplaces, government sites, banks, dictionaries, documentation sites, generic directories, media, research portals, and unrelated information pages.',
                 'Every candidate must have an explicit company name supported by the supplied evidence.',
+                'Extract country whenever the supplied evidence explicitly identifies the company country, headquarters, office, address, or country-specific distributor location. Do not return Unknown when the evidence clearly supports a country.',
                 'Never invent a company name, website, email, phone, contact person, job title, or supplier relationship.',
                 'Use only an exact source URL from the supplied research results as sourceUrl.',
                 'Return the exact target product requirement id in requirementId.',
