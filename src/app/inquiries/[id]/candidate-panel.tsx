@@ -47,6 +47,22 @@ type Candidate = {
       is_primary: boolean;
       status: string;
     }>;
+    supplier_addresses: Array<{
+      id: string;
+      address: string;
+      is_primary: boolean;
+    }>;
+    supplier_phones: Array<{
+      id: string;
+      phone: string;
+      is_primary: boolean;
+      status: string;
+    }>;
+    supplier_websites: Array<{
+      id: string;
+      url: string;
+      is_primary: boolean;
+    }>;
   } | null;
 };
 
@@ -333,9 +349,12 @@ export function CandidatePanel({
                           <strong>{candidate.suppliers?.legal_name || candidate.proposed_name}</strong>
                           <div className="muted">{region(normalizedCountry(candidate))} · {normalizedCountry(candidate) || 'Country not verified'}</div>
                           <div className="muted">
-                            {candidate.proposed_website ? (
-                              <a href={candidate.proposed_website} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{shortWebsite(candidate.proposed_website)}</a>
-                            ) : 'No website'}
+                            {(() => {
+                              const website = candidate.suppliers?.supplier_websites.find((item) => item.is_primary)?.url ?? candidate.proposed_website;
+                              return website ? (
+                                <a href={website} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{shortWebsite(website)}</a>
+                              ) : 'No website';
+                            })()}
                           </div>
                           {(() => {
                             const meta = matchMeta(candidate);
@@ -357,6 +376,12 @@ export function CandidatePanel({
                           })()}
                           {contact?.name && <div className="muted">Contact: {contact.name}{contact.job_title ? ` · ${contact.job_title}` : ''}{contact.department ? ` · ${contact.department}` : ''}</div>}
                           {contact?.phone && <div className="muted">{contact.phone}</div>}
+                          {!contact?.phone && candidate.suppliers?.supplier_phones.find((item) => item.status === 'active')?.phone && (
+                            <div className="muted">{candidate.suppliers.supplier_phones.find((item) => item.status === 'active')?.phone}</div>
+                          )}
+                          {candidate.suppliers?.supplier_addresses.find((item) => item.is_primary)?.address && (
+                            <div className="muted">Address: {candidate.suppliers.supplier_addresses.find((item) => item.is_primary)?.address}</div>
+                          )}
                         </div>
                         <div className="supplier-candidate-contact">
                           <span>{email || 'No active email'}</span>
