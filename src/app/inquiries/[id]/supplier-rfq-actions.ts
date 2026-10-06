@@ -73,6 +73,10 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
 
   const now = new Date().toISOString();
 
+  if (supplier.verification_status === 'verified') {
+    return { ok: true, alreadyVerified: true, supplierId: supplier.id, candidateId: candidate.id };
+  }
+
   const { error: supplierUpdateError } = await admin
     .from('suppliers')
     .update({
@@ -87,6 +91,11 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
     .from('supplier_candidates')
     .update({
       status: 'finalized',
+      verification_evidence: {
+        verified_by: user.id,
+        verified_at: now,
+        verification_status: 'verified',
+      },
       updated_at: now,
     })
     .eq('id', candidate.id);
