@@ -2506,7 +2506,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         let supplierId: string | null = null;
         const { data: existingSupplier, error: supplierLookupError } = await supabase
           .from('suppliers')
-          .select('id,primary_website_id')
+          .select('id,primary_website_id,primary_email_id,primary_address_id,primary_phone_id')
           .ilike('legal_name', proposedName.slice(0, 240))
           .limit(1)
           .maybeSingle();
@@ -2601,12 +2601,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         } = { contacts: [], emails: [], addresses: [], phones: [] };
 
         let contactResults: ResearchResult[] = [];
+        let fetchedPages: Array<{ url: string; text: string }> = [];
         if (discoveryProvider) {
           try {
             const contactQueries = [
               `site:${hostname} contact email sales`,
               `site:${hostname} "sales" "email"`,
               `site:${hostname} "request a quote" email`,
+              `site:${hostname} address headquarters phone contact`,
             ];
             const contactRuns = await Promise.all(
               contactQueries.map(async (query) => {
@@ -2648,7 +2650,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           const uniquePageUrls = [...new Set(pageUrls)].filter((url) => {
             try { return new URL(url).hostname.replace(/^www\./, '') === hostname; } catch { return false; }
           }).slice(0, 10);
-          const fetchedPages = (await Promise.all(uniquePageUrls.map(async (url) => ({ url, text: await fetchSupplierPage(url) })))).filter((item) => item.text.length > 0);
+          fetchedPages = (await Promise.all(uniquePageUrls.map(async (url) => ({ url, text: await fetchSupplierPage(url) })))).filter((item) => item.text.length > 0);
 
           if (contactResults.length > 0 || fetchedPages.length > 0) {
             const contactAi = await runAgent(
