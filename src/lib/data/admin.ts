@@ -2,6 +2,7 @@ import 'server-only';
 
 import { redirect } from 'next/navigation';
 import { requireAdmin } from '@/lib/ai/guards';
+import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 
 export type DashboardData = {
   needsAttention: number;
@@ -89,7 +90,9 @@ export async function listInquiries(search?: string, status?: string) {
 }
 
 export async function listSuppliers(search?: string, status?: string) {
-  const { supabase } = await requireAdminPage();
+  await requireAdminPage();
+  const supabase = createSupabaseAdminClient();
+
   let query = supabase
     .from('suppliers')
     .select('id,legal_name,primary_country,primary_email_id,primary_phone_id,primary_address_id,status,supplier_type,verification_status,updated_at')
@@ -126,7 +129,9 @@ export async function listSuppliers(search?: string, status?: string) {
 }
 
 export async function listRfqs(search?: string, status?: string) {
-  const { supabase } = await requireAdminPage();
+  await requireAdminPage();
+  const supabase = createSupabaseAdminClient();
+
   let query = supabase
     .from('rfqs')
     .select('id,status,subject,recipient_email,created_at,sent_at,inquiries(reference,title),suppliers(legal_name)')
