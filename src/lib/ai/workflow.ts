@@ -2651,11 +2651,32 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (discoveryProvider) {
           let contactResults: ResearchResult[] = [];
           try {
-            contactResults = await discoveryProvider.search({
-              inquiryId,
-              query: `site:${hostname} (contact OR sales OR "sales email" OR "email us" OR distributor OR "request a quote")`,
-              limit: 8,
-            });
+            const contactQueries = [
+              `site:${hostname} contact email sales`,
+              `site:${hostname} "sales" "email"`,
+              `site:${hostname} "request a quote" email`,
+            ];
+            const contactRuns = await Promise.all(
+              contactQueries.map(async (query) => {
+                try {
+                  return await discoveryProvider.search({ inquiryId, query, limit: 8 });
+                } catch (error) {
+                  console.warn('[ARAT][supplier-discovery] contact query failed; continuing', {
+                    supplier: proposedName,
+                    website,
+                    query,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                  return [];
+                }
+              }),
+            );
+            const seenContactUrls = new Set<string>();
+            contactResults = contactRuns.flat().filter((item) => {
+              if (!item.source_url || seenContactUrls.has(item.source_url)) return false;
+              seenContactUrls.add(item.source_url);
+              return true;
+            }).slice(0, 20);
           } catch (error) {
             // Contact discovery is enrichment, not a hard prerequisite for the
             // supplier candidate. A temporary provider failure must not fail the
@@ -2698,8 +2719,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }
         }
 
+        const explicitEmails = [
+          ...contactResearch.emails.map((item) => ({ email: item.email, evidence: item.evidence })),
+          ...contactResults.flatMap((item) => {
+            const haystack = [item.finding ?? '', item.source_name ?? '', ...(normalizeEvidence(item.evidence))].join(' ');
+            const matches = haystack.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi) ?? [];
+            return matches.map((email) => ({ email, evidence: [item.finding ?? item.source_url] }));
+          }),
+        ];
         const uniqueEmails = new Set<string>();
-        for (const item of contactResearch.emails) {
+        for (const item of explicitEmails) {
           const emailValue = item.email.trim().toLowerCase();
           if (uniqueEmails.has(emailValue)) continue;
           uniqueEmails.add(emailValue);
