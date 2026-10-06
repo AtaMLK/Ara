@@ -39,14 +39,17 @@ export async function deleteRfqAction(rfqId: string) {
   if (deleteError) throw new Error(deleteError.message);
 
   await admin.from('audit_logs').insert({
+    actor_type: 'admin',
     actor_user_id: user.id,
     action: 'rfq_deleted',
-    entity_type: 'rfq',
-    entity_id: rfqId,
-    metadata: {
+    record_type: 'rfq',
+    record_id: rfqId,
+    before_data: {
+      id: rfq.id,
       rfq_code: rfq.rfq_code,
       status: rfq.status,
     },
+    after_data: null,
   });
 
   revalidatePath('/rfqs');
