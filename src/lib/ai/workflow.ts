@@ -1811,7 +1811,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
     }
 
     if (stage === 'rfq') {
-      const { data: candidates, error: candidateError } = await supabase
+      // RFQs are created only after an Admin explicitly verifies a supplier
+      // and clicks Send Email. The workflow must never create RFQ drafts
+      // automatically before that approval gate.
+      const { data: verifiedCandidates, error: candidateError } = await supabase
         .from('supplier_candidates')
         .select('id,supplier_id,proposed_name,status')
         .eq('inquiry_id', inquiryId)
@@ -1819,154 +1822,56 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       if (candidateError) throw new ToolError('TRANSIENT', candidateError.message);
 
-      const supplierIds = (candidates ?? [])
-        .map((c) => c.supplier_id)
+      const supplierIds = (verifiedCandidates ?? [])
+        .map((candidate) => candidate.supplier_id)
         .filter((id): id is string => Boolean(id));
 
       if (!supplierIds.length) {
-        await markExecutionSuccess(running.id, { blocked: true, reason: 'no_suppliers_available' });
-        await createAlert(inquiryId, 'rfq', 'NO_SUPPLIERS_AVAILABLE', 'RFQ cannot be prepared because no supplier record is available.', 'normal');
-        return { execution: running, outcome: 'blocked' as const };
+        await markExecutionSuccess(running.id, {
+          blocked: true,
+          reason: 'awaiting_supplier_verification',
+          verified_count: 0,
+        });
+        await createAlert(
+          inquiryId,
+          'rfq',
+          'SUPPLIER_VERIFICATION_REQUIRED',
+          'Supplier verification is required before an RFQ can be created.',
+          'normal',
+        );
+        return { execution: running, outcome: 'awaiting_supplier_verification' as const };
       }
 
-      const { data: suppliers } = await supabase
+      const { data: suppliers, error: supplierError } = await supabase
         .from('suppliers')
         .select('id,legal_name,verification_status')
         .in('id', supplierIds);
 
-      // Verification is informational at this stage. The RFQ is still a draft
-      // and cannot be sent until Admin explicitly approves the email action.
-      const rfqSuppliers = suppliers ?? [];
+      if (supplierError) throw new ToolError('TRANSIENT', supplierError.message);
 
-      if (!rfqSuppliers.length) {
-        await markExecutionSuccess(running.id, { blocked: true, reason: 'supplier_records_not_found' });
-        await createAlert(inquiryId, 'rfq', 'SUPPLIER_RECORDS_NOT_FOUND', 'RFQ cannot be prepared because supplier records could not be loaded.', 'normal');
-        return { execution: running, outcome: 'blocked' as const };
-      }
-
-      const { data: requirements, error: reqError } = await supabase
-        .from('requirements')
-        .select('id,type,value,status')
-        .eq('inquiry_id', inquiryId)
-        .eq('status', 'confirmed');
-
-      if (reqError) throw new ToolError('TRANSIENT', reqError.message);
-
-      const { data: inquiry } = await supabase
-        .from('inquiries')
-        .select('title,description,reference')
-        .eq('id', inquiryId)
-        .single();
-
-      let created = 0;
-      for (const supplier of rfqSuppliers) {
-        const { data: primaryEmail } = await supabase
-          .from('supplier_emails')
-          .select('email')
-          .eq('supplier_id', supplier.id)
-          .eq('status', 'active')
-          .eq('is_primary', true)
-          .maybeSingle();
-
-        const { data: fallbackContact } = await supabase
-          .from('supplier_contacts')
-          .select('id,email')
-          .eq('supplier_id', supplier.id)
-          .eq('status', 'active')
-          .not('email', 'is', null)
-          .order('is_primary', { ascending: false })
-          .order('created_at', { ascending: true })
-          .limit(1)
-          .maybeSingle();
-
-        const recipientEmail = primaryEmail?.email ?? fallbackContact?.email ?? null;
-
-        if (!recipientEmail) {
-          await createAlert(inquiryId, 'rfq', 'SUPPLIER_CONTACT_REQUIRED', `No active email is available for ${supplier.legal_name}.`, 'normal');
-          continue;
-        }
-
-        // Do not create another pending draft for the same inquiry/supplier.
-        const { data: existingDraft } = await supabase
-          .from('rfqs')
-          .select('id')
-          .eq('inquiry_id', inquiryId)
-          .eq('supplier_id', supplier.id)
-          .in('status', ['draft', 'pending_approval', 'approved'])
-          .limit(1)
-          .maybeSingle();
-
-        if (existingDraft) {
-          continue;
-        }
-
-        const rfqToken = `ARAT-${crypto.randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase()}`;
-        const subject = `RFQ — ${inquiry?.reference ?? inquiryId} — ${rfqToken}`;
-        const body = [
-          `RFQ Reference: ${inquiry?.reference ?? inquiryId}`,
-          `RFQ Correlation Token: ${rfqToken}`,
-          `Dear ${supplier.legal_name} team,`,
-          '',
-          'We would like to request your quotation for the following requirements:',
-          '',
-          ...(requirements ?? []).map((r) => `- ${r.type}: ${r.value}`),
-          '',
-          'Please provide your unit prices, currency, availability/lead time, MOQ, quotation validity, payment terms, and delivery terms.',
-          '',
-          'Regards,',
-          'Purchase Department',
-        ].join('\n');
-
-        const { data: rfq, error: rfqError } = await supabase
-          .from('rfqs')
-          .insert({
-            inquiry_id: inquiryId,
-            supplier_id: supplier.id,
-            status: 'pending_approval',
-            subject,
-            body,
-            recipient_email: recipientEmail,
-            sender_email: process.env.PURCHASE_DEP_EMAIL ?? 'purchase-dep@aryaautomation.com',
-            approval_required: true,
-          })
-          .select('id')
-          .single();
-
-        if (rfqError) throw new ToolError('CONFLICT', rfqError.message);
-
-        for (const requirement of requirements ?? []) {
-          await supabase.from('rfq_items').insert({
-            rfq_id: rfq.id,
-            requirement_id: requirement.id,
-            requested_data: { type: requirement.type, value: requirement.value },
-          });
-        }
-
-        created++;
-        await timeline(inquiryId, 'rfq_draft_created', {
-          rfq_id: rfq.id,
-          supplier_id: supplier.id,
-          recipient_email: email.email,
-        }, 'rfq_agent');
-      }
+      const verified = (suppliers ?? []).filter((supplier) => supplier.verification_status === 'verified');
 
       await markExecutionSuccess(running.id, {
-        created_count: created,
-        status: 'pending_approval',
+        blocked: verified.length === 0,
+        reason: verified.length === 0 ? 'awaiting_supplier_verification' : 'admin_verification_complete',
+        verified_count: verified.length,
+        status: verified.length > 0 ? 'ready_for_admin_send' : 'awaiting_supplier_verification',
       });
 
-      // Keep the inquiry status aligned with the persisted workflow state.
-      // Otherwise a completed RFQ stage still appears as "researching" after
-      // leaving and re-entering the inquiry page.
-      if (created > 0) {
-        await setInquiryStatus(inquiryId, 'rfq');
+      if (verified.length === 0) {
+        await createAlert(
+          inquiryId,
+          'rfq',
+          'SUPPLIER_VERIFICATION_REQUIRED',
+          'Supplier verification is required before an RFQ can be created.',
+          'normal',
+        );
+        return { execution: running, outcome: 'awaiting_supplier_verification' as const };
       }
 
-      if (created > 0) {
-        await createAlert(inquiryId, 'rfq', 'RFQ_APPROVAL_REQUIRED', `${created} RFQ draft(s) are ready for Admin approval.`, 'normal');
-      }
+      await setInquiryStatus(inquiryId, 'rfq');
 
-      return { execution: running, outcome: created > 0 ? 'rfq_pending_approval' : 'blocked' };
+      return { execution: running, outcome: 'rfq_ready_for_admin' as const };
     }
 
     if (stage === 'supplier_discovery') {
