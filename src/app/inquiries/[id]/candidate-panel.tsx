@@ -222,6 +222,8 @@ export function CandidatePanel({
 
             {(['domestic', 'international'] as const).map((group) => {
               const rows = modalCandidates.filter((candidate) => domestic(candidate.proposed_country) === (group === 'domestic'));
+              if (rows.length === 0) return null;
+
               const title = group === 'domestic' ? 'Domestic / Turkey' : 'International';
               return (
                 <div className="supplier-modal-group" key={group}>
