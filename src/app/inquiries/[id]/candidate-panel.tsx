@@ -279,8 +279,11 @@ export function CandidatePanel({
             {(['Turkey', 'Europe', 'Asia', 'International'] as const).map((group) => {
               const rows = modalCandidates.filter((candidate) => {
                 const country = normalizedCountry(candidate);
-                return region(country) === group;
+                const candidateRegion = region(country);
+                // Anything outside Turkey / Europe / Asia is intentionally grouped under International.
+                return candidateRegion === group || (group === 'International' && !['Turkey', 'Europe', 'Asia'].includes(candidateRegion));
               });
+              if (rows.length === 0) return null;
               const title = group === 'Turkey' ? 'Internal / Turkey' : group;
               return (
                 <div className="supplier-modal-group" key={group}>
@@ -288,7 +291,7 @@ export function CandidatePanel({
                     <div><strong>{title}</strong><div className="muted">{rows.length} candidate{rows.length === 1 ? '' : 's'}</div></div>
                     <span className="badge">{group === 'Turkey' ? 'Türkçe' : 'English'}</span>
                   </div>
-                  {rows.length === 0 ? <div className="empty">No valid candidate in this group.</div> : rows.map((candidate) => {
+                  {rows.map((candidate) => {
                     const canSend = valid(candidate);
                     const contact = candidate.suppliers?.supplier_contacts.find((item) => item.email && item.status === 'active')
                       ?? candidate.suppliers?.supplier_contacts.find((item) => item.status === 'active');
@@ -357,7 +360,7 @@ export function CandidatePanel({
                   {rows.some(valid) && (
                     <button
                       className="primary-button supplier-send-button"
-                      onClick={() => openPreview(group === 'domestic' ? 'tr' : 'en')}
+                      onClick={() => openPreview(group === 'Turkey' ? 'tr' : 'en')}
                     >
                       Send Email
                     </button>
