@@ -169,6 +169,21 @@ export async function listRfqs(search?: string, status?: string) {
   }));
 }
 
+export async function listSupplierRfqs(supplierId: string) {
+  await requireAdminPage();
+  const supabase = createSupabaseAdminClient();
+
+  const { data, error } = await supabase
+    .from('rfqs')
+    .select('id,rfq_code,status,subject,body,recipient_email,created_at,sent_at')
+    .eq('supplier_id', supplierId)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function listCustomerQuotes(search?: string, status?: string) {
   const { supabase } = await requireAdminPage();
   let query = supabase
