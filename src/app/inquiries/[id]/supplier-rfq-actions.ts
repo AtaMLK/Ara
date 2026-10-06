@@ -260,12 +260,13 @@ export async function sendSupplierRfqAction(input: {
       specifications,
     }]);
 
-    const rfqToken = `ARAT-${crypto.randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase()}`;
-    const subject = `${email.subject} — ${rfqToken}`;
+    const rfqCode = `RFQ-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()}`;
+    const subject = `${email.subject} — ${rfqCode}`;
 
     const { data: rfq, error: rfqError } = await admin.from('rfqs').insert({
       inquiry_id: inquiry.id,
       supplier_id: supplierId,
+      rfq_code: rfqCode,
       status: 'pending_approval',
       subject,
       body: email.html,
