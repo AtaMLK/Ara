@@ -132,6 +132,7 @@ export function CandidatePanel({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [verifying, setVerifying] = useState<string | null>(null);
+  const [verifiedIds, setVerifiedIds] = useState<string[]>([]);
   const [preview, setPreview] = useState<{ subject: string; body: string; recipient: string | null; language: 'tr' | 'en' } | null>(null);
 
   const grouped = useMemo(() => {
@@ -145,9 +146,10 @@ export function CandidatePanel({
   }, [candidates, products]);
 
   function valid(candidate: Candidate) {
+    const verified = candidate.suppliers?.verification_status === 'verified' || verifiedIds.includes(candidate.id);
     return candidate.status === 'finalized'
       && candidate.supplier_id
-      && candidate.suppliers?.verification_status === 'verified'
+      && verified
       && Boolean(emailFor(candidate));
   }
 
@@ -178,7 +180,7 @@ export function CandidatePanel({
     setError('');
     try {
       await verifySupplierCandidateAction({ inquiryId, candidateId });
-      window.location.reload();
+      setVerifiedIds((current) => current.includes(candidateId) ? current : [...current, candidateId]);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not verify supplier');
     } finally {
@@ -265,9 +267,10 @@ export function CandidatePanel({
                     const contact = candidate.suppliers?.supplier_contacts.find((item) => item.email && item.status === 'active')
                       ?? candidate.suppliers?.supplier_contacts.find((item) => item.status === 'active');
                     const email = emailFor(candidate);
+                    const isVerified = candidate.suppliers?.verification_status === 'verified' || verifiedIds.includes(candidate.id);
                     const disabledReason = !candidate.supplier_id
                       ? 'Supplier record not created'
-                      : candidate.suppliers?.verification_status !== 'verified'
+                      : !isVerified
                         ? 'Supplier verification required'
                         : !email
                           ? 'No active supplier email found'
@@ -280,7 +283,11 @@ export function CandidatePanel({
                         <div className="supplier-candidate-main">
                           <strong>{candidate.suppliers?.legal_name || candidate.proposed_name}</strong>
                           <div className="muted">{label(candidate.suppliers?.supplier_type || 'unknown')} · {candidate.proposed_country || candidate.suppliers?.primary_country || '—'}</div>
-                          <div className="muted">{candidate.proposed_website || 'No website'}</div>
+                          <div className="muted">
+                            {candidate.proposed_website ? (
+                              <a href={candidate.proposed_website} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{candidate.proposed_website}</a>
+                            ) : 'No website'}
+                          </div>
                           {(() => {
                             const meta = matchMeta(candidate);
                             return (
@@ -304,7 +311,7 @@ export function CandidatePanel({
                         </div>
                         <div className="supplier-candidate-contact">
                           <span>{email || 'No active email'}</span>
-                          {candidate.suppliers?.verification_status === 'verified' ? (
+                          {isVerified ? (
                             <span className="badge status-approved">Verified</span>
                           ) : (
                             <button
