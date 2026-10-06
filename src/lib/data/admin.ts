@@ -184,6 +184,29 @@ export async function listSupplierRfqs(supplierId: string) {
   return data ?? [];
 }
 
+export async function listSupplierRfqsBySupplierIds(supplierIds: string[]) {
+  await requireAdminPage();
+  const supabase = createSupabaseAdminClient();
+  if (!supplierIds.length) return new Map<string, Array<Record<string, unknown>>>();
+
+  const { data, error } = await supabase
+    .from('rfqs')
+    .select('id,rfq_code,status,subject,body,recipient_email,created_at,sent_at,supplier_id')
+    .in('supplier_id', supplierIds)
+    .order('created_at', { ascending: false })
+    .limit(500);
+
+  if (error) throw error;
+
+  const map = new Map<string, Array<Record<string, unknown>>>();
+  for (const row of data ?? []) {
+    const list = map.get(row.supplier_id) ?? [];
+    list.push(row);
+    map.set(row.supplier_id, list);
+  }
+  return map;
+}
+
 export async function listCustomerQuotes(search?: string, status?: string) {
   const { supabase } = await requireAdminPage();
   let query = supabase
