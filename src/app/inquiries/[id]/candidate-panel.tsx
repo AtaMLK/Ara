@@ -305,10 +305,10 @@ export function CandidatePanel({
                     const contact = candidate.suppliers?.supplier_contacts.find((item) => item.email && item.status === 'active')
                       ?? candidate.suppliers?.supplier_contacts.find((item) => item.status === 'active');
                     const email = emailFor(candidate);
-                    const isVerified = isVerified(candidate);
+                    const verified = isVerified(candidate);
                     const disabledReason = !candidate.supplier_id
                       ? 'Supplier record not created'
-                      : !isVerified
+                      : !verified
                         ? 'Supplier verification required'
                         : !email
                           ? 'No active supplier email found'
@@ -349,7 +349,7 @@ export function CandidatePanel({
                         </div>
                         <div className="supplier-candidate-contact">
                           <span>{email || 'No active email'}</span>
-                          {isVerified ? (
+                          {verified ? (
                             <span className="badge status-approved">✓ Verified</span>
                           ) : (
                             <button
