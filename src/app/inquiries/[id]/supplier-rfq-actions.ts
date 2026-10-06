@@ -310,14 +310,33 @@ export async function sendSupplierRfqAction(input: {
     if (communicationError || !communication) throw new ToolError('TRANSIENT', communicationError?.message ?? 'Could not create communication');
 
     // Explicit admin action has already happened in the UI. The RFQ is now sent.
-    const sent = await provider.send({
-      to: [recipient],
-      subject,
-      html: email.html,
-      text: email.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
-      idempotencyKey: `rfq:${rfq.id}`,
-    });
+    let sent;
+    try {
+      sent = await provider.send({
+        to: [recipient],
+        subject,
+        html: email.html,
+        text: email.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+        from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
+        idempotencyKey: `rfq:${rfq.id}`,
+      });
+    } catch (sendError) {
+      const message = sendError instanceof Error ? sendError.message : String(sendError);
+      await admin.from('communications').update({
+        metadata: {
+          language,
+          candidate_id: candidate.id,
+          requirement_id: productRequirement.id,
+          contact_id: contact?.id ?? null,
+          send_failed: true,
+          send_error: message.slice(0, 2000),
+        },
+      }).eq('id', communication.id);
+      await admin.from('rfqs').update({
+        status: 'cancelled',
+      }).eq('id', rfq.id);
+      throw new Error(`Email was not sent to ${recipient}: ${message}`);
+    }
 
     await admin.from('communications').update({
       provider_message_id: sent.providerMessageId ?? null,
