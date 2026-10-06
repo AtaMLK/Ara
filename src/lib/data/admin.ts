@@ -74,7 +74,8 @@ export async function listInquiries(search?: string, status?: string) {
   const { supabase } = await requireAdminPage();
   let query = supabase
     .from('inquiries')
-    .select('id,reference,title,status,priority,current_version,created_at,updated_at,customers(name,company_name)')
+    .select('id,reference,title,status,priority,current_version,created_at,updated_at,deleted_at,customers(name,company_name)')
+    .is('deleted_at', null)
     .order('updated_at', { ascending: false })
     .limit(100);
 
@@ -95,7 +96,8 @@ export async function listSuppliers(search?: string, status?: string) {
 
   let query = supabase
     .from('suppliers')
-    .select('id,legal_name,primary_country,primary_email_id,primary_phone_id,primary_address_id,status,supplier_type,verification_status,updated_at')
+    .select('id,legal_name,primary_country,primary_email_id,primary_phone_id,primary_address_id,status,supplier_type,verification_status,updated_at,deleted_at')
+    .is('deleted_at', null)
     .order('updated_at', { ascending: false })
     .limit(100);
 
@@ -134,7 +136,7 @@ export async function listRfqs(search?: string, status?: string) {
 
   let query = supabase
     .from('rfqs')
-    .select('id,status,subject,recipient_email,created_at,sent_at,inquiries(reference,title),suppliers(legal_name)')
+    .select('id,status,subject,recipient_email,created_at,sent_at,inquiry_id,supplier_id')
     .order('created_at', { ascending: false })
     .limit(100);
 
@@ -143,7 +145,28 @@ export async function listRfqs(search?: string, status?: string) {
 
   const { data, error } = await query;
   if (error) throw error;
-  return data ?? [];
+
+  const rows = data ?? [];
+  const inquiryIds = rows.map((row) => row.inquiry_id).filter(Boolean);
+  const supplierIds = rows.map((row) => row.supplier_id).filter(Boolean);
+
+  const [{ data: inquiries }, { data: suppliers }] = await Promise.all([
+    inquiryIds.length
+      ? supabase.from('inquiries').select('id,reference,title').in('id', inquiryIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; reference: string; title: string }> }),
+    supplierIds.length
+      ? supabase.from('suppliers').select('id,legal_name').in('id', supplierIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; legal_name: string }> }),
+  ]);
+
+  const inquiryMap = new Map((inquiries ?? []).map((item) => [item.id, item]));
+  const supplierMap = new Map((suppliers ?? []).map((item) => [item.id, item]));
+
+  return rows.map((row) => ({
+    ...row,
+    inquiries: row.inquiry_id ? inquiryMap.get(row.inquiry_id) ?? null : null,
+    suppliers: row.supplier_id ? supplierMap.get(row.supplier_id) ?? null : null,
+  }));
 }
 
 export async function listCustomerQuotes(search?: string, status?: string) {
