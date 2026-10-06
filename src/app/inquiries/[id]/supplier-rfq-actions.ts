@@ -391,5 +391,9 @@ export async function sendSupplierRfqAction(input: {
     });
   }
 
+  revalidatePath(`/inquiries/${input.inquiryId}`);
+  revalidatePath('/rfqs');
+  revalidatePath('/suppliers');
+
   return { ok: true, results };
 }
