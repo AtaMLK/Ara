@@ -170,10 +170,12 @@ export function CandidatePanel({
 
   function valid(candidate: Candidate) {
     const verified = candidate.suppliers?.verification_status === 'verified' || verifiedIds.includes(candidate.id);
+    // Verification controls supplier selection. Email availability is validated
+    // when the admin sends the RFQ, so a verified supplier is not hidden/disabled
+    // merely because its contact email has not been added yet.
     return candidate.status === 'finalized'
-      && candidate.supplier_id
-      && verified
-      && Boolean(emailFor(candidate));
+      && Boolean(candidate.supplier_id)
+      && verified;
   }
 
   function toggle(id: string) {
