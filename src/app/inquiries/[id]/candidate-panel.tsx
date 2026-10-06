@@ -168,8 +168,15 @@ export function CandidatePanel({
     return map;
   }, [candidates, products]);
 
+  function isVerified(candidate: Candidate) {
+    const evidence = (candidate.verification_evidence ?? {}) as Record<string, unknown>;
+    return candidate.suppliers?.verification_status === 'verified'
+      || evidence.verification_status === 'verified'
+      || verifiedIds.includes(candidate.id);
+  }
+
   function valid(candidate: Candidate) {
-    const verified = candidate.suppliers?.verification_status === 'verified' || verifiedIds.includes(candidate.id);
+    const verified = isVerified(candidate);
     // Verification controls supplier selection. Email availability is validated
     // when the admin sends the RFQ, so a verified supplier is not hidden/disabled
     // merely because its contact email has not been added yet.
@@ -298,7 +305,7 @@ export function CandidatePanel({
                     const contact = candidate.suppliers?.supplier_contacts.find((item) => item.email && item.status === 'active')
                       ?? candidate.suppliers?.supplier_contacts.find((item) => item.status === 'active');
                     const email = emailFor(candidate);
-                    const isVerified = candidate.suppliers?.verification_status === 'verified' || verifiedIds.includes(candidate.id);
+                    const isVerified = isVerified(candidate);
                     const disabledReason = !candidate.supplier_id
                       ? 'Supplier record not created'
                       : !isVerified
