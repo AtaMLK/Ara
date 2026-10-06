@@ -1860,7 +1860,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       let created = 0;
       for (const supplier of rfqSuppliers) {
-        const { data: email } = await supabase
+        const { data: primaryEmail } = await supabase
           .from('supplier_emails')
           .select('email')
           .eq('supplier_id', supplier.id)
@@ -1868,8 +1868,35 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .eq('is_primary', true)
           .maybeSingle();
 
-        if (!email?.email) {
-          await createAlert(inquiryId, 'rfq', 'SUPPLIER_CONTACT_REQUIRED', `No primary active email is available for ${supplier.legal_name}.`, 'normal');
+        const { data: fallbackContact } = await supabase
+          .from('supplier_contacts')
+          .select('id,email')
+          .eq('supplier_id', supplier.id)
+          .eq('status', 'active')
+          .not('email', 'is', null)
+          .order('is_primary', { ascending: false })
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
+        const recipientEmail = primaryEmail?.email ?? fallbackContact?.email ?? null;
+
+        if (!recipientEmail) {
+          await createAlert(inquiryId, 'rfq', 'SUPPLIER_CONTACT_REQUIRED', `No active email is available for ${supplier.legal_name}.`, 'normal');
+          continue;
+        }
+
+        // Do not create another pending draft for the same inquiry/supplier.
+        const { data: existingDraft } = await supabase
+          .from('rfqs')
+          .select('id')
+          .eq('inquiry_id', inquiryId)
+          .eq('supplier_id', supplier.id)
+          .in('status', ['draft', 'pending_approval', 'approved'])
+          .limit(1)
+          .maybeSingle();
+
+        if (existingDraft) {
           continue;
         }
 
@@ -1898,7 +1925,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             status: 'pending_approval',
             subject,
             body,
-            recipient_email: email.email,
+            recipient_email: recipientEmail,
             sender_email: process.env.PURCHASE_DEP_EMAIL ?? 'purchase-dep@aryaautomation.com',
             approval_required: true,
           })
