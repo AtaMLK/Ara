@@ -1,5 +1,6 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/ai/guards';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getEmailProvider } from '@/lib/email/provider';
@@ -113,6 +114,11 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
       previous_verification_status: supplier.verification_status,
     },
   });
+
+  // Verification is persisted in Supabase. Revalidate the inquiry page so returning
+  // to the page always reflects the persisted supplier/candidate state.
+  revalidatePath(`/inquiries/${input.inquiryId}`);
+  revalidatePath('/inquiries');
 
   return { ok: true, supplierId: supplier.id, candidateId: candidate.id };
 }
