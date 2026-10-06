@@ -219,13 +219,17 @@ function isVerified(candidate: Candidate) {
   async function openPreview(language: 'tr' | 'en') {
     setError('');
     if (!selected.length) {
-      setError('Select at least one supplier.');
+      const message = 'Select at least one supplier.';
+      setError(message);
+      toast.error('No supplier selected', { description: message });
       return;
     }
     const first = selectedCandidates[0];
     const item = buildPreview(requirements, first, language);
     if (!item) {
-      setError('Selected supplier is not linked to a product requirement.');
+      const message = 'Selected supplier is not linked to a product requirement.';
+      setError(message);
+      toast.error('RFQ preview unavailable', { description: message });
       return;
     }
 
@@ -235,7 +239,9 @@ function isVerified(candidate: Candidate) {
     });
     const recipientEmails = recipients.map((entry) => entry.email).filter(Boolean);
     if (!recipientEmails.length) {
-      setError('No active supplier email found for the selected supplier.');
+      const message = 'No active supplier email found for the selected supplier.';
+      setError(message);
+      toast.error('Supplier email unavailable', { description: message });
       return;
     }
 
@@ -248,6 +254,7 @@ function isVerified(candidate: Candidate) {
     try {
       await verifySupplierCandidateAction({ inquiryId, candidateId });
       setVerifiedIds((current) => current.includes(candidateId) ? current : [...current, candidateId]);
+      toast.success('Supplier verified', { description: 'The supplier is now ready for RFQ selection.' });
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not verify supplier';
       setError(message);
