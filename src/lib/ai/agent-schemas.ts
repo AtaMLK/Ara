@@ -133,7 +133,7 @@ export const intakeOutputSchema = z.object({
 
 const clarificationQuestionSchema = z.union([
   z.object({
-    requirementId: z.string().uuid().optional(),
+    requirementId: z.preprocess((value) => value == null ? undefined : value, z.string().uuid().optional()),
     question: z.string().min(1),
     reason: z.string().min(1),
   }),
@@ -239,13 +239,13 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
   };
 }, z.object({
   name: z.string().optional().default(''),
-  country: z.string().optional(),
-  website: z.string().url().optional(),
+  country: z.preprocess((value) => value == null ? undefined : value, z.string().optional()),
+  website: z.preprocess((value) => value == null ? undefined : value, z.string().url().optional()),
   sourceUrl: z.string().url(),
   requirementId: z.string().uuid().optional(),
   matchType: z.enum(['exact_product', 'same_brand_distributor', 'same_brand_similar', 'related_alternative']).optional(),
   matchScore: z.number().min(0).max(100).optional(),
-  matchNote: z.string().optional(),
+  matchNote: z.preprocess((value) => value == null ? undefined : value, z.string().optional()),
   // Some models return a single evidence sentence instead of an array.
   evidence: z.preprocess(
     (value) => typeof value === 'string' ? [value] : value,
