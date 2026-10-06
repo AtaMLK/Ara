@@ -115,6 +115,16 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
     },
   });
 
+  // Verification is the explicit gate between supplier discovery and RFQ.
+  // Move the inquiry into RFQ state without restarting any previous workflow stage.
+  const { error: statusError } = await admin
+    .from('inquiries')
+    .update({ status: 'rfq', updated_at: now })
+    .eq('id', input.inquiryId)
+    .in('status', ['researching', 'rfq']);
+
+  if (statusError) throw new ToolError('TRANSIENT', statusError.message);
+
   // Verification is persisted in Supabase. Revalidate the inquiry page so returning
   // to the page always reflects the persisted supplier/candidate state.
   revalidatePath(`/inquiries/${input.inquiryId}`);
