@@ -1955,6 +1955,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         status: 'pending_approval',
       });
 
+      // Keep the inquiry status aligned with the persisted workflow state.
+      // Otherwise a completed RFQ stage still appears as "researching" after
+      // leaving and re-entering the inquiry page.
+      if (created > 0) {
+        await setInquiryStatus(inquiryId, 'rfq');
+      }
+
       if (created > 0) {
         await createAlert(inquiryId, 'rfq', 'RFQ_APPROVAL_REQUIRED', `${created} RFQ draft(s) are ready for Admin approval.`, 'normal');
       }
