@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { sendSupplierRfqAction } from './supplier-rfq-actions';
+import { sendSupplierRfqAction, verifySupplierCandidateAction } from './supplier-rfq-actions';
 
 type Requirement = {
   id: string;
@@ -131,6 +131,7 @@ export function CandidatePanel({
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [verifying, setVerifying] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ subject: string; body: string; recipient: string | null; language: 'tr' | 'en' } | null>(null);
 
   const grouped = useMemo(() => {
@@ -170,6 +171,19 @@ export function CandidatePanel({
       return;
     }
     setPreview({ ...item, language });
+  }
+
+  async function verify(candidateId: string) {
+    setVerifying(candidateId);
+    setError('');
+    try {
+      await verifySupplierCandidateAction({ inquiryId, candidateId });
+      window.location.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not verify supplier');
+    } finally {
+      setVerifying(null);
+    }
   }
 
   async function send() {
@@ -290,7 +304,19 @@ export function CandidatePanel({
                         </div>
                         <div className="supplier-candidate-contact">
                           <span>{email || 'No active email'}</span>
-                          {candidate.suppliers?.verification_status === 'verified' ? <span className="badge status-approved">Verified</span> : <span className="badge status-pending_approval">Verification required</span>}{!canSend && disabledReason && <span className="muted">{disabledReason}</span>}
+                          {candidate.suppliers?.verification_status === 'verified' ? (
+                            <span className="badge status-approved">Verified</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="secondary-button supplier-verify-button"
+                              disabled={verifying === candidate.id || !candidate.supplier_id}
+                              onClick={(event) => { event.preventDefault(); event.stopPropagation(); void verify(candidate.id); }}
+                            >
+                              {verifying === candidate.id ? 'Verifying…' : 'Verify Supplier'}
+                            </button>
+                          )}
+                          {!canSend && disabledReason && <span className="muted">{disabledReason}</span>}
                         </div>
                       </label>
                     );
