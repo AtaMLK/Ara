@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { listInquiries } from '@/lib/data/admin';
 import { getInquiryDisplayReference } from '@/lib/ui/inquiry-reference';
+import { DeleteInquiryButton } from '@/app/admin-record-delete-button';
 
 type Props = { searchParams: Promise<{ q?: string; status?: string }> };
 
@@ -41,13 +42,14 @@ export default async function InquiriesPage({ searchParams }: Props) {
 
       <section className="section">
         <div className="table">
-          <div className="row header"><div>Reference</div><div>Title</div><div>Status</div><div>Updated</div></div>
+          <div className="row header"><div>Reference</div><div>Title</div><div>Status</div><div>Updated</div><div>Action</div></div>
           {items.length === 0 ? <div className="empty">No inquiries found.</div> : items.map((item) => (
             <Link className="row row-link" href={`/inquiries/${item.id}`} key={item.id}>
               <div><strong>{getInquiryDisplayReference(item.reference, item.customers?.company_name || item.customers?.name, item.created_at, item.current_version, item.updated_at)}</strong><div className="muted inquiry-reference-full">{item.reference}</div><div className="muted">{item.priority}</div></div>
               <div>{item.title}</div>
               <div><span className={`badge status-badge status-${item.status}`}>{label(item.status)}</span></div>
               <div>{new Date(item.updated_at).toLocaleDateString('en-GB')}</div>
+              <div onClick={(event) => event.preventDefault()}><DeleteInquiryButton id={item.id} reference={item.reference} /></div>
             </Link>
           ))}
         </div>
