@@ -170,6 +170,7 @@ export function CandidatePanel({
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [sendConfirmation, setSendConfirmation] = useState('');
+  const [sentIds, setSentIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifiedIds, setVerifiedIds] = useState<string[]>([]);
@@ -266,7 +267,6 @@ function isVerified(candidate: Candidate) {
           : `${result.results.length} supplier emails sent successfully.`,
       );
       setPreview(null);
-      window.location.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not send supplier RFQ');
     } finally {
@@ -346,7 +346,7 @@ function isVerified(candidate: Candidate) {
                       ?? candidate.suppliers?.supplier_contacts.find((item) => item.status === 'active');
                     const email = emailFor(candidate);
                     const verified = isVerified(candidate);
-                    const rfqSent = isRfqSent(candidate);
+                    const rfqSent = sentIds.includes(candidate.id) || isRfqSent(candidate);
                     const disabledReason = rfqSent
                       ? 'RFQ email already sent'
                       : !candidate.supplier_id
