@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { getSupplierRfqRecipientsAction, sendSupplierRfqAction, verifySupplierCandidateAction } from './supplier-rfq-actions';
 
 type Requirement = {
@@ -248,7 +249,9 @@ function isVerified(candidate: Candidate) {
       await verifySupplierCandidateAction({ inquiryId, candidateId });
       setVerifiedIds((current) => current.includes(candidateId) ? current : [...current, candidateId]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not verify supplier');
+      const message = e instanceof Error ? e.message : 'Could not verify supplier';
+      setError(message);
+      toast.error('Supplier verification failed', { description: message });
     } finally {
       setVerifying(null);
     }
@@ -262,14 +265,20 @@ function isVerified(candidate: Candidate) {
       const result = await sendSupplierRfqAction({ inquiryId, candidateIds: selected });
       setSelected([]);
       setSentIds((current) => [...new Set([...current, ...result.results.map((item) => item.candidateId)])]);
-      setSendConfirmation(
-        result.results.length === 1
-          ? `✓ Email sent successfully to ${result.results[0].email}.`
-          : `✓ ${result.results.length} supplier emails sent successfully.`,
+      toast.success(
+        result.results.length === 1 ? 'RFQ email sent' : 'RFQ emails sent',
+        {
+          description: result.results.length === 1
+            ? `Sent successfully to ${result.results[0].email}.`
+            : `${result.results.length} supplier emails were sent successfully.`,
+        },
       );
+      setSendConfirmation('');
       setPreview(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not send supplier RFQ');
+      const message = e instanceof Error ? e.message : 'Could not send supplier RFQ';
+      setError(message);
+      toast.error('RFQ email failed', { description: message });
     } finally {
       setBusy(false);
     }
