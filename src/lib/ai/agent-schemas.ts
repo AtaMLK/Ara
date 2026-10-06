@@ -299,6 +299,16 @@ export const supplierContactResearchOutputSchema = z.object({
     professionalProfile: optionalContactUrl,
     evidence: z.array(z.string()).default([]),
   })).default([]),
+  addresses: z.array(z.object({
+    address: optionalContactText,
+    country: optionalContactText,
+    evidence: z.string().min(1),
+  })).default([]),
+  phones: z.array(z.object({
+    phone: optionalContactText,
+    country: optionalContactText,
+    evidence: z.string().min(1),
+  })).default([]),
   emails: z.array(z.preprocess(
     (value) => {
       if (typeof value === 'string') {
