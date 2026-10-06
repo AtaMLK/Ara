@@ -2529,7 +2529,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         let supplierId: string | null = null;
         const { data: existingSupplier, error: supplierLookupError } = await supabase
           .from('suppliers')
-          .select('id')
+          .select('id,primary_website_id')
           .ilike('legal_name', proposedName.slice(0, 240))
           .limit(1)
           .maybeSingle();
@@ -2571,15 +2571,17 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (websiteLookupError) throw new ToolError('TRANSIENT', websiteLookupError.message);
 
         let websiteId = existingWebsite?.id ?? null;
+        let shouldSetPrimaryWebsite = false;
         if (!websiteId) {
+          const hasPrimaryWebsite = Boolean(existingSupplier?.primary_website_id);
           const { data: createdWebsite, error: websiteError } = await supabase
             .from('supplier_websites')
             .insert({
               supplier_id: supplierId,
               url: website,
-              is_primary: true,
+              is_primary: !hasPrimaryWebsite,
             })
-            .select('id')
+            .select('id,is_primary')
             .single();
 
           if (websiteError || !createdWebsite) {
@@ -2587,12 +2589,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }
 
           websiteId = createdWebsite.id;
+          shouldSetPrimaryWebsite = createdWebsite.is_primary;
         }
 
         await supabase
           .from('suppliers')
           .update({
-            primary_website_id: websiteId,
+            ...(shouldSetPrimaryWebsite ? { primary_website_id: websiteId } : {}),
             description: [
               result.finding?.slice(0, 1600) || '',
               aiCandidate.evidence.join(' ').slice(0, 400),
