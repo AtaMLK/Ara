@@ -49,6 +49,67 @@ function buildEmail(
   return { subject, html };
 }
 
+export async function verifySupplierCandidateAction(input: { inquiryId: string; candidateId: string }) {
+  const { user } = await requireAdmin();
+  const admin = createSupabaseAdminClient();
+
+  const { data: candidate, error: candidateError } = await admin
+    .from('supplier_candidates')
+    .select('id,inquiry_id,supplier_id,status,proposed_name')
+    .eq('id', input.candidateId)
+    .eq('inquiry_id', input.inquiryId)
+    .single();
+
+  if (candidateError || !candidate) throw new ToolError('NOT_FOUND', 'Supplier candidate not found');
+  if (!candidate.supplier_id) throw new Error('This candidate has no supplier record yet.');
+
+  const { data: supplier, error: supplierError } = await admin
+    .from('suppliers')
+    .select('id,legal_name,verification_status')
+    .eq('id', candidate.supplier_id)
+    .single();
+
+  if (supplierError || !supplier) throw new ToolError('NOT_FOUND', 'Supplier record not found');
+
+  const now = new Date().toISOString();
+
+  const { error: supplierUpdateError } = await admin
+    .from('suppliers')
+    .update({
+      verification_status: 'verified',
+      updated_at: now,
+    })
+    .eq('id', supplier.id);
+
+  if (supplierUpdateError) throw new ToolError('TRANSIENT', supplierUpdateError.message);
+
+  const { error: candidateUpdateError } = await admin
+    .from('supplier_candidates')
+    .update({
+      status: 'finalized',
+      updated_at: now,
+    })
+    .eq('id', candidate.id);
+
+  if (candidateUpdateError) throw new ToolError('TRANSIENT', candidateUpdateError.message);
+
+  await admin.from('timeline_events').insert({
+    inquiry_id: input.inquiryId,
+    event_type: 'supplier_verified',
+    visibility: 'admin',
+    actor_type: 'admin',
+    actor_user_id: user.id,
+    metadata: {
+      candidate_id: candidate.id,
+      supplier_id: supplier.id,
+      supplier_name: supplier.legal_name,
+      previous_verification_status: supplier.verification_status,
+    },
+  });
+
+  return { ok: true, supplierId: supplier.id, candidateId: candidate.id };
+}
+
 export async function sendSupplierRfqAction(input: {
   inquiryId: string;
   candidateIds: string[];
