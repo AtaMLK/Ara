@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import SignOutButton from '@/components/SignOutButton';
 import ThemeToggle from '@/components/ThemeToggle';
+import { Toaster } from '@/components/ui/sonner';
 
 const links=[['/','Dashboard'],['/inquiries','Inquiries'],['/suppliers','Suppliers'],['/rfqs','RFQs'],['/quotes','Quotes'],['/quotes/revisions','Quote Revisions'],['/customers','Customers'],['/notifications','Notifications'],['/settings','Settings']];
 
@@ -25,6 +26,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             <main className="main">{children}</main>
           </div>
         ) : children}
+        <Toaster />
       </body>
     </html>
   );
