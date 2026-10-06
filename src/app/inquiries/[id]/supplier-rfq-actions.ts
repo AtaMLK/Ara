@@ -199,12 +199,14 @@ export async function sendSupplierRfqAction(input: {
   const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   const selected = input.candidateIds.map((id) => candidateById.get(id)).filter(Boolean);
 
-  const invalid = selected.filter((candidate) =>
-    candidate.status !== 'finalized' ||
-    !candidate.supplier_id ||
-    !candidate.suppliers ||
-    candidate.suppliers.verification_status !== 'verified',
-  );
+  const invalid = selected.filter((candidate) => {
+    const evidence = (candidate.verification_evidence ?? {}) as Record<string, unknown>;
+    return candidate.status !== 'finalized' ||
+      !candidate.supplier_id ||
+      !candidate.suppliers ||
+      candidate.suppliers.verification_status !== 'verified' ||
+      evidence.rfq_sent === true;
+  });
   if (invalid.length) {
     throw new Error('Only finalized and verified suppliers can receive an RFQ.');
   }
@@ -323,10 +325,27 @@ export async function sendSupplierRfqAction(input: {
       sent_at: sent.sentAt ?? new Date().toISOString(),
     }).eq('id', communication.id);
 
+    const sentAt = sent.sentAt ?? new Date().toISOString();
+
     await admin.from('rfqs').update({
       status: 'sent',
-      sent_at: sent.sentAt ?? new Date().toISOString(),
+      sent_at: sentAt,
     }).eq('id', rfq.id);
+
+    // Persist the successful send on the candidate itself. This makes the UI
+    // authoritative after refresh and prevents the same candidate from being
+    // accidentally emailed twice.
+    const currentEvidence = (candidate.verification_evidence ?? {}) as Record<string, unknown>;
+    await admin.from('supplier_candidates').update({
+      verification_evidence: {
+        ...currentEvidence,
+        rfq_sent: true,
+        rfq_sent_at: sentAt,
+        rfq_id: rfq.id,
+        rfq_recipient: recipient,
+      },
+      updated_at: sentAt,
+    }).eq('id', candidate.id);
 
     await admin.from('timeline_events').insert({
       inquiry_id: inquiry.id,
