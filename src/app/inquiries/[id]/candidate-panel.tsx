@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { sendSupplierRfqAction, verifySupplierCandidateAction } from './supplier-rfq-actions';
+import { getSupplierRfqRecipientsAction, sendSupplierRfqAction, verifySupplierCandidateAction } from './supplier-rfq-actions';
 
 type Requirement = {
   id: string;
@@ -204,7 +204,18 @@ export function CandidatePanel({
       setError('Selected supplier is not linked to a product requirement.');
       return;
     }
-    setPreview({ ...item, language });
+
+    const { recipients } = await getSupplierRfqRecipientsAction({
+      inquiryId,
+      candidateIds: selected,
+    });
+    const recipientEmails = recipients.map((entry) => entry.email).filter(Boolean);
+    if (!recipientEmails.length) {
+      setError('No active supplier email found for the selected supplier.');
+      return;
+    }
+
+    setPreview({ ...item, recipient: recipientEmails.join(', '), language });
   }
 
   async function verify(candidateId: string) {
@@ -388,7 +399,7 @@ export function CandidatePanel({
               <div><div className="eyebrow">EMAIL PREVIEW</div><h2>{preview.language === 'tr' ? 'Turkish Supplier RFQ' : 'English Supplier RFQ'}</h2></div>
               <button className="text-button" onClick={() => setPreview(null)}>Close</button>
             </div>
-            <div className="preview-meta"><strong>To</strong><span>{selectedCandidates.map(emailFor).filter(Boolean).join(', ') || preview.recipient || '—'}</span></div>
+            <div className="preview-meta"><strong>To</strong><span>{preview.recipient || '—'}</span></div>
             <div className="preview-meta"><strong>Subject</strong><span>{preview.subject}</span></div>
             <textarea className="supplier-email-preview" value={preview.body} readOnly />
             <div className="supplier-preview-actions">
