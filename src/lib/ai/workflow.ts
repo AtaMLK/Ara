@@ -14,6 +14,25 @@ import {
   type WorkflowStage,
 } from './orchestrator';
 
+
+function inferCountryFromHostname(hostname: string): string | null {
+  const host = hostname.toLowerCase().replace(/^www\./, '');
+  const tldMap: Record<string, string> = { tr: 'Turkey', uk: 'United Kingdom', de: 'Germany', it: 'Italy', es: 'Spain', fr: 'France', nl: 'Netherlands', be: 'Belgium', pl: 'Poland', cz: 'Czechia', se: 'Sweden', no: 'Norway', dk: 'Denmark', fi: 'Finland', ie: 'Ireland', ro: 'Romania', hu: 'Hungary', pt: 'Portugal', ch: 'Switzerland', at: 'Austria', vn: 'Vietnam', id: 'Indonesia', in: 'India', cn: 'China', jp: 'Japan', kr: 'South Korea', sg: 'Singapore', my: 'Malaysia', th: 'Thailand', tw: 'Taiwan', hk: 'Hong Kong', pk: 'Pakistan', ru: 'Russia', ae: 'United Arab Emirates', sa: 'Saudi Arabia', au: 'Australia', ca: 'Canada', mx: 'Mexico', br: 'Brazil', za: 'South Africa' };
+  const tld = host.split('.').pop() ?? '';
+  return tldMap[tld] ?? null;
+}
+
+async function fetchSupplierPage(url: string): Promise<string> {
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+    const response = await fetch(parsed.toString(), { method: 'GET', cache: 'no-store', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'ARAT Supplier Research Bot/1.0', Accept: 'text/html,application/xhtml+xml' } });
+    if (!response.ok) return '';
+    const html = await response.text();
+    const jsonLd = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]).join('\n');
+    return (jsonLd + '\n' + html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, ' ').trim().slice(0, 24000);
+  } catch { return ''; }
+}
 function normalizeEvidence(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
@@ -137,7 +156,25 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
     // Supplier replies can arrive after the original quote-extraction stage
     // succeeded. Reopen the stage when there are new supplier responses.
-    if ((stage === 'quote_extraction' || stage === 'comparison') && !output?.blocked) {
+    if (stage === 'supplier_discovery' && !output?.blocked) {
+      const { data: enrichmentRows } = await createSupabaseAdminClient()
+        .from('supplier_candidates')
+        .select('supplier_id,suppliers(primary_country,primary_email_id,primary_address_id,primary_phone_id)')
+        .eq('inquiry_id', inquiryId)
+        .not('supplier_id', 'is', null);
+      const needsEnrichment = (enrichmentRows ?? []).some((row) => {
+        const supplier = Array.isArray(row.suppliers) ? row.suppliers[0] : row.suppliers;
+        return !supplier || !supplier.primary_country || supplier.primary_country === 'Unknown' ||
+          !supplier.primary_email_id || !supplier.primary_address_id || !supplier.primary_phone_id;
+      });
+      if (!needsEnrichment) return { execution, outcome: 'already_succeeded' as const };
+      const reopened = await createSupabaseAdminClient()
+        .from('ai_executions')
+        .update({ status: 'queued', error_code: null, error_message: null, completed_at: null })
+        .eq('id', execution.id).eq('status', 'succeeded').select('*').single();
+      if (reopened.error || !reopened.data) throw new ToolError('CONFLICT', 'Supplier discovery enrichment cannot be reopened');
+      execution.status = 'queued';
+    } else if ((stage === 'quote_extraction' || stage === 'comparison') && !output?.blocked) {
       let needsRerun = false;
 
       if (stage === 'quote_extraction') {
@@ -2559,10 +2596,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             evidence: string[];
           }>;
           emails: Array<{ email: string; evidence: string }>;
-        } = { contacts: [], emails: [] };
+          addresses: Array<{ address: string; country?: string; evidence: string }>;
+          phones: Array<{ phone: string; country?: string; evidence: string }>;
+        } = { contacts: [], emails: [], addresses: [], phones: [] };
 
+        let contactResults: ResearchResult[] = [];
         if (discoveryProvider) {
-          let contactResults: ResearchResult[] = [];
           try {
             const contactQueries = [
               `site:${hostname} contact email sales`,
@@ -2601,29 +2640,47 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             });
           }
 
-          if (contactResults.length > 0) {
+          const pageUrls = [
+            website,
+            ...contactResults.map((item) => item.source_url),
+            ...['/contact', '/contact-us', '/about', '/about-us', '/impressum', '/iletisim', '/kontakt'].map((path) => 'https://' + hostname + path),
+          ];
+          const uniquePageUrls = [...new Set(pageUrls)].filter((url) => {
+            try { return new URL(url).hostname.replace(/^www\./, '') === hostname; } catch { return false; }
+          }).slice(0, 10);
+          const fetchedPages = (await Promise.all(uniquePageUrls.map(async (url) => ({ url, text: await fetchSupplierPage(url) })))).filter((item) => item.text.length > 0);
+
+          if (contactResults.length > 0 || fetchedPages.length > 0) {
             const contactAi = await runAgent(
               { agentId: 'contact_research', executionId: running.id, inquiryId },
               {
-                supplier: {
-                  name: proposedName,
-                  website,
-                  country,
-                },
-                search_results: contactResults.map((item) => ({
-                  source_name: item.source_name,
-                  source_url: item.source_url,
-                  finding: item.finding,
-                  structured_data: item.structured_data,
-                  evidence: item.evidence,
-                })),
+                supplier: { name: proposedName, website, country },
+                search_results: [
+                  ...contactResults.map((item) => ({
+                    source_name: item.source_name,
+                    source_url: item.source_url,
+                    finding: item.finding,
+                    structured_data: item.structured_data,
+                    evidence: item.evidence,
+                  })),
+                  ...fetchedPages.map((item) => ({
+                    source_name: 'Official supplier website page',
+                    source_url: item.url,
+                    finding: item.text,
+                    structured_data: { official_domain: hostname },
+                    evidence: { fetched_page: true },
+                  })),
+                ],
                 instructions: [
-                  'Verify contact information for this supplier using only the supplied search evidence.',
-                  'Prefer contact pages, official sales pages, official distributor pages, and official supplier domains.',
-                  'Extract email addresses only when explicitly present in the evidence. Never guess an email pattern.',
-                  'Extract contact person, department, job title, phone, country, and professional profile only when explicitly supported.',
-                  'Ignore generic directories and unrelated websites even if they mention the supplier.',
-                  'Return empty arrays when the evidence does not support a contact fact.',
+                  'Verify contact/profile information using only supplied evidence.',
+                  'Prefer the supplier official domain and official contact/about/company pages.',
+                  'Extract email addresses only when explicitly present. Never guess an email pattern.',
+                  'Extract the full supplier address exactly as published when available.',
+                  'Extract phone numbers when explicitly published.',
+                  'Infer country from an explicit company address first; use country-code domain only as weaker fallback.',
+                  'Extract contact person, department, job title and professional profile only when explicitly supported.',
+                  'Ignore unrelated companies, marketplaces, directories, social profiles and product-only pages.',
+                  'Return empty arrays when evidence does not support a fact.',
                 ],
               },
               supplierContactResearchOutputSchema,
@@ -2690,6 +2747,43 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               }
             }
           }
+        }
+
+        const addresses = [...new Set(contactResearch.addresses.map((item) => item.address?.trim()).filter((value): value is string => Boolean(value)))];
+        for (const address of addresses) {
+          const { data: existingAddress } = await supabase.from('supplier_addresses').select('id').eq('supplier_id', supplierId).eq('address', address).maybeSingle();
+          if (!existingAddress) {
+            const { data: createdAddress, error: addressError } = await supabase.from('supplier_addresses')
+              .insert({ supplier_id: supplierId, address, is_primary: !Boolean(existingSupplier?.primary_address_id) })
+              .select('id').single();
+            if (addressError || !createdAddress) throw new ToolError('CONFLICT', addressError?.message ?? 'Failed to create supplier address');
+          }
+        }
+        const { data: primaryAddress } = await supabase.from('supplier_addresses').select('id').eq('supplier_id', supplierId).eq('is_primary', true).order('created_at', { ascending: true }).limit(1).maybeSingle();
+        if (primaryAddress?.id) await supabase.from('suppliers').update({ primary_address_id: primaryAddress.id }).eq('id', supplierId);
+
+        const phones = [...new Set([
+          ...contactResearch.phones.map((item) => item.phone?.trim()),
+          ...contactResearch.contacts.map((item) => item.phone?.trim()),
+        ].filter((value): value is string => Boolean(value)))];
+        for (const phone of phones) {
+          const { data: existingPhone } = await supabase.from('supplier_phones').select('id').eq('supplier_id', supplierId).eq('phone', phone).maybeSingle();
+          if (!existingPhone) await supabase.from('supplier_phones').insert({ supplier_id: supplierId, phone, is_primary: false, status: 'active' });
+        }
+        const { data: primaryPhone } = await supabase.from('supplier_phones').select('id').eq('supplier_id', supplierId).eq('status', 'active').order('is_primary', { ascending: false }).order('created_at', { ascending: true }).limit(1).maybeSingle();
+        if (primaryPhone?.id) {
+          await supabase.from('supplier_phones').update({ is_primary: true }).eq('id', primaryPhone.id);
+          await supabase.from('suppliers').update({ primary_phone_id: primaryPhone.id }).eq('id', supplierId);
+        }
+
+        const inferredCountry = contactResearch.contacts.find((item) => item.country?.trim())?.country?.trim()
+          || contactResearch.addresses.find((item) => item.country?.trim())?.country?.trim()
+          || (country && country !== 'Unknown' ? country : null)
+          || inferCountryFromHostname(hostname);
+        if (inferredCountry) {
+          await supabase.from('suppliers').update({ primary_country: inferredCountry }).eq('id', supplierId);
+          await supabase.from('supplier_candidates').update({ proposed_country: inferredCountry })
+            .eq('inquiry_id', inquiryId).eq('supplier_id', supplierId).eq('requirement_id', aiCandidate.requirementId ?? null);
         }
 
         for (const contact of contactResearch.contacts) {
