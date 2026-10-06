@@ -50,9 +50,32 @@ type Candidate = {
   } | null;
 };
 
+function normalizedCountry(candidate: Candidate) {
+  return (candidate.proposed_country || candidate.suppliers?.primary_country || '').trim();
+}
+
 function domestic(country: string | null | undefined) {
   const value = (country ?? '').trim().toLowerCase();
   return value === 'turkey' || value === 'türkiye' || value === 'tr' || value.includes('turkey');
+}
+
+function region(country: string | null | undefined) {
+  const value = (country ?? '').trim().toLowerCase();
+  if (domestic(value)) return 'Turkey';
+  const europe = ['germany','italy','spain','france','united kingdom','uk','england','netherlands','belgium','austria','switzerland','poland','czech','czechia','portugal','sweden','norway','denmark','finland','ireland','romania','hungary','greece'];
+  const asia = ['china','japan','south korea','korea','india','indonesia','malaysia','singapore','thailand','vietnam','taiwan','hong kong','pakistan'];
+  const americas = ['usa','united states','canada','mexico','brazil'];
+  const middleEast = ['uae','united arab emirates','saudi','qatar','israel','jordan','iran','iraq'];
+  if (europe.some((item) => value.includes(item))) return 'Europe';
+  if (asia.some((item) => value.includes(item))) return 'Asia';
+  if (americas.some((item) => value.includes(item))) return 'Americas';
+  if (middleEast.some((item) => value.includes(item))) return 'Middle East';
+  return value ? 'International' : 'Country not verified';
+}
+
+function shortWebsite(value: string | null | undefined) {
+  if (!value) return null;
+  try { return new URL(value).hostname.replace(/^www\./, ''); } catch { return value.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
 }
 
 function label(value: string) {
@@ -253,14 +276,17 @@ export function CandidatePanel({
               <button className="text-button" onClick={() => setSelectedProductId(null)}>Close</button>
             </div>
 
-            {(['domestic', 'international'] as const).map((group) => {
-              const rows = modalCandidates.filter((candidate) => domestic(candidate.proposed_country) === (group === 'domestic'));
-              const title = group === 'domestic' ? 'Domestic / Turkey' : 'International';
+            {(['Turkey', 'Europe', 'Asia', 'International'] as const).map((group) => {
+              const rows = modalCandidates.filter((candidate) => {
+                const country = normalizedCountry(candidate);
+                return region(country) === group;
+              });
+              const title = group === 'Turkey' ? 'Internal / Turkey' : group;
               return (
                 <div className="supplier-modal-group" key={group}>
                   <div className="supplier-modal-group-head">
                     <div><strong>{title}</strong><div className="muted">{rows.length} candidate{rows.length === 1 ? '' : 's'}</div></div>
-                    <span className="badge">{group === 'domestic' ? 'Türkçe' : 'English'}</span>
+                    <span className="badge">{group === 'Turkey' ? 'Türkçe' : 'English'}</span>
                   </div>
                   {rows.length === 0 ? <div className="empty">No valid candidate in this group.</div> : rows.map((candidate) => {
                     const canSend = valid(candidate);
@@ -282,10 +308,10 @@ export function CandidatePanel({
                         <input type="checkbox" checked={selected.includes(candidate.id)} disabled={!canSend} onChange={() => toggle(candidate.id)} />
                         <div className="supplier-candidate-main">
                           <strong>{candidate.suppliers?.legal_name || candidate.proposed_name}</strong>
-                          <div className="muted">{label(candidate.suppliers?.supplier_type || 'unknown')} · {candidate.proposed_country || candidate.suppliers?.primary_country || '—'}</div>
+                          <div className="muted">{region(normalizedCountry(candidate))} · {normalizedCountry(candidate) || 'Country not verified'}</div>
                           <div className="muted">
                             {candidate.proposed_website ? (
-                              <a href={candidate.proposed_website} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{candidate.proposed_website}</a>
+                              <a href={candidate.proposed_website} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{shortWebsite(candidate.proposed_website)}</a>
                             ) : 'No website'}
                           </div>
                           {(() => {
@@ -312,7 +338,7 @@ export function CandidatePanel({
                         <div className="supplier-candidate-contact">
                           <span>{email || 'No active email'}</span>
                           {isVerified ? (
-                            <span className="badge status-approved">Verified</span>
+                            <span className="badge status-approved">✓ Verified</span>
                           ) : (
                             <button
                               type="button"
