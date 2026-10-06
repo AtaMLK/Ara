@@ -21,7 +21,8 @@
     "xlsx": "latest",
     "zod": "latest",
     "unpdf": "1.8.1",
-    "lucide-react": "latest"
+    "lucide-react": "latest",
+    "sonner": "latest"
   },
   "devDependencies": {
     "@types/node": "latest",
