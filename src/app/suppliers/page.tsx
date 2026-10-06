@@ -37,7 +37,7 @@ export default async function SuppliersPage({ searchParams }: Props) {
                 {item.primary_address?.address && <div className="muted">{item.primary_address.address}</div>}
                 {!item.primary_email?.email && !item.primary_phone?.phone && !item.primary_address?.address && <span className="muted">Profile incomplete</span>}
               </div>
-              <div><span className="badge">{label(item.verification_status)}</span></div>
+              <div><span className="badge">{item.verification_status === 'verified' ? '✓ Verified' : label(item.verification_status)}</span></div>
               <div><span className="badge">{label(item.status)}</span></div>
             </div>
           ))}
