@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { X, AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import { softDeleteInquiryAction, softDeleteSupplierAction } from '@/app/admin-record-actions';
+import { createPortal } from 'react-dom';
 
 type ConfirmDialogProps = {
   open: boolean;
@@ -16,9 +17,32 @@ type ConfirmDialogProps = {
 };
 
 function ConfirmDialog({ open, title, description, loading, onCancel, onConfirm }: ConfirmDialogProps) {
-  if (!open) return null;
+  const [mounted, setMounted] = useState(false);
 
-  return (
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open || !mounted) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !loading) onCancel();
+    };
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, mounted, loading, onCancel]);
+
+  if (!open || !mounted) return null;
+
+  return createPortal(
     <div className="arat-dialog-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !loading) onCancel();
     }}>
@@ -50,7 +74,8 @@ function ConfirmDialog({ open, title, description, loading, onCancel, onConfirm 
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
