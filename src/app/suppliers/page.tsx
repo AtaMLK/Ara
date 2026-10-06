@@ -26,11 +26,12 @@ export default async function SuppliersPage({ searchParams }: Props) {
 
       <section className="section">
         <div className="table">
-          <div className="row header"><div>Supplier</div><div>Country</div><div>Verification</div><div>Status</div></div>
+          <div className="row header"><div>Supplier</div><div>Country</div><div>Contact</div><div>Verification</div><div>Status</div></div>
           {items.length === 0 ? <div className="empty">No suppliers found.</div> : items.map((item) => (
             <div className="row" key={item.id}>
               <div><strong>{item.legal_name}</strong><div className="muted">{label(item.supplier_type)}</div></div>
-              <div>{item.primary_country}</div>
+              <div>{item.primary_country || 'Country not verified'}</div>
+              <div>{(item.primary_email_id || item.primary_phone_id || item.primary_address_id) ? 'Profile enriched' : 'Profile incomplete'}</div>
               <div><span className="badge">{label(item.verification_status)}</span></div>
               <div><span className="badge">{label(item.status)}</span></div>
             </div>
