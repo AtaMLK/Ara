@@ -1340,3 +1340,25 @@ html[data-theme="dark"] .clarification-answer-success{
 /* Supplier match intelligence */
 .supplier-match-line { margin-top: 6px; font-size: 12px; }
 .supplier-match-warning { margin-top: 6px; padding: 6px 8px; border-radius: 7px; background: #fff7ed; color: #9a3412; font-size: 11px; line-height: 1.35; }
+
+
+/* Supplier shortlist scrollbar — compact and rounded */
+.supplier-modal{
+  max-height:82vh;
+  scrollbar-width:thin;
+  scrollbar-color:#c7d1db transparent;
+}
+.supplier-modal::-webkit-scrollbar{
+  width:5px;
+}
+.supplier-modal::-webkit-scrollbar-track{
+  background:transparent;
+  margin:8px 0;
+}
+.supplier-modal::-webkit-scrollbar-thumb{
+  background:#c7d1db;
+  border-radius:999px;
+}
+.supplier-modal::-webkit-scrollbar-thumb:hover{
+  background:#aebbc7;
+}
