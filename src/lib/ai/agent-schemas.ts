@@ -273,15 +273,30 @@ export const supplierDiscoveryOutputSchema = z.preprocess((value) => {
   candidates: z.array(supplierDiscoveryCandidateSchema).default([]),
 }));
 
+const optionalContactText = z.preprocess(
+  (value) => value == null ? undefined : value,
+  z.string().min(1).optional(),
+);
+
+const optionalContactEmail = z.preprocess(
+  (value) => value == null ? undefined : value,
+  z.string().email().optional(),
+);
+
+const optionalContactUrl = z.preprocess(
+  (value) => value == null ? undefined : value,
+  z.string().url().optional(),
+);
+
 export const supplierContactResearchOutputSchema = z.object({
   contacts: z.array(z.object({
-    name: z.string().optional(),
-    email: z.string().email().optional(),
-    phone: z.string().optional(),
-    jobTitle: z.string().optional(),
-    department: z.string().optional(),
-    country: z.string().optional(),
-    professionalProfile: z.string().url().optional(),
+    name: optionalContactText,
+    email: optionalContactEmail,
+    phone: optionalContactText,
+    jobTitle: optionalContactText,
+    department: optionalContactText,
+    country: optionalContactText,
+    professionalProfile: optionalContactUrl,
     evidence: z.array(z.string()).default([]),
   })).default([]),
   emails: z.array(z.preprocess(
@@ -291,6 +306,14 @@ export const supplierContactResearchOutputSchema = z.object({
         return {
           email,
           evidence: email,
+        };
+      }
+      if (value && typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        return {
+          ...record,
+          email: record.email ?? undefined,
+          evidence: record.evidence ?? (typeof record.email === 'string' ? record.email : undefined),
         };
       }
       return value;
