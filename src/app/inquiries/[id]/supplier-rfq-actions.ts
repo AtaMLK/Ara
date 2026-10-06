@@ -261,7 +261,9 @@ export async function sendSupplierRfqAction(input: {
     }]);
 
     const rfqCode = `RFQ-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()}`;
-    const subject = `${email.subject} — ${rfqCode}`;
+    const subject = language === 'tr'
+      ? `Teklif Talebi | ${inquiry.reference} | ${rfqCode}`
+      : `RFQ | ${inquiry.reference} | ${rfqCode}`;
 
     const { data: rfq, error: rfqError } = await admin.from('rfqs').insert({
       inquiry_id: inquiry.id,
