@@ -73,19 +73,16 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
 
   const now = new Date().toISOString();
 
-  if (supplier.verification_status === 'verified') {
-    return { ok: true, alreadyVerified: true, supplierId: supplier.id, candidateId: candidate.id };
-  }
+  const now = new Date().toISOString();
 
-  const { error: supplierUpdateError } = await admin
+  if (supplier.verification_status !== 'verified') {
+    const { error: supplierUpdateError } = await admin
     .from('suppliers')
     .update({
       verification_status: 'verified',
       updated_at: now,
     })
     .eq('id', supplier.id);
-
-  if (supplierUpdateError) throw new ToolError('TRANSIENT', supplierUpdateError.message);
 
   const { error: candidateUpdateError } = await admin
     .from('supplier_candidates')
