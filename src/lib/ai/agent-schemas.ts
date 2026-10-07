@@ -302,6 +302,20 @@ const optionalContactUrl = z.preprocess(
   z.string().url().optional(),
 );
 
+const optionalEvidenceText = z.preprocess(
+  (value) => {
+    if (value == null) return undefined;
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  },
+  z.string().min(1).optional(),
+);
+
+const supplierContactEvidenceSchema = z.object({
+  evidence: optionalEvidenceText,
+});
+
 export const supplierContactResearchOutputSchema = z.object({
   contacts: z.array(z.object({
     name: optionalContactText,
@@ -316,12 +330,12 @@ export const supplierContactResearchOutputSchema = z.object({
   addresses: z.array(z.object({
     address: optionalContactText,
     country: optionalContactText,
-    evidence: z.string().min(1),
+    ...supplierContactEvidenceSchema.shape,
   })).default([]),
   phones: z.array(z.object({
     phone: optionalContactText,
     country: optionalContactText,
-    evidence: z.string().min(1),
+    ...supplierContactEvidenceSchema.shape,
   })).default([]),
   emails: z.array(z.preprocess(
     (value) => {
