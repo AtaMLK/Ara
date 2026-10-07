@@ -232,13 +232,26 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
   };
   const matchType = typeof canonicalMatchType === 'string'
     ? (matchTypeAliases[canonicalMatchType] ?? extendedMatchTypeAliases[canonicalMatchType]) ??
-      (canonicalMatchType.includes('exact_product') || canonicalMatchType.includes('exact_manufacturer')
+      (canonicalMatchType.includes('exact_product') ||
+        canonicalMatchType.includes('exact_manufacturer') ||
+        canonicalMatchType.includes('exact_model') ||
+        canonicalMatchType === 'exact' ||
+        canonicalMatchType.includes('manufacturer')
         ? 'exact_product'
-        : canonicalMatchType.includes('same_brand_distributor') || canonicalMatchType.includes('brand_distributor')
+        : canonicalMatchType.includes('same_brand_distributor') ||
+          canonicalMatchType.includes('brand_distributor') ||
+          canonicalMatchType.includes('official_distributor') ||
+          canonicalMatchType.includes('official_representative') ||
+          canonicalMatchType.includes('same_brand') ||
+          canonicalMatchType.includes('distributor')
           ? 'same_brand_distributor'
-          : canonicalMatchType.includes('same_brand_similar')
+          : canonicalMatchType.includes('same_brand_similar') ||
+            canonicalMatchType.includes('similar_product') ||
+            canonicalMatchType === 'similar'
             ? 'same_brand_similar'
-            : canonicalMatchType.includes('related_alternative')
+            : canonicalMatchType.includes('related_alternative') ||
+              canonicalMatchType.includes('alternative') ||
+              canonicalMatchType === 'related'
               ? 'related_alternative'
               : undefined)
     : undefined;
