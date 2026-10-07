@@ -24,10 +24,14 @@ export default async function CustomersPage() {
       <section className="section customer-create-section"><CreateCustomerForm /></section>
 
       <section className="section">
-        <div className="table">
+        <div className="table standard-table">
           <div className="row header"><div>Customer</div><div>Type / Country</div><div>Email</div><div>Status</div><div>Access</div></div>
           {(customers ?? []).length === 0 ? (
-            <div className="empty">No customers yet.</div>
+            <div className="empty-state">
+              <div className="empty-state-icon" aria-hidden="true">◇</div>
+              <strong>No customers yet</strong>
+              <span>Create a customer account above and it will appear in this list.</span>
+            </div>
           ) : (customers ?? []).map((customer) => (
             <div className="row" key={customer.id}>
               <div>
