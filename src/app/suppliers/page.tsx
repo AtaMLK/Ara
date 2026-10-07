@@ -16,7 +16,11 @@ export default async function SuppliersPage({ searchParams }: Props) {
   return (
     <>
       <header className="topbar">
-        <div><div className="eyebrow">ADMIN</div><h1 className="title">Suppliers</h1><div className="muted">Supplier database and verification</div></div>
+        <div>
+          <div className="eyebrow">ADMIN</div>
+          <h1 className="title">Suppliers</h1>
+          <div className="muted">Supplier database and verification</div>
+        </div>
       </header>
 
       <form className="filters">
@@ -28,9 +32,18 @@ export default async function SuppliersPage({ searchParams }: Props) {
       </form>
 
       <section className="section">
-        <div className="table">
-          <div className="row header"><div>Supplier</div><div>Country</div><div>Contact</div><div>Verification</div><div>Status</div><div>RFQs</div><div>Action</div></div>
-          {items.length === 0 ? <div className="empty">No suppliers found.</div> : items.map((item) => (
+        <div className="table supplier-table">
+          <div className="row header">
+            <div>Supplier</div><div>Country</div><div>Contact</div><div>Verification</div><div>Status</div><div>RFQs</div><div>Action</div>
+          </div>
+
+          {items.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon" aria-hidden="true">◇</div>
+              <strong>No suppliers found</strong>
+              <span>Supplier records will appear here once they are added or discovered.</span>
+            </div>
+          ) : items.map((item) => (
             <div className="row" key={item.id}>
               <div><strong>{item.legal_name}</strong><div className="muted">{label(item.supplier_type)}</div></div>
               <div>{item.primary_country || 'Country not verified'}</div>
