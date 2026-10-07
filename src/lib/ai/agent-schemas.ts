@@ -67,7 +67,14 @@ const intakeItemSchema = z.object({
   brand: optionalIntakeText,
   model: optionalIntakeText,
   partNumber: optionalIntakeText,
-  quantity: z.coerce.number().positive().optional(),
+  quantity: z.preprocess(
+    (value) => {
+      if (value == null || value === '') return undefined;
+      const numeric = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(numeric) && numeric <= 0 ? undefined : value;
+    },
+    z.coerce.number().positive().optional(),
+  ),
   unit: z.coerce.string().min(1).optional(),
   specifications: z.array(z.coerce.string().min(1)).default([]),
   deliveryRequirement: z.coerce.string().min(1).optional(),
@@ -108,7 +115,14 @@ export const intakeRepairOutputSchema = z.object({
     brand: optionalIntakeText,
     model: optionalIntakeText,
     partNumber: optionalIntakeText,
-    quantity: z.coerce.number().positive().optional(),
+    quantity: z.preprocess(
+    (value) => {
+      if (value == null || value === '') return undefined;
+      const numeric = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(numeric) && numeric <= 0 ? undefined : value;
+    },
+    z.coerce.number().positive().optional(),
+  ),
     unit: z.coerce.string().min(1).optional(),
     specifications: z.array(z.coerce.string().min(1)).default([]),
     deliveryRequirement: z.coerce.string().min(1).optional(),
