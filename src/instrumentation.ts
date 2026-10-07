@@ -30,9 +30,7 @@ export async function register() {
   const runEmailPoll = async () => {
     try {
       const result = await pollImapInbox();
-      if (result.processed > 0 || result.failed > 0) {
-        console.log('[ARAT][email-worker]', JSON.stringify(result));
-      }
+      console.log('[ARAT][email-worker]', JSON.stringify(result));
     } catch (error) {
       console.error('[ARAT][email-worker] failed', error);
     }
