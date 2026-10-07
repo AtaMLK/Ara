@@ -15,7 +15,11 @@ export default async function QuotesPage({ searchParams }: Props) {
   return (
     <>
       <header className="topbar">
-        <div><div className="eyebrow">ADMIN</div><h1 className="title">Quotes</h1><div className="muted">Customer quotations and approvals</div></div>
+        <div>
+          <div className="eyebrow">ADMIN</div>
+          <h1 className="title">Quotes</h1>
+          <div className="muted">Customer quotations and approvals</div>
+        </div>
       </header>
 
       <form className="filters">
@@ -27,9 +31,15 @@ export default async function QuotesPage({ searchParams }: Props) {
       </form>
 
       <section className="section">
-        <div className="table">
+        <div className="table standard-table">
           <div className="row header"><div>Reference</div><div>Customer</div><div>Status</div><div>Currency / Validity</div></div>
-          {items.length === 0 ? <div className="empty">No quotes found.</div> : items.map((item) => (
+          {items.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon" aria-hidden="true">▣</div>
+              <strong>No quotes found</strong>
+              <span>Customer quotations will appear here once an inquiry reaches the quoting stage.</span>
+            </div>
+          ) : items.map((item) => (
             <div className="row" key={item.id}>
               <div><Link className="row-link" href={'/quotes/' + item.id}><strong>{item.reference}</strong></Link></div>
               <div>{item.customers?.company_name || item.customers?.name || '—'}</div>
