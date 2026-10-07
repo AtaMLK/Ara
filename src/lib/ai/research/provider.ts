@@ -56,9 +56,14 @@ class SerpApiResearchProvider implements ResearchProvider {
         // Keep the provider error generic when the upstream body is not JSON.
       }
 
+      const authFailure = response.status === 401 || response.status === 403 ||
+        /invalid.*api.?key|api.?key.*invalid|unauthorized|authentication/i.test(detail);
+
       throw new ToolError(
         'TRANSIENT',
-        `Research provider returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
+        authFailure
+          ? 'Research provider authentication failed: SERPAPI_API_KEY was rejected.'
+          : `Research provider returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
       );
     }
 
