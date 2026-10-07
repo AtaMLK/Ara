@@ -7,6 +7,8 @@ import { ToolError } from '@/lib/errors';
 
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_SIZE = 25 * 1024 * 1024;
+const INBOUND_LOOKBACK_DAYS = 7;
+const MAX_MESSAGES_PER_POLL = 100;
 
 function required(name: string) {
   const value = process.env[name];
@@ -57,6 +59,7 @@ export async function pollImapInbox() {
   let processed = 0;
   let skipped = 0;
   let failed = 0;
+  let scanned = 0;
 
   await client.connect();
 
@@ -64,10 +67,15 @@ export async function pollImapInbox() {
     const lock = await client.getMailboxLock(mailbox);
 
     try {
-      for await (const message of client.fetch(
-        { seen: false },
-        { uid: true, source: true, internalDate: true },
-      )) {
+      const since = new Date(Date.now() - INBOUND_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+      const matchingUids = await client.search({ since }, { uid: true });
+      const uids = matchingUids.slice(-MAX_MESSAGES_PER_POLL);
+      const messages = uids.length
+        ? await client.fetchAll(uids, { uid: true, source: true, internalDate: true }, { uid: true })
+        : [];
+
+      for (const message of messages) {
+        scanned += 1;
         try {
           if (!message.source) {
             failed += 1;
@@ -124,7 +132,7 @@ export async function pollImapInbox() {
             attachments,
           });
 
-          await client.messageFlagsAdd(message.uid, ['\\Seen']);
+          await client.messageFlagsAdd(message.uid, ['\\Seen'], { uid: true });
           if (result.duplicate) skipped += 1;
           else processed += 1;
         } catch (error) {
@@ -143,5 +151,5 @@ export async function pollImapInbox() {
     await client.logout().catch(() => undefined);
   }
 
-  return { ok: true, processed, skipped, failed };
+  return { ok: true, processed, skipped, failed, scanned };
 }
