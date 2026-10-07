@@ -3097,13 +3097,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               '"GMI Energy" "VPG750" distributor',
             ] : []),
             ...(item.brand?.toLowerCase().includes('hansford') ? [
-              '"HS-210" "Hansford Sensors"',
-              '"HS-210 Temperature Sensor"',
-              'site:hansfordsensors.com "HS-210"',
-              '"HS-210" supplier Turkey',
-              '"HS-210" distributor Turkey',
+              `"${item.model ?? ''}" "Hansford Sensors"`,
+              `"${item.model ?? ''}" vibration sensor`,
+              `site:hansfordsensors.com "${item.model ?? ''}"`,
+              `"${item.model ?? ''}" supplier Turkey`,
+              `"${item.model ?? ''}" distributor Turkey`,
               '"Hansford Sensors" Turkey distributor',
-            ] : []),
+            ].filter((query) => !query.includes('""')) : []),
             [item.model, item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
             [item.model, item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
             [item.model, item.brand, item.product, 'official distributor'].filter(Boolean).join(' '),
@@ -3216,8 +3216,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }
 
           if (brand.includes('hansford')) {
-            const hansfordStrong = ['hs 210', 'hansford sensors'];
-            if (hansfordStrong.some((token) => haystack.includes(normalizeResearchText(token)))) {
+            const hansfordStrong = [
+              model,
+              'hansford sensors',
+            ].filter(Boolean);
+            if (hansfordStrong.some((token) => haystack.includes(normalizeResearchText(String(token))))) {
               return { accepted: true, reason: 'hansford_identity_marker' };
             }
           }
@@ -3230,6 +3233,35 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
           return { accepted: false, reason: 'unrelated_result' };
         };
+
+        const failedQueries = resultBatches.filter((batch) => batch.error).length;
+        const successfulQueries = resultBatches.length - failedQueries;
+        const authenticationFailure = resultBatches.some((batch) =>
+          /HTTP 401|invalid api key|api key/i.test(batch.error ?? ''),
+        );
+
+        if (authenticationFailure && successfulQueries === 0) {
+          await supabase.from('research_cases')
+            .update({ status: 'failed', completed_at: new Date().toISOString() })
+            .eq('id', researchCase.id);
+
+          await createAlert(
+            inquiryId,
+            'product_research',
+            'RESEARCH_PROVIDER_AUTH_FAILED',
+            'Supplier research could not run because the configured SERPAPI API key was rejected. No supplier candidates were fabricated.',
+            'urgent',
+          );
+          await timeline(inquiryId, 'workflow_research_failed_provider_auth', {
+            research_case_id: researchCase.id,
+            failed_queries: failedQueries,
+          }, 'product_research');
+
+          throw new ToolError(
+            'TRANSIENT',
+            'Supplier research provider authentication failed. Check SERPAPI_API_KEY.',
+          );
+        }
 
         const resultMap = new Map<string, { result: ResearchResult; requirementId: string | null; product: string; query: string; relevanceReason: string }>();
         const researchLog: Array<Record<string, unknown>> = [];
