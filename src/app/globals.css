@@ -1825,3 +1825,20 @@ html[data-theme="dark"] .rfq-table .row.header{
 .email-center-list{display:grid;gap:10px}.email-center-item{background:var(--arat-surface);border:1px solid var(--arat-border);border-radius:12px;padding:14px 16px;box-shadow:0 4px 18px rgba(25,40,55,.035)}.email-center-head{display:flex;justify-content:space-between;gap:16px;align-items:center}.email-center-head>div{display:flex;align-items:center;gap:7px;min-width:0}.email-status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto}.email-status-info{background:#5c86a8}.email-status-neutral{background:#7b8793}.email-center-subject{font-weight:650;margin-top:9px;overflow-wrap:anywhere}.email-center-meta{font-size:11px;color:var(--arat-muted);margin-top:4px}.email-center-body{margin-top:10px;padding-top:10px;border-top:1px solid var(--arat-border);white-space:pre-wrap;line-height:1.6;color:#3d4853;max-height:260px;overflow:auto}@media(max-width:700px){.email-center-head{align-items:flex-start;flex-direction:column;gap:6px}}
 
 .nav-notification-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:7px;border-radius:999px;background:#f3e6b8;color:#765d18;font-size:10px;font-weight:750;vertical-align:middle}
+
+
+/* Customer inquiry item builder */
+.customer-items-section{display:grid;gap:14px;margin:8px 0 22px}
+.customer-items-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.customer-items-heading .muted{margin-top:4px}
+.customer-item-card{padding:18px;border:1px solid var(--arat-border);border-radius:14px;background:var(--arat-surface);box-shadow:0 4px 18px rgba(25,40,55,.035)}
+.customer-item-card-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.customer-item-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.customer-item-card .form-field{margin-bottom:12px}
+.customer-item-card .form-field:last-child{margin-bottom:0}
+.form-field small{margin-left:5px;color:var(--arat-muted);font-weight:500}
+.form-error{margin:12px 0;padding:11px 13px;border:1px solid #efcaca;border-radius:10px;background:#fff6f6;color:#a23b3b;font-size:13px}
+.primary-button:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:700px){.customer-item-grid{grid-template-columns:1fr}.customer-item-card{padding:14px}}
+html[data-theme="dark"] .customer-item-card{background:var(--arat-surface);border-color:var(--arat-border)}
+html[data-theme="dark"] .form-error{border-color:#6b3d3d;background:#2b1c1c;color:#f0a6a6}
