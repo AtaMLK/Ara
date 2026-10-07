@@ -32,6 +32,7 @@ export default function SettingsForms({
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const run = (action: () => Promise<unknown>, reload = false) => {
     setError('');
@@ -63,8 +64,6 @@ export default function SettingsForms({
 
   const approvedRule = rules.find((rule) => rule.status === 'approved');
   const pendingRules = rules.filter((rule) => rule.status === 'pending_approval');
-  const [editingId, setEditingId] = useState<string | null>(null);
-
   return (
     <div className="settings-form-stack">
       <form className="settings-form" action={(formData) => run(() => createCustomerPricingRuleAction({
@@ -145,6 +144,25 @@ export default function SettingsForms({
 
       {error && <div className="error-box">{error}</div>}
       <div className="settings-divider" />
+      <form className="settings-form" action={(formData) => run(() => createExchangeRateAction({
+        fromCurrency: String(formData.get('fromCurrency') || ''),
+        toCurrency: String(formData.get('toCurrency') || ''),
+        rate: Number(formData.get('rate')),
+        validFrom: String(formData.get('validFrom') || ''),
+        validUntil: String(formData.get('validUntil') || '') || undefined,
+        source: String(formData.get('source') || '') || undefined,
+      }), true)}>
+        <h3 className="settings-subtitle">Add exchange rate</h3>
+        <div className="settings-form-grid">
+          <label>From<input name="fromCurrency" maxLength={3} placeholder="EUR" required /></label>
+          <label>To<input name="toCurrency" maxLength={3} placeholder="USD" required /></label>
+          <label>Rate<input name="rate" type="number" min="0" step="0.00000001" placeholder="1.08" required /></label>
+          <label>Valid from<input name="validFrom" type="date" required /></label>
+          <label>Valid until<input name="validUntil" type="date" /></label>
+          <label>Source<input name="source" placeholder="ECB / Admin" /></label>
+        </div>
+        <button className="primary-button" disabled={isPending}>Create proposed rate</button>
+      </form>
     </div>
   );
 }
