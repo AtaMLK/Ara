@@ -175,7 +175,13 @@ export async function processInboundEmail(email: InboundEmail) {
     return { ok: true, matched: true, type: 'customer_clarification', answered: true };
   }
 
-  const supplierMatch = await findSupplierRFQForEmail({\n    sender: email.from,\n    subject,\n    messageId: email.messageId,\n    inReplyTo: email.inReplyTo,\n    references: email.references,\n  });
+  const supplierMatch = await findSupplierRFQForEmail({
+    sender: email.from,
+    subject,
+    messageId: email.messageId,
+    inReplyTo: email.inReplyTo,
+    references: email.references,
+  });
   if (!supplierMatch.matched) {
     const { data: communication, error } = await supabase.from('communications').insert({
       direction: 'incoming',
