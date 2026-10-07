@@ -6,7 +6,7 @@ export default async function SettingsPage() {
 
   const [{ data: rules }, { data: rates }] = await Promise.all([
     supabase.from('customer_pricing_rules')
-      .select('id,name,markup_percent,rounding_increment,status,approved_at,created_at')
+      .select('id,name,customer_segment,markup_percent,rounding_increment,status,approved_at,created_at')
       .order('created_at', { ascending: false }),
     supabase.from('exchange_rates')
       .select('id,from_currency,to_currency,rate,valid_from,valid_until,source,status,approved_at,created_at')
