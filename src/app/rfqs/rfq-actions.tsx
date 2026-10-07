@@ -55,7 +55,7 @@ export function RfqActions(props: Props) {
 
       {previewOpen && (
         <div className="arat-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreviewOpen(false); }}>
-          <div className="rfq-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="rfq-preview-title">
+          <div className="rfq-preview-dialog" style={{ width: "min(920px, calc(100vw - 40px))", height: "min(760px, calc(100vh - 48px))", maxHeight: "none" }} role="dialog" aria-modal="true" aria-labelledby="rfq-preview-title">
             <div className="rfq-preview-head">
               <div>
                 <div className="eyebrow">RFQ PREVIEW</div>
