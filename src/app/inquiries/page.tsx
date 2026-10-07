@@ -46,7 +46,7 @@ export default async function InquiriesPage({ searchParams }: Props) {
               <div>{item.title}</div>
               <div><span className={`badge status-badge status-${item.status}`}>{label(item.status)}</span></div>
               <div>{new Date(item.updated_at).toLocaleDateString('en-GB')}</div>
-              <div onClick={(event) => event.preventDefault()}><DeleteInquiryButton id={item.id} reference={item.reference} /></div>
+              <DeleteInquiryButton id={item.id} reference={item.reference} />
             </Link>
           ))}
         </div>
