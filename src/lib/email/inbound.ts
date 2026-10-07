@@ -24,6 +24,8 @@ export type InboundEmailAttachment = {
 export type InboundEmail = {
   providerMessageId: string;
   messageId?: string | null;
+  inReplyTo?: string | null;
+  references?: string[] | null;
   from: string;
   to: string[];
   cc?: string[];
