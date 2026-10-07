@@ -14,9 +14,15 @@ export default async function NotificationsPage() {
       </header>
 
       <section className="section">
-        <div className="table">
+        <div className="table standard-table">
           <div className="row header"><div>Notification</div><div>Category</div><div>Priority</div><div>Created</div></div>
-          {items.length === 0 ? <div className="empty">No notifications yet.</div> : items.map((item) => (
+          {items.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon" aria-hidden="true">◌</div>
+              <strong>No notifications yet</strong>
+              <span>Approvals, supplier updates and AI alerts will appear here.</span>
+            </div>
+          ) : items.map((item) => (
             <div className="row" key={item.id}>
               <div><strong>{item.title}</strong><div className="muted">{item.message}</div></div>
               <div><span className="badge">{label(item.category)}</span></div>
