@@ -54,7 +54,7 @@ export default async function InquiriesPage({ searchParams }: Props) {
               <div>{new Date(item.updated_at).toLocaleDateString('en-GB')}</div>
               <div><DeleteInquiryButton id={item.id} reference={item.reference} /></div>
             </div>
-          ))}))}
+          ))}
         </div>
       </section>
     </>
