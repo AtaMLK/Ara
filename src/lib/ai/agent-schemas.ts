@@ -301,7 +301,12 @@ export const supplierDiscoveryOutputSchema = z.preprocess((value) => {
 }));
 
 const optionalContactText = z.preprocess(
-  (value) => value == null ? undefined : value,
+  (value) => {
+    if (value == null) return undefined;
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  },
   z.string().min(1).optional(),
 );
 
