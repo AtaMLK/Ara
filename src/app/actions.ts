@@ -1301,6 +1301,7 @@ export async function rejectExchangeRateAction(rateId: string) {
 
 export async function createCustomerPricingRuleAction(input: {
   name: string;
+  customerSegment?: 'international' | 'domestic';
   markupPercent: number;
   roundingIncrement?: number;
 }) {
@@ -1311,10 +1312,12 @@ export async function createCustomerPricingRuleAction(input: {
       roundingIncrement: z.number().positive().optional(),
     }).parse(input);
     const { supabase, user } = await requireAdmin();
+    const segment = (input as { customerSegment?: 'international' | 'domestic' }).customerSegment ?? 'international';
     const { data, error } = await supabase
       .from('customer_pricing_rules')
       .insert({
         name: parsed.name,
+        customer_segment: segment,
         markup_percent: parsed.markupPercent,
         rounding_increment: parsed.roundingIncrement ?? null,
         status: 'pending_approval',
@@ -1334,12 +1337,21 @@ export async function approveCustomerPricingRuleAction(ruleId: string) {
   try {
     const parsed = idSchema.parse(ruleId);
     const { supabase, user } = await requireAdmin();
+    const { data: rule } = await supabase
+      .from('customer_pricing_rules')
+      .select('id,customer_segment,status')
+      .eq('id', parsed)
+      .single();
+    if (!rule || rule.status !== 'pending_approval') {
+      throw new ToolError('CONFLICT', 'Pricing rule is not awaiting approval');
+    }
     const { data: existing } = await supabase
       .from('customer_pricing_rules')
-      .select('id,status')
+      .select('id')
+      .eq('customer_segment', rule.customer_segment)
       .eq('status', 'approved')
       .maybeSingle();
-    if (existing) throw new ToolError('CONFLICT', 'An approved customer pricing rule already exists');
+    if (existing) throw new ToolError('CONFLICT', 'An approved pricing rule already exists for this customer segment');
     const { data, error } = await supabase
       .from('customer_pricing_rules')
       .update({ status: 'approved', approved_by: user.id, approved_at: new Date().toISOString() })
@@ -1348,6 +1360,73 @@ export async function approveCustomerPricingRuleAction(ruleId: string) {
       .select('id,status')
       .single();
     if (error || !data) throw new ToolError('CONFLICT', 'Pricing rule is not awaiting approval');
+    revalidatePath('/settings');
+    return { ok: true };
+  } catch (error) {
+    fail(error);
+  }
+}
+
+// TEST PHASE ONLY: direct editing is intentionally allowed so pricing behavior can be tested.
+// Production must replace this with immutable revision creation + approval.
+export async function updateCustomerPricingRuleAction(input: {
+  id: string;
+  name: string;
+  customerSegment: 'international' | 'domestic';
+  markupPercent: number;
+  roundingIncrement?: number;
+}) {
+  try {
+    const parsed = z.object({
+      id: idSchema,
+      name: z.string().trim().min(1).max(200),
+      customerSegment: z.enum(['international', 'domestic']),
+      markupPercent: z.number().min(0),
+      roundingIncrement: z.number().positive().optional(),
+    }).parse(input);
+    const { supabase, user } = await requireAdmin();
+    const { data: current } = await supabase
+      .from('customer_pricing_rules')
+      .select('id,status')
+      .eq('id', parsed.id)
+      .single();
+    if (!current) throw new ToolError('NOT_FOUND', 'Pricing rule not found');
+    if (current.status === 'approved') {
+      const { data: conflict } = await supabase
+        .from('customer_pricing_rules')
+        .select('id')
+        .eq('customer_segment', parsed.customerSegment)
+        .eq('status', 'approved')
+        .neq('id', parsed.id)
+        .maybeSingle();
+      if (conflict) throw new ToolError('CONFLICT', 'Another approved rule already exists for this segment');
+    }
+    const { data, error } = await supabase
+      .from('customer_pricing_rules')
+      .update({
+        name: parsed.name,
+        customer_segment: parsed.customerSegment,
+        markup_percent: parsed.markupPercent,
+        rounding_increment: parsed.roundingIncrement ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', parsed.id)
+      .select('id,status')
+      .single();
+    if (error || !data) throw new ToolError('CONFLICT', error?.message ?? 'Pricing rule update failed');
+    await supabase.from('audit_logs').insert({
+      actor_type: 'admin',
+      actor_user_id: user.id,
+      action: 'customer_pricing_rule_test_edited',
+      record_type: 'customer_pricing_rule',
+      record_id: data.id,
+      after_data: {
+        name: parsed.name,
+        customer_segment: parsed.customerSegment,
+        markup_percent: parsed.markupPercent,
+        rounding_increment: parsed.roundingIncrement ?? null,
+      },
+    });
     revalidatePath('/settings');
     return { ok: true };
   } catch (error) {
