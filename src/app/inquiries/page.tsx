@@ -41,14 +41,20 @@ export default async function InquiriesPage({ searchParams }: Props) {
               <span>Customer procurement requests will appear here when they are submitted.</span>
             </div>
           ) : items.map((item) => (
-            <Link className="row row-link" href={`/inquiries/${item.id}`} key={item.id}>
-              <div><strong>{getInquiryDisplayReference(item.reference, item.customers?.company_name || item.customers?.name, item.created_at, item.current_version, item.updated_at)}</strong><div className="muted inquiry-reference-full">{item.reference}</div><div className="muted">{item.priority}</div></div>
+            <div className="row" key={item.id}>
+              <div>
+                <Link className="table-link" href={`/inquiries/${item.id}`}>
+                  <strong>{getInquiryDisplayReference(item.reference, item.customers?.company_name || item.customers?.name, item.created_at, item.current_version, item.updated_at)}</strong>
+                </Link>
+                <div className="muted inquiry-reference-full">{item.reference}</div>
+                <div className="muted">{item.priority}</div>
+              </div>
               <div>{item.title}</div>
               <div><span className={`badge status-badge status-${item.status}`}>{label(item.status)}</span></div>
               <div>{new Date(item.updated_at).toLocaleDateString('en-GB')}</div>
-              <DeleteInquiryButton id={item.id} reference={item.reference} />
-            </Link>
-          ))}
+              <div><DeleteInquiryButton id={item.id} reference={item.reference} /></div>
+            </div>
+          ))}))}
         </div>
       </section>
     </>
