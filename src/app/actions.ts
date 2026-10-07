@@ -97,8 +97,9 @@ export async function createCustomerInquiryAction(input: {
       // In local development there may be no scheduled worker running.
       // Process this inquiry immediately so the customer submission can advance
       // through intake/research/supplier discovery without requiring Admin to
-      // press Continue manually. The same queue remains idempotent in production.
-      const worker = await processQueuedWorkflow(10, inquiry.id);
+      // press Continue manually. The Customer submission is the workflow trigger;
+      // Admin Start Workflow is only a manual recovery/retry control. The same queue remains idempotent in production.
+      const worker = await processQueuedWorkflow(20, inquiry.id);
 
       await createSupabaseAdminClient().from('timeline_events').insert({
         inquiry_id: inquiry.id,
