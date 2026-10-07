@@ -26,24 +26,21 @@ export default async function InquiriesPage({ searchParams }: Props) {
       <form className="filters">
         <input name="q" defaultValue={params.q} placeholder="Search reference or title…" />
         <select name="status" defaultValue={params.status ?? 'all'}>
-          <option value="all">All statuses</option>
-          <option value="processing">Processing</option>
-          <option value="open">Open</option>
-          <option value="clarification_required">Clarification Required</option>
-          <option value="researching">Researching</option>
-          <option value="rfq">RFQ</option>
-          <option value="quoting">Quoting</option>
-          <option value="converted">Converted</option>
-          <option value="no_suitable_supplier">No Suitable Supplier</option>
-          <option value="closed">Closed</option>
+          <option value="all">All statuses</option><option value="processing">Processing</option><option value="open">Open</option><option value="clarification_required">Clarification Required</option><option value="researching">Researching</option><option value="rfq">RFQ</option><option value="quoting">Quoting</option><option value="converted">Converted</option><option value="no_suitable_supplier">No Suitable Supplier</option><option value="closed">Closed</option>
         </select>
         <button className="secondary-button">Filter</button>
       </form>
 
       <section className="section">
-        <div className="table">
+        <div className="table standard-table">
           <div className="row header"><div>Reference</div><div>Title</div><div>Status</div><div>Updated</div><div>Action</div></div>
-          {items.length === 0 ? <div className="empty">No inquiries found.</div> : items.map((item) => (
+          {items.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon" aria-hidden="true">□</div>
+              <strong>No inquiries found</strong>
+              <span>Customer procurement requests will appear here when they are submitted.</span>
+            </div>
+          ) : items.map((item) => (
             <Link className="row row-link" href={`/inquiries/${item.id}`} key={item.id}>
               <div><strong>{getInquiryDisplayReference(item.reference, item.customers?.company_name || item.customers?.name, item.created_at, item.current_version, item.updated_at)}</strong><div className="muted inquiry-reference-full">{item.reference}</div><div className="muted">{item.priority}</div></div>
               <div>{item.title}</div>
