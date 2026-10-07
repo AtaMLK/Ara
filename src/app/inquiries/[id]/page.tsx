@@ -19,7 +19,7 @@ export default async function InquiryDetailPage({ params }: Props) {
   const { id } = await params;
   const { supabase } = await requireAdminPage();
 
-  const [inquiryResult, requirementsResult, filesResult, timelineResult, executionsResult, alertsResult, clarificationsResult, researchResult, candidatesResult, rfqsResult] = await Promise.all([
+  const [inquiryResult, requirementsResult, filesResult, timelineResult, executionsResult, alertsResult, clarificationsResult, researchResult, candidatesResult, rfqsResult, communicationsResult] = await Promise.all([
     supabase.from('inquiries').select('id,reference,title,description,status,priority,original_customer_text,current_version,created_at,updated_at,customers(name,company_name,email,country)').eq('id', id).single(),
     supabase.from('requirements').select('id,type,value,status,source,source_ref,admin_edited,updated_at').eq('inquiry_id', id).order('created_at', { ascending: true }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,version,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at', { ascending: false }),
@@ -30,10 +30,11 @@ export default async function InquiryDetailPage({ params }: Props) {
     supabase.from('research_cases').select('id,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(5),
     supabase.from('supplier_candidates').select('id,requirement_id,proposed_name,proposed_country,proposed_website,status,match_evidence,availability_evidence,verification_evidence,created_at,supplier_id,suppliers(id,legal_name,primary_country,supplier_type,verification_status,primary_address_id,primary_phone_id,primary_website_id,primary_email_id,supplier_contacts!supplier_contacts_supplier_id_fkey(id,name,email,phone,job_title,department,status,is_primary),supplier_emails!supplier_emails_supplier_id_fkey(email,is_primary,status),supplier_addresses!supplier_addresses_supplier_id_fkey(id,address,is_primary),supplier_phones!supplier_phones_supplier_id_fkey(id,phone,is_primary,status),supplier_websites!supplier_websites_supplier_id_fkey(id,url,is_primary))').eq('inquiry_id', id).order('created_at', { ascending: true }),
     supabase.from('rfqs').select('id,status,subject,recipient_email,sender_email,approval_required,created_at,sent_at,suppliers(legal_name)').eq('inquiry_id', id).order('created_at', { ascending: false }),
+    supabase.from('communications').select('id,direction,channel,subject,body,received_at,sent_at,created_at,supplier_id,customer_id,rfq_id,metadata,suppliers(legal_name)').eq('inquiry_id', id).eq('channel', 'email').order('created_at', { ascending: false }).limit(100),
   ]);
 
   if (inquiryResult.error || !inquiryResult.data) notFound();
-  if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error || candidatesResult.error || rfqsResult.error) throw new Error('Failed to load inquiry details');
+  if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error || candidatesResult.error || rfqsResult.error || communicationsResult.error) throw new Error('Failed to load inquiry details');
 
   const inquiry = inquiryResult.data;
   const customer = inquiry.customers;
@@ -53,6 +54,45 @@ export default async function InquiryDetailPage({ params }: Props) {
       </header>
 
       <CandidatePanel inquiryId={inquiry.id} requirements={requirementsResult.data ?? []} candidates={candidatesResult.data ?? []} />
+
+      <section className="section">
+        <div className="section-head">
+          <div>
+            <div className="eyebrow">EMAIL</div>
+            <h2>Email Center</h2>
+            <div className="muted">All customer and supplier email activity for this inquiry. Supplier email content is visible only in the Admin portal.</div>
+          </div>
+          <span className="badge">{communicationsResult.data?.length ?? 0} emails</span>
+        </div>
+        {(communicationsResult.data ?? []).length === 0 ? (
+          <div className="detail-card"><div className="empty">No emails have been received or sent for this inquiry yet.</div></div>
+        ) : (
+          <div className="email-center-list">
+            {(communicationsResult.data ?? []).map((email) => {
+              const metadata = email.metadata && typeof email.metadata === 'object' && !Array.isArray(email.metadata) ? email.metadata as Record<string, unknown> : {};
+              const incoming = email.direction === 'incoming';
+              const type = typeof metadata.type === 'string' ? metadata.type : '';
+              const tone = incoming ? 'info' : 'neutral';
+              const labelText = type === 'supplier_rfq_reply' ? 'Supplier reply' : type === 'customer_clarification_reply' ? 'Customer reply' : type === 'clarification' ? 'Clarification sent' : incoming ? 'Incoming email' : 'Outgoing email';
+              return (
+                <article className="email-center-item" key={email.id}>
+                  <div className="email-center-head">
+                    <div>
+                      <span className={`email-status-dot email-status-${tone}`} aria-hidden="true" />
+                      <strong>{labelText}</strong>
+                      {email.suppliers?.legal_name && <span className="muted"> · {email.suppliers.legal_name}</span>}
+                    </div>
+                    <span className="muted">{new Date(email.received_at ?? email.sent_at ?? email.created_at).toLocaleString('en-GB')}</span>
+                  </div>
+                  <div className="email-center-subject">{email.subject || '(No subject)'}</div>
+                  <div className="email-center-meta">{incoming ? 'Received' : 'Sent'} · {email.channel}</div>
+                  <div className="email-center-body">{email.body || 'No message body recorded.'}</div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <section className="section">
         <div className="section-head">
