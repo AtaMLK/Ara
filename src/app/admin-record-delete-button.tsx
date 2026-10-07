@@ -106,7 +106,11 @@ export function DeleteSupplierButton({ id, name }: { id: string; name: string })
       <button
         type="button"
         className="secondary-button arat-delete-button"
-        onClick={() => setOpen(true)}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(true);
+        }}
         disabled={loading}
       >
         Delete
