@@ -38,6 +38,23 @@ export type InboundEmail = {
   provider: string;
 };
 
+
+async function notifyActiveAdmins(input: { category: string; priority: string; title: string; message: string; inquiryId: string; recordType: string; recordId: string; actionUrl: string }) {
+  const supabase = createSupabaseAdminClient();
+  const { data: admins } = await supabase.from('profiles').select('user_id').eq('role', 'admin').eq('status', 'active');
+  if (!admins?.length) return;
+  await supabase.from('notifications').insert(admins.map((admin) => ({
+    user_id: admin.user_id,
+    category: input.category,
+    priority: input.priority,
+    title: input.title,
+    message: input.message,
+    record_type: input.recordType,
+    record_id: input.recordId,
+    action_url: input.actionUrl,
+  })));
+}
+
 function safeStorageName(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 180);
 }
@@ -240,6 +257,17 @@ export async function processInboundEmail(email: InboundEmail) {
     if (communicationError?.code === '23505') return { ok: true, duplicate: true };
     throw new ToolError('CONFLICT', communicationError?.message ?? 'Could not store supplier email');
   }
+
+  await notifyActiveAdmins({
+    category: 'supplier',
+    priority: 'normal',
+    title: 'Supplier reply received',
+    message: `A supplier replied to RFQ ${supplierMatch.rfq.rfq_code}. Open the inquiry to review the email and let AI process the response.`,
+    inquiryId: supplierMatch.inquiryId,
+    recordType: 'communication',
+    recordId: communication.id,
+    actionUrl: `/inquiries/${supplierMatch.inquiryId}`,
+  });
 
   const responseId = crypto.randomUUID();
   const attachmentMetadata = await storeSupplierAttachments(
