@@ -1811,3 +1811,13 @@ html[data-theme="dark"] .supplier-table .row.header,
 html[data-theme="dark"] .rfq-table .row.header{
   background:#18222c;
 }
+
+.settings-edit-form{
+  width:100%;
+}
+.settings-edit-form .settings-form-grid{
+  margin-bottom:10px;
+}
+.settings-edit-form .settings-actions{
+  justify-content:flex-end;
+}
