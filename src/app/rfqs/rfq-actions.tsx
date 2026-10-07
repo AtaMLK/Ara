@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { Eye, Loader2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -53,7 +54,7 @@ export function RfqActions(props: Props) {
         </button>
       </div>
 
-      {previewOpen && (
+      {previewOpen && typeof document !== 'undefined' && createPortal(
         <div className="arat-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreviewOpen(false); }}>
           <div className="rfq-preview-dialog" style={{ width: "min(920px, calc(100vw - 40px))", height: "min(760px, calc(100vh - 48px))", maxHeight: "none" }} role="dialog" aria-modal="true" aria-labelledby="rfq-preview-title">
             <div className="rfq-preview-head">
@@ -81,10 +82,11 @@ export function RfqActions(props: Props) {
               <div dangerouslySetInnerHTML={{ __html: props.body || '<p>No email content available.</p>' }} />
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {deleteOpen && (
+      {deleteOpen && typeof document !== 'undefined' && createPortal(
         <div className="arat-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setDeleteOpen(false); }}>
           <div className="arat-dialog" role="dialog" aria-modal="true" aria-labelledby="rfq-delete-title">
             <div className="arat-dialog-icon"><Trash2 size={18} /></div>
@@ -102,7 +104,8 @@ export function RfqActions(props: Props) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
