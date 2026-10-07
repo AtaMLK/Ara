@@ -14,6 +14,7 @@ export async function register() {
   globalState[WORKER_STATE_KEY] = true;
 
   const { processQueuedWorkflow } = await import('@/lib/ai/workflow');
+  const { pollImapInbox } = await import('@/lib/email/imap-inbound');
 
   const run = async () => {
     try {
@@ -26,8 +27,22 @@ export async function register() {
     }
   };
 
+  const runEmailPoll = async () => {
+    try {
+      const result = await pollImapInbox();
+      if (result.processed > 0 || result.failed > 0) {
+        console.log('[ARAT][email-worker]', JSON.stringify(result));
+      }
+    } catch (error) {
+      console.error('[ARAT][email-worker] failed', error);
+    }
+  };
+
   console.log('[ARAT][workflow-worker] started (local development)');
+  console.log('[ARAT][email-worker] started (local development)');
   void run();
+  void runEmailPoll();
   setInterval(run, WORKER_INTERVAL_MS).unref();
+  setInterval(runEmailPoll, 60_000).unref();
 }
 
