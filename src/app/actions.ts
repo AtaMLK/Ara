@@ -1308,11 +1308,12 @@ export async function createCustomerPricingRuleAction(input: {
   try {
     const parsed = z.object({
       name: z.string().trim().min(1).max(200),
+      customerSegment: z.enum(['international', 'domestic']).optional().default('international'),
       markupPercent: z.number().min(0),
       roundingIncrement: z.number().positive().optional(),
     }).parse(input);
     const { supabase, user } = await requireAdmin();
-    const segment = (input as { customerSegment?: 'international' | 'domestic' }).customerSegment ?? 'international';
+    const segment = parsed.customerSegment;
     const { data, error } = await supabase
       .from('customer_pricing_rules')
       .insert({
