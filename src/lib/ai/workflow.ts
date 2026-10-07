@@ -479,6 +479,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 'Normalize obvious typos and spacing when the intended term is clear. For example, treat "temprature sensor" as "temperature sensor" but do not invent a model.',
                 'A brand or manufacturer can be inferred from the wording only when the relationship is strongly supported; record that field in inferredFields and lower confidence if needed.',
                 'Never invent a missing quantity, brand, model, part number, specification, delivery term, or supplier.',
+              'If quantity is not explicitly stated, omit quantity; never use 0 to mean unknown quantity.',
                 'Return one item per requested product. If customer text contains procurement items, items must not be empty.',
                 'Preserve the exact customer line/phrase in requestedText and use it as evidence.',
                 'Material ambiguity must be reported in ambiguities, but ambiguity does not mean ignoring an otherwise identifiable product.',
