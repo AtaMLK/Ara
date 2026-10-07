@@ -346,6 +346,36 @@ const supplierContactEvidenceSchema = z.object({
   evidence: optionalEvidenceText,
 });
 
+const supplierAddressSchema = z.preprocess(
+  (value) => {
+    if (typeof value === 'string') {
+      const address = value.trim();
+      return address ? { address, evidence: address } : undefined;
+    }
+    return value;
+  },
+  z.object({
+    address: optionalContactText,
+    country: optionalContactText,
+    ...supplierContactEvidenceSchema.shape,
+  }),
+);
+
+const supplierPhoneSchema = z.preprocess(
+  (value) => {
+    if (typeof value === 'string') {
+      const phone = value.trim();
+      return phone ? { phone, evidence: phone } : undefined;
+    }
+    return value;
+  },
+  z.object({
+    phone: optionalContactText,
+    country: optionalContactText,
+    ...supplierContactEvidenceSchema.shape,
+  }),
+);
+
 export const supplierContactResearchOutputSchema = z.object({
   contacts: z.array(z.object({
     name: optionalContactText,
@@ -357,16 +387,8 @@ export const supplierContactResearchOutputSchema = z.object({
     professionalProfile: optionalContactUrl,
     evidence: z.array(z.string()).default([]),
   })).default([]),
-  addresses: z.array(z.object({
-    address: optionalContactText,
-    country: optionalContactText,
-    ...supplierContactEvidenceSchema.shape,
-  })).default([]),
-  phones: z.array(z.object({
-    phone: optionalContactText,
-    country: optionalContactText,
-    ...supplierContactEvidenceSchema.shape,
-  })).default([]),
+  addresses: z.array(supplierAddressSchema).default([]),
+  phones: z.array(supplierPhoneSchema).default([]),
   emails: z.array(z.preprocess(
     (value) => {
       if (typeof value === 'string') {
