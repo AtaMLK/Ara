@@ -3000,35 +3000,46 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
     if (stage === 'research') {
       const { data: existing } = await supabase
         .from('research_cases')
-        .select('id,status')
+        .select('id,status,created_at')
         .eq('inquiry_id', inquiryId)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      // Every explicit research retry gets a fresh case. Reusing an old
-      // completed case caused stale/irrelevant search results to accumulate
-      // and made Supplier Discovery evaluate the wrong evidence set.
-      const created = await supabase
-        .from('research_cases')
-        .insert({
-          inquiry_id: inquiryId,
-          status: 'pending',
-          scope: {
-            source_types: ['web', 'public_specialized_sources'],
-            run_reason: 'fresh_product_research',
-          },
-        })
-        .select('id,status')
-        .single();
-      if (created.error || !created.data) {
-        throw new ToolError('TRANSIENT', created.error?.message ?? 'Failed to create research case');
+      // Research is an expensive external operation. Once a completed research
+      // case exists, retries/recovery runs MUST reuse its persisted results
+      // instead of calling SerpAPI again and consuming another search quota.
+      // A new research case is created only when no completed case exists yet.
+      let researchCase = existing?.status === 'completed' ? existing : null;
+
+      if (!researchCase) {
+        const created = await supabase
+          .from('research_cases')
+          .insert({
+            inquiry_id: inquiryId,
+            status: 'pending',
+            scope: {
+              source_types: ['web', 'public_specialized_sources'],
+              run_reason: 'initial_product_research',
+            },
+          })
+          .select('id,status,created_at')
+          .single();
+        if (created.error || !created.data) {
+          throw new ToolError('TRANSIENT', created.error?.message ?? 'Failed to create research case');
+        }
+        researchCase = created.data;
+      } else {
+        console.log('[ARAT][research] REUSING COMPLETED RESEARCH CASE', {
+          research_case_id: researchCase.id,
+          created_at: researchCase.created_at,
+          reason: 'workflow_retry_without_new_external_search',
+        });
       }
-      const researchCase = created.data;
 
       const provider = getResearchProvider();
 
-      if (provider) {
+      if (provider && researchCase.status !== 'completed') {
         const { data: requirements } = await supabase
           .from('requirements')
           .select('id,type,value,source_ref')
