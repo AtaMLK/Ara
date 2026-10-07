@@ -115,6 +115,8 @@ export async function pollImapInbox() {
             cc: toAddressList(parsed.cc),
             bcc: toAddressList(parsed.bcc),
             subject: parsed.subject || '',
+            inReplyTo: parsed.inReplyTo || null,
+            references: Array.isArray(parsed.references) ? parsed.references : parsed.references ? [parsed.references] : [],
             text: parsed.text || null,
             html: parsed.html || null,
             receivedAt: parsed.date?.toISOString() || message.internalDate?.toISOString() || new Date().toISOString(),
