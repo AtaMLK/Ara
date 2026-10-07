@@ -311,7 +311,19 @@ const optionalContactText = z.preprocess(
 );
 
 const optionalContactEmail = z.preprocess(
-  (value) => value == null ? undefined : value,
+  (value) => {
+    if (value == null) return undefined;
+    if (typeof value !== 'string') return value;
+    const email = value.trim().toLowerCase();
+    if (!email || /^(n\/a|na|none|null|unknown|not available|not found|no email)$/i.test(email)) {
+      return undefined;
+    }
+    // AI sometimes returns labels, placeholders, or otherwise malformed
+    // contact values. Do not fail the whole supplier-research stage for one
+    // bad contact; only persist a syntactically valid email.
+    const emailPattern = /^[A-Z0-9._%+'-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$/i;
+    return emailPattern.test(email) ? email : undefined;
+  },
   z.string().email().optional(),
 );
 
