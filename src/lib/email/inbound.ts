@@ -131,6 +131,7 @@ async function analyzeSupplierEmailAndNotify(input: {
   supplierEmail: string;
   subject: string;
   body: string;
+  customerId: string | null;
   customerUserId: string | null;
   customerEmail: string | null;
   customerName: string;
@@ -164,8 +165,12 @@ async function analyzeSupplierEmailAndNotify(input: {
           instructions: [
             'Analyze the supplier email for an internal procurement workflow.',
             'Determine whether it contains actionable commercial information such as price, availability, lead time, MOQ, payment terms, quotation validity, or a clear statement that the supplier can/cannot supply.',
-            'If the supplier is asking the customer for missing information and cannot proceed without it, set customerActionRequired=true and write one concise customer-friendly question in customerQuestion.',
-            'Never expose supplier-only internal commentary, private contact details, or raw supplier wording in customerQuestion.',
+            'If the supplier is asking for specifications, model/part number, technical details, quantity, documents, confirmation, or any other missing information needed to continue, set customerActionRequired=true and write one concise customer-friendly question in customerQuestion.',
+            'Translate the supplier request into clear customer language. Do not merely repeat the supplier email.',
+            'customerQuestion is CUSTOMER-FACING and must contain only the minimum information the customer needs to provide.',
+            'Never expose supplier name, supplier email, supplier contact person, supplier internal notes, supplier pricing, supplier commercial terms, private supplier details, or raw supplier wording in customerQuestion.',
+            'Do not mention that a specific supplier asked for the information. Say only that the request needs additional information to continue.',
+            'If the supplier email is vague but clearly asks for more product/technical information (for example "please provide detailed information about the specifications"), treat that as customerActionRequired=true and ask the customer for the relevant specifications based on the inquiry context. Do not invent a specific specification that is not supported by the inquiry.',
             'If there is no useful supplier information and no clear customer question, set customerActionRequired=false and explain the situation in summary.',
             'Do not invent prices, quantities, models, availability, or customer requirements.',
             'summary must be concise and suitable for an Admin notification.',
@@ -288,7 +293,7 @@ async function analyzeSupplierEmailAndNotify(input: {
         user_id: input.customerUserId,
         category: 'customer',
         priority: 'urgent',
-        title: 'Action required for your request',
+        title: 'More information is needed for your request',
         message: analysis.customerQuestion,
         record_type: 'rfq',
         record_id: input.rfqId,
@@ -470,6 +475,7 @@ export async function processInboundEmail(email: InboundEmail) {
     supplierEmail: extractCustomerEmail(email.from),
     subject,
     body,
+    customerId: customerRecord?.id ?? null,
     customerUserId: customerRecord?.user_id ?? null,
     customerEmail: customerRecord?.email ?? null,
     customerName: customerRecord?.company_name || customerRecord?.name || 'Customer',
