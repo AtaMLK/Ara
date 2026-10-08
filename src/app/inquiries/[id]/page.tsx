@@ -51,7 +51,10 @@ export default async function InquiryDetailPage({ params }: Props) {
   const supplierAskedForInfo = supplierMessages.some((item) => {
     const metadata = item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata) ? item.metadata as Record<string, unknown> : {};
     const analysis = metadata.ai_analysis && typeof metadata.ai_analysis === 'object' && !Array.isArray(metadata.ai_analysis) ? metadata.ai_analysis as Record<string, unknown> : {};
-    return metadata.type === 'supplier_rfq_reply' && analysis.customerActionRequired === true;
+    const body = String(item.body ?? '').toLowerCase();
+    const explicitAiRequest = metadata.type === 'supplier_rfq_reply' && analysis.customerActionRequired === true;
+    const clarificationLanguage = /(?:özelliklerle ilgili detaylı bilgi|detaylı bilgi rica|teknik bilgi|datasheet|specification|technical information|additional information|more information)/i.test(body);
+    return explicitAiRequest || clarificationLanguage;
   });
   const clarificationSentToCustomer = communications.some((item) => {
     const metadata = item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata) ? item.metadata as Record<string, unknown> : {};
