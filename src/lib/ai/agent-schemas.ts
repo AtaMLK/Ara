@@ -430,6 +430,16 @@ export const supplierEmailAnalysisOutputSchema = z.object({
   confidence: z.number().min(0).max(1).default(0.5),
 });
 
+
+export const customerClarificationResolutionOutputSchema = z.object({
+  decision: z.enum(['auto_send', 'admin_review']),
+  answerValid: z.boolean(),
+  supplierReply: z.string().min(1),
+  summary: z.string().min(1),
+  reason: z.string().min(1),
+  requiresRequirementChange: z.boolean().default(false),
+  confidence: z.number().min(0).max(1).default(0.5),
+});
 export const quoteExtractionOutputSchema = z.object({
   quotes: z.array(z.object({
     productId: z.string().uuid().optional(),
