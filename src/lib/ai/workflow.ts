@@ -48,6 +48,16 @@ function normalizeEvidence(value: unknown): string[] {
   return [];
 }
 
+function normalizeProductRequirementValue(value: string) {
+  let text = value.trim().replace(/\s+/g, ' ');
+  text = text.replace(/^\s*(?:hi|hello)[,;:\-\s]+/i, '');
+  text = text.replace(/^(?:needed\s+item\s+is|requested\s+item\s+is|item\s+is)\s*[:\-]\s*/i, '');
+  const technicalMarker = /\s+(?:temperature\s+output|temperature\s+range|operating\s+temperature|operating\s+range|how\s+to\s+order|table\s+for|max\s+sealing|pressure\s+range|material|specifications?)\b/i;
+  const match = text.match(technicalMarker);
+  if (match?.index && match.index >= 8) text = text.slice(0, match.index).trim();
+  return text || value.trim();
+}
+
 type RequirementRow = {
   id: string;
   type: string;
@@ -481,6 +491,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 'Never invent a missing quantity, brand, model, part number, specification, delivery term, or supplier.',
               'If quantity is not explicitly stated, omit quantity; never use 0 to mean unknown quantity.',
                 'Return one item per requested product. If customer text contains procurement items, items must not be empty.',
+                'The product field must be a concise canonical product name only, suitable for a table row and RFQ subject. Never copy the whole customer message or technical specification block into product.',
                 'Preserve the exact customer line/phrase in requestedText and use it as evidence.',
                 'Material ambiguity must be reported in ambiguities, but ambiguity does not mean ignoring an otherwise identifiable product.',
                 'Document-derived requirements are already persisted separately. In this Intake pass, create only new requirements sourced from customer_text. Do not recreate or modify document-derived requirements.',
@@ -513,6 +524,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                   'Quantity and unit must come from the customer request unless explicitly supported elsewhere.',
                   'Do not turn individual PDF specification lines into separate products.',
                   'Every item must have a concrete product field and evidence explaining the customer text that supports it.',
+                  'The product field must contain only the concise product name/model family, not the full technical specification paragraph.',
                   'Never return an empty items array when the customer request contains procurement items.',
                 ],
               },
@@ -541,7 +553,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
             requirements.push({
               type: 'product',
-              value: item.product.trim(),
+              value: normalizeProductRequirementValue(item.product),
               source: 'customer_text',
               sourceRef,
             });
