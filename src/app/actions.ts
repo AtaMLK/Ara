@@ -910,17 +910,6 @@ export async function answerClarificationAction(input: { inquiryId: string; clar
       throw new ToolError('CONFLICT', 'This clarification has already been answered');
     }
 
-    await createSupabaseAdminClient().from('notifications').insert({
-      user_id: user.id,
-      category: 'customer',
-      priority: 'normal',
-      title: 'Clarification answer received',
-      message: 'Your clarification answer was received and processing has resumed.',
-      record_type: 'inquiry',
-      record_id: parsed.inquiryId,
-      action_url: `/customer/inquiries/${parsed.inquiryId}`,
-    });
-
     revalidatePath('/inquiries');
     revalidatePath(`/inquiries/${parsed.inquiryId}`);
     revalidatePath(`/customer/inquiries/${parsed.inquiryId}`);
