@@ -1929,7 +1929,11 @@ html[data-theme="dark"] .form-error{border-color:#6b3d3d;background:#2b1c1c;colo
 .customer-notification-bell{display:inline-flex;align-items:center;gap:5px;padding:7px 9px;border:0;background:transparent;color:var(--arat-text-soft);font-size:12px;font-weight:650;cursor:pointer}
 .customer-notification-bell:hover{color:var(--arat-text)}
 .customer-notification-bell{position:relative}
-.customer-notification-dot{width:7px;height:7px;border-radius:50%;background:#c85b5b;box-shadow:0 0 0 2px var(--arat-surface)}
+.customer-notification-dot{width:7px;height:7px;border-radius:50%;box-shadow:0 0 0 2px var(--arat-surface)}
+.customer-notification-dot--warning{background:#d2a52f}
+.customer-notification-dot--danger{background:#c75b5b}
+.customer-notification-dot--success{background:#4f9b68}
+.customer-notification-dot--info{background:#5d86ad}
 .customer-request-notification-dot{display:inline-block;width:8px;height:8px;margin-left:8px;border-radius:50%;vertical-align:middle}
 .customer-request-notification-dot--warning{background:#d2a52f;box-shadow:0 0 0 2px #fff8dd}
 .customer-request-notification-dot--danger{background:#c75b5b;box-shadow:0 0 0 2px #fff0f0}
