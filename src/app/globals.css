@@ -1975,3 +1975,8 @@ html[data-theme="dark"] .form-error{border-color:#6b3d3d;background:#2b1c1c;colo
   display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;
   overflow:hidden;max-height:3.1em;
 }
+
+.supplier-reply-approval{margin-top:12px;padding:14px;border:1px solid #e5d18a;border-left:4px solid #d2a52f;border-radius:12px;background:#fffdf5;display:grid;gap:10px}
+.supplier-reply-approval-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.supplier-reply-draft{padding:10px 12px;border:1px solid var(--arat-border);border-radius:9px;background:var(--arat-surface);white-space:pre-wrap;line-height:1.5;font-size:13px}
+.supplier-reply-approval form{margin:0}
