@@ -283,7 +283,7 @@ async function analyzeSupplierEmailAndNotify(input: {
 
     await supabase.from('communications').insert({
       inquiry_id: input.inquiryId,
-      customer_id: null,
+      customer_id: customerRecord?.id ?? null,
       rfq_id: input.rfqId,
       direction: 'outgoing',
       channel: 'email',
@@ -463,7 +463,7 @@ export async function processInboundEmail(email: InboundEmail) {
 
   const { data: inquiryContext } = await supabase
     .from('inquiries')
-    .select('reference,customers(user_id,email,name,company_name)')
+    .select('reference,customers(id,user_id,email,name,company_name)')
     .eq('id', supplierMatch.inquiryId)
     .single();
 
@@ -495,17 +495,6 @@ export async function processInboundEmail(email: InboundEmail) {
     if (communicationError?.code === '23505') return { ok: true, duplicate: true };
     throw new ToolError('CONFLICT', communicationError?.message ?? 'Could not store supplier email');
   }
-
-  await notifyActiveAdmins({
-    category: 'supplier',
-    priority: 'normal',
-    title: 'Supplier reply received',
-    message: `A supplier replied to RFQ ${supplierMatch.rfq.rfq_code}. Open the inquiry to review the email and let AI process the response.`,
-    inquiryId: supplierMatch.inquiryId,
-    recordType: 'communication',
-    recordId: communication.id,
-    actionUrl: `/inquiries/${supplierMatch.inquiryId}`,
-  });
 
   const responseId = crypto.randomUUID();
   const attachmentMetadata = await storeSupplierAttachments(
