@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { z } from 'zod';
+
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { continueInquiryWorkflow } from './workflow';
