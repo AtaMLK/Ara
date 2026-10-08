@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { listNotifications } from '@/lib/data/admin';
 
 function label(value: string) {
@@ -24,7 +25,11 @@ export default async function NotificationsPage() {
             </div>
           ) : items.map((item) => (
             <div className="row" key={item.id}>
-              <div><strong>{item.title}</strong><div className="muted">{item.message}</div></div>
+              <div>
+                <strong>{item.title}</strong>
+                <div className="muted">{item.message}</div>
+                {item.action_url && <Link className="notification-open-link" href={item.action_url}>Open</Link>}
+              </div>
               <div><span className="badge">{label(item.category)}</span></div>
               <div><span className="badge">{label(item.priority)}</span></div>
               <div>{new Date(item.created_at).toLocaleDateString('en-GB')}</div>
