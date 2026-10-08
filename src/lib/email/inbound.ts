@@ -226,16 +226,33 @@ async function analyzeSupplierEmailAndNotify(input: {
     return;
   }
 
-  // The AI remains the primary interpreter, but a clear supplier request for
-  // missing specifications must never silently stop at an admin-only reply.
-  if (looksLikeCustomerClarificationRequest(input.body) && !analysis.customerActionRequired) {
-    analysis = {
-      ...analysis,
-      customerActionRequired: true,
-      supplierIntent: 'clarification',
-      customerQuestion: 'Please provide the detailed technical specifications or datasheet for the requested product, including any relevant operating or application requirements.',
-      summary: 'Supplier requested additional technical/product specifications before continuing the quotation.',
-    };
+  // ARAT Agent first checks whether the requested information already exists in
+  // the customer's request. Existing technical data goes to Admin approval;
+  // only genuinely missing information is requested from the Customer.
+  if (looksLikeCustomerClarificationRequest(input.body) && !analysis.customerActionRequired && !analysis.adminReviewRequired) {
+    const existingTechnicalData = requirementContext
+      .filter((item) => item.status === 'confirmed' && ['product', 'model_part_number', 'specification', 'quantity'].includes(item.type))
+      .map((item) => item.value)
+      .filter(Boolean);
+
+    if (existingTechnicalData.length > 1) {
+      analysis = {
+        ...analysis,
+        customerActionRequired: false,
+        adminReviewRequired: true,
+        supplierIntent: 'clarification',
+        supplierReplyDraft: existingTechnicalData.join(' | '),
+        summary: 'Supplier requested technical/product information that is already present in the customer request. Admin approval is required before sending it to the supplier.',
+      };
+    } else {
+      analysis = {
+        ...analysis,
+        customerActionRequired: true,
+        supplierIntent: 'clarification',
+        customerQuestion: 'Please provide the product datasheet or the specific technical information requested, if it is not already included in your request.',
+        summary: 'Supplier requested additional technical/product information before continuing.',
+      };
+    }
   }
 
   const currentCommunication = await supabase
