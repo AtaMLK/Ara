@@ -3596,6 +3596,67 @@ export async function continueInquiryWorkflow(inquiryId: string) {
     return runStage(inquiryId, 'clarification');
   }
 
+  if (inquiry.status === 'rfq') {
+    const { data: pendingClarifications } = await supabase
+      .from('clarifications')
+      .select('id,status')
+      .eq('inquiry_id', inquiryId)
+      .eq('status', 'sent')
+      .limit(1);
+
+    if ((pendingClarifications ?? []).length > 0) {
+      return {
+        execution: null,
+        outcome: 'waiting_for_customer_clarification' as const,
+      };
+    }
+
+    const { data: answeredClarifications } = await supabase
+      .from('clarifications')
+      .select('id,status,answered_at')
+      .eq('inquiry_id', inquiryId)
+      .eq('status', 'answered')
+      .order('answered_at', { ascending: false })
+      .limit(1);
+
+    if ((answeredClarifications ?? []).length > 0) {
+      const { data: supplierReply } = await supabase
+        .from('communications')
+        .select('id,rfq_id,supplier_id')
+        .eq('inquiry_id', inquiryId)
+        .eq('direction', 'incoming')
+        .not('rfq_id', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (supplierReply?.rfq_id) {
+        const { data: existingFollowUp } = await supabase
+          .from('communications')
+          .select('id')
+          .eq('inquiry_id', inquiryId)
+          .eq('rfq_id', supplierReply.rfq_id)
+          .eq('direction', 'outgoing')
+          .contains('metadata', { type: 'customer_clarification_reply_to_supplier', clarification_id: answeredClarifications[0].id })
+          .limit(1)
+          .maybeSingle();
+
+        if (!existingFollowUp) {
+          await timeline(inquiryId, 'customer_clarification_answer_ready_for_supplier', {
+            clarification_id: answeredClarifications[0].id,
+            rfq_id: supplierReply.rfq_id,
+            supplier_id: supplierReply.supplier_id,
+          }, 'email_response');
+        }
+      }
+    }
+
+    return {
+      execution: null,
+      outcome: 'rfq_waiting_for_supplier_response' as const,
+    };
+  }
+
   if (inquiry.status === 'researching') {
     const { data: research } = await supabase
       .from('research_cases')
