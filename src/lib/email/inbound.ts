@@ -12,6 +12,9 @@ import {
 import { findSupplierRFQForEmail } from '@/lib/ai/supplier-email-matching';
 import { continueInquiryWorkflow } from '@/lib/ai/workflow';
 import { parseInquiryFile } from '@/lib/ai/document-processor';
+import { runAgent } from '@/lib/ai/agent-runner';
+import { supplierEmailAnalysisOutputSchema } from '@/lib/ai/agent-schemas';
+import { getEmailProvider } from './provider';
 
 export type InboundEmailAttachment = {
   fileName: string;
@@ -125,6 +128,211 @@ async function storeSupplierAttachments(
   }
 
   return stored;
+}
+
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
+  }[char] ?? char));
+}
+
+async function analyzeSupplierEmailAndNotify(input: {
+  inquiryId: string;
+  rfqId: string;
+  communicationId: string;
+  rfqCode: string;
+  inquiryReference: string;
+  supplierName: string;
+  supplierEmail: string;
+  subject: string;
+  body: string;
+  customerUserId: string | null;
+  customerEmail: string | null;
+  customerName: string;
+}) {
+  const supabase = createSupabaseAdminClient();
+
+  let analysis: {
+    hasActionableInformation: boolean;
+    summary: string;
+    supplierIntent: 'quote' | 'clarification' | 'unavailable' | 'general_update' | 'unknown';
+    customerActionRequired: boolean;
+    customerQuestion?: string;
+    confidence: number;
+  } | null = null;
+
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const ai = await runAgent(
+        {
+          agentId: 'email_response',
+          executionId: input.communicationId,
+          inquiryId: input.inquiryId,
+        },
+        {
+          rfq_code: input.rfqCode,
+          inquiry_reference: input.inquiryReference,
+          supplier_name: input.supplierName,
+          supplier_email: input.supplierEmail,
+          subject: input.subject,
+          supplier_email_body: input.body,
+          instructions: [
+            'Analyze the supplier email for an internal procurement workflow.',
+            'Determine whether it contains actionable commercial information such as price, availability, lead time, MOQ, payment terms, quotation validity, or a clear statement that the supplier can/cannot supply.',
+            'If the supplier is asking the customer for missing information and cannot proceed without it, set customerActionRequired=true and write one concise customer-friendly question in customerQuestion.',
+            'Never expose supplier-only internal commentary, private contact details, or raw supplier wording in customerQuestion.',
+            'If there is no useful supplier information and no clear customer question, set customerActionRequired=false and explain the situation in summary.',
+            'Do not invent prices, quantities, models, availability, or customer requirements.',
+            'summary must be concise and suitable for an Admin notification.',
+          ],
+        },
+        supplierEmailAnalysisOutputSchema,
+      );
+      analysis = ai.output;
+    } catch (error) {
+      console.error('[ARAT][supplier-email-ai] analysis failed', {
+        communicationId: input.communicationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (!analysis) {
+    await supabase.from('ai_alerts').insert({
+      inquiry_id: input.inquiryId,
+      agent_id: 'email_response',
+      alert_type: 'SUPPLIER_EMAIL_AI_ANALYSIS_UNAVAILABLE',
+      message: 'Supplier email was received, but AI analysis could not be completed.',
+      priority: 'normal',
+    });
+    return;
+  }
+
+  const currentCommunication = await supabase
+    .from('communications')
+    .select('metadata')
+    .eq('id', input.communicationId)
+    .single();
+
+  const metadata = currentCommunication.data?.metadata &&
+    typeof currentCommunication.data.metadata === 'object' &&
+    !Array.isArray(currentCommunication.data.metadata)
+      ? currentCommunication.data.metadata as Record<string, unknown>
+      : {};
+
+  await supabase.from('communications').update({
+    metadata: {
+      ...metadata,
+      ai_analysis: {
+        summary: analysis.summary,
+        supplier_intent: analysis.supplierIntent,
+        has_actionable_information: analysis.hasActionableInformation,
+        customer_action_required: analysis.customerActionRequired,
+        customer_question: analysis.customerQuestion ?? null,
+        confidence: analysis.confidence,
+      },
+    },
+  }).eq('id', input.communicationId);
+
+  const notificationMessage = analysis.customerActionRequired && analysis.customerQuestion
+    ? `Supplier replied to ${input.rfqCode}. AI: ${analysis.summary} Customer clarification required: ${analysis.customerQuestion}`
+    : `Supplier replied to ${input.rfqCode}. AI: ${analysis.summary}`;
+
+  const { data: admins } = await supabase
+    .from('profiles')
+    .select('user_id')
+    .eq('role', 'admin')
+    .eq('status', 'active');
+
+  if (admins?.length) {
+    await supabase.from('notifications').insert(admins.map((admin) => ({
+      user_id: admin.user_id,
+      category: analysis.customerActionRequired ? 'customer' : 'supplier',
+      priority: analysis.customerActionRequired ? 'urgent' : 'normal',
+      title: analysis.customerActionRequired ? 'Customer clarification required' : 'Supplier reply received',
+      message: notificationMessage,
+      record_type: 'rfq',
+      record_id: input.rfqId,
+      action_url: `/rfqs?rfq=${input.rfqId}`,
+    })));
+  }
+
+  if (!analysis.customerActionRequired || !analysis.customerQuestion || !input.customerEmail) {
+    return;
+  }
+
+  const provider = getEmailProvider();
+  const customerSubject = `Action required | ${input.inquiryReference} | ${input.rfqCode}`;
+  const customerHtml =
+    `<p>Dear ${escapeHtml(input.customerName || 'Customer')},</p>` +
+    `<p>To complete your request, we need the following information:</p>` +
+    `<p><strong>${escapeHtml(analysis.customerQuestion)}</strong></p>` +
+    `<p>Please reply to this email with the requested information. You may also use your ARAT customer portal.</p>` +
+    `<p>Best regards,<br/>Arya Automation</p>`;
+
+  try {
+    const sent = await provider.send({
+      to: [input.customerEmail],
+      subject: customerSubject,
+      html: customerHtml,
+      text: customerHtml.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim(),
+      from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
+      idempotencyKey: `supplier-clarification:${input.communicationId}`,
+    });
+
+    await supabase.from('communications').insert({
+      inquiry_id: input.inquiryId,
+      customer_id: null,
+      rfq_id: input.rfqId,
+      direction: 'outgoing',
+      channel: 'email',
+      provider_message_id: sent.providerMessageId ?? null,
+      thread_id: sent.threadId ?? null,
+      subject: customerSubject,
+      body: customerHtml,
+      sent_at: sent.sentAt ?? new Date().toISOString(),
+      metadata: {
+        type: 'supplier_clarification_to_customer',
+        source_communication_id: input.communicationId,
+        customer_question: analysis.customerQuestion,
+      },
+    });
+
+    if (input.customerUserId) {
+      await supabase.from('notifications').insert({
+        user_id: input.customerUserId,
+        category: 'customer',
+        priority: 'urgent',
+        title: 'Action required for your request',
+        message: analysis.customerQuestion,
+        record_type: 'rfq',
+        record_id: input.rfqId,
+        action_url: `/customer/inquiries/${input.inquiryId}`,
+      });
+    }
+
+    await supabase.from('timeline_events').insert({
+      inquiry_id: input.inquiryId,
+      event_type: 'supplier_clarification_sent_to_customer',
+      visibility: 'customer',
+      actor_type: 'ai',
+      agent_id: 'email_response',
+      metadata: {
+        rfq_id: input.rfqId,
+        source_communication_id: input.communicationId,
+        customer_question: analysis.customerQuestion,
+      },
+    });
+  } catch (error) {
+    await supabase.from('ai_alerts').insert({
+      inquiry_id: input.inquiryId,
+      agent_id: 'email_response',
+      alert_type: 'CUSTOMER_CLARIFICATION_EMAIL_FAILED',
+      message: error instanceof Error ? error.message : 'Could not send customer clarification email.',
+      priority: 'urgent',
+    });
+  }
 }
 
 export async function processInboundEmail(email: InboundEmail) {
@@ -252,6 +460,36 @@ export async function processInboundEmail(email: InboundEmail) {
       attachment_count: email.attachments?.length ?? 0,
     },
   }).select('id').single();
+
+  const { data: inquiryContext } = await supabase
+    .from('inquiries')
+    .select('reference,customers(user_id,email,name,company_name)')
+    .eq('id', supplierMatch.inquiryId)
+    .single();
+
+  const customerRecord = Array.isArray(inquiryContext?.customers)
+    ? inquiryContext?.customers[0]
+    : inquiryContext?.customers;
+  const supplierRecord = await supabase
+    .from('suppliers')
+    .select('legal_name')
+    .eq('id', supplierMatch.supplierId)
+    .single();
+
+  await analyzeSupplierEmailAndNotify({
+    inquiryId: supplierMatch.inquiryId,
+    rfqId: supplierMatch.rfq.id,
+    communicationId: communication!.id,
+    rfqCode: supplierMatch.rfq.rfq_code,
+    inquiryReference: inquiryContext?.reference ?? supplierMatch.rfq.subject ?? 'Inquiry',
+    supplierName: supplierRecord.data?.legal_name ?? 'Supplier',
+    supplierEmail: extractCustomerEmail(email.from),
+    subject,
+    body,
+    customerUserId: customerRecord?.user_id ?? null,
+    customerEmail: customerRecord?.email ?? null,
+    customerName: customerRecord?.company_name || customerRecord?.name || 'Customer',
+  });
 
   if (communicationError || !communication) {
     if (communicationError?.code === '23505') return { ok: true, duplicate: true };
