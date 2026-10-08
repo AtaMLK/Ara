@@ -56,7 +56,19 @@ export default async function RfqsPage({ searchParams }: Props) {
               <div><span className="badge">{label(item.status)}</span></div>
               <div className="rfq-date"><span>{new Date(item.created_at).toLocaleDateString('en-GB')}</span>{item.sent_at && <small>Sent {new Date(item.sent_at).toLocaleDateString('en-GB')}</small>}</div>
               <div className="rfq-actions-cell">
-                <RfqActions rfqId={item.id} rfqCode={item.rfq_code || 'RFQ'} subject={item.subject} body={item.body} supplier={item.suppliers?.legal_name ?? 'Supplier'} recipient={item.recipient_email} status={item.status} createdAt={item.created_at} sentAt={item.sent_at} />
+                <RfqActions
+                  rfqId={item.id}
+                  rfqCode={item.rfq_code || 'RFQ'}
+                  subject={item.subject}
+                  body={item.body}
+                  supplier={item.suppliers?.legal_name ?? 'Supplier'}
+                  recipient={item.recipient_email}
+                  status={item.status}
+                  createdAt={item.created_at}
+                  sentAt={item.sent_at}
+                  supplierNotification={item.supplierNotification}
+                  supplierReply={item.supplierReply}
+                />
                 {item.status === 'pending_approval' && <ApproveRfqButton id={item.id} />}
                 {item.status === 'approved' && <SendRfqButton id={item.id} />}
               </div>
