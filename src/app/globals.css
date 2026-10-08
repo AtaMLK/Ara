@@ -1866,3 +1866,36 @@ html[data-theme="dark"] .form-error{border-color:#6b3d3d;background:#2b1c1c;colo
 @media(max-width:700px){.customer-notification-card{align-items:flex-start;flex-direction:column}.customer-notification-head{align-items:flex-start;flex-direction:column;gap:4px}}
 
 .notification-open-link{display:inline-block;margin-top:7px;font-size:11px;font-weight:700;color:var(--arat-accent);text-decoration:none}.notification-open-link:hover{text-decoration:underline}
+
+/* Shared inquiry process tracker */
+.inquiry-process{background:#f8fafb;border:1px solid #e3e8ed;border-radius:16px;padding:18px 20px}
+.inquiry-process .section-head{margin-bottom:18px}
+.inquiry-process-track{display:grid;grid-template-columns:repeat(11,minmax(95px,1fr));gap:0;overflow-x:auto;padding:4px 0 6px}
+.inquiry-process-step{position:relative;display:grid;justify-items:center;gap:8px;min-width:110px;padding:0 8px;border:0;background:transparent;color:inherit;cursor:pointer;text-align:center}
+.inquiry-process-step:not(:last-child)::after{content:"";position:absolute;top:17px;left:calc(50% + 17px);right:calc(-50% + 17px);height:2px;background:#dfe4e9}
+.inquiry-process-step--completed:not(:last-child)::after{background:#a9cbb5}
+.inquiry-process-icon{position:relative;z-index:1;display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#fff;border:1px solid #d8dee5;color:#8b949e}
+.inquiry-process-step--completed .inquiry-process-icon{background:#edf7f0;border-color:#a9cbb5;color:#287044}
+.inquiry-process-step--current .inquiry-process-icon{background:#edf3fb;border-color:#8eadd0;color:#37628e;box-shadow:0 0 0 4px #edf3fb}
+.inquiry-process-step--warning .inquiry-process-icon{background:#fff7e6;border-color:#e4c77c;color:#86651d;box-shadow:0 0 0 4px #fff7e6}
+.inquiry-process-current-dot{width:9px;height:9px;border-radius:50%;background:#37628e}
+.inquiry-process-step-text{display:grid;gap:4px;max-width:130px}
+.inquiry-process-step-text strong{font-size:12px;line-height:1.3}
+.inquiry-process-step-text span{font-size:10px;line-height:1.35;color:#7a848e}
+.inquiry-process-step--upcoming .inquiry-process-step-text{opacity:.7}
+.inquiry-process-step:hover .inquiry-process-icon{transform:translateY(-1px)}
+.inquiry-process-step:focus-visible{outline:2px solid #8eadd0;outline-offset:4px;border-radius:8px}
+.inquiry-process-modal-backdrop{position:fixed;inset:0;z-index:10000;display:grid;place-items:center;padding:24px;background:#17202acc}
+.inquiry-process-modal{width:min(760px,calc(100vw - 40px));height:min(620px,calc(100vh - 48px));max-height:calc(100vh - 48px);display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:#fff;border:1px solid #dfe4e9;border-radius:16px;box-shadow:0 24px 70px #0000002e;overflow:hidden}
+.inquiry-process-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:20px 22px;border-bottom:1px solid #e8ebee}
+.inquiry-process-modal-head h2{margin:5px 0 4px;font-size:20px}
+.inquiry-process-modal-body{min-height:0;overflow:auto;padding:22px}
+.inquiry-process-modal-body p{margin:14px 0 0;color:#38434e;line-height:1.7;white-space:pre-wrap}
+.inquiry-process-modal-status{display:inline-flex;padding:5px 9px;border-radius:999px;font-size:11px;font-weight:700}
+.inquiry-process-modal-status--completed{background:#edf7f0;color:#287044}
+.inquiry-process-modal-status--current{background:#edf3fb;color:#37628e}
+.inquiry-process-modal-status--warning{background:#fff7e6;color:#86651d}
+.inquiry-process-modal-status--upcoming{background:#f0f2f4;color:#68727d}
+.inquiry-process-modal-foot{display:flex;justify-content:flex-end;padding:14px 22px;border-top:1px solid #e8ebee;background:#fafbfc}
+@media(max-width:1000px){.inquiry-process-track{grid-template-columns:repeat(11,110px)}}
+@media(max-width:600px){.inquiry-process{padding:16px}.inquiry-process-track{grid-template-columns:repeat(11,105px)}.inquiry-process-modal-backdrop{padding:12px}.inquiry-process-modal{width:100%;height:calc(100vh - 24px);max-height:calc(100vh - 24px)}.inquiry-process-modal-head,.inquiry-process-modal-body,.inquiry-process-modal-foot{padding-left:16px;padding-right:16px}}
