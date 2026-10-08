@@ -866,8 +866,8 @@ Request reference: ${inquiry.reference}`;
         priority: 'normal',
         title: 'More information required',
         message: `Please answer the clarification for request ${inquiry.reference}.`,
-        record_type: 'inquiry',
-        record_id: inquiry.id,
+        record_type: 'clarification',
+        record_id: clarification.id,
         action_url: `/customer/inquiries/${inquiry.id}`,
       });
     }
@@ -910,8 +910,47 @@ export async function answerClarificationAction(input: { inquiryId: string; clar
       throw new ToolError('CONFLICT', 'This clarification has already been answered');
     }
 
+    const adminSupabase = createSupabaseAdminClient();
+
+    // The customer's old "More information required" notification is no longer
+    // actionable once this clarification has been answered. Mark the exact
+    // clarification notification as read so the customer notification count
+    // does not remain stuck on an already-resolved action.
+    await adminSupabase
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('user_id', user.id)
+      .eq('record_type', 'clarification')
+      .eq('record_id', parsed.clarificationId)
+      .eq('title', 'More information required')
+      .is('read_at', null);
+
+    // Do not notify the customer again just to confirm their own answer.
+    // The next actionable event belongs to the procurement team.
+    const { data: adminProfiles } = await adminSupabase
+      .from('profiles')
+      .select('user_id')
+      .eq('role', 'admin')
+      .eq('status', 'active');
+
+    if (adminProfiles?.length) {
+      await adminSupabase.from('notifications').insert(
+        adminProfiles.map((adminProfile) => ({
+          user_id: adminProfile.user_id,
+          category: 'task',
+          priority: 'normal',
+          title: 'Customer answered clarification',
+          message: `Customer answered a clarification for request ${parsed.inquiryId}.`,
+          record_type: 'clarification',
+          record_id: parsed.clarificationId,
+          action_url: `/inquiries/${parsed.inquiryId}`,
+        })),
+      );
+    }
+
     revalidatePath('/inquiries');
     revalidatePath(`/inquiries/${parsed.inquiryId}`);
+    revalidatePath('/customer');
     revalidatePath(`/customer/inquiries/${parsed.inquiryId}`);
     return { ok: true, requirementId: result.requirementId };
   } catch (error) {
