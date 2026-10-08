@@ -19,6 +19,7 @@ export default function AnswerClarificationForm({ inquiryId, clarificationId }: 
       await answerClarificationAction({ inquiryId, clarificationId, answer });
       setDone(true);
       setAnswer('');
+      router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to submit your answer.');
     } finally {
