@@ -152,7 +152,7 @@ export async function listRfqs(search?: string, status?: string) {
 
   const [{ data: inquiries }, { data: suppliers }, { data: notifications }, { data: replies }] = await Promise.all([
     inquiryIds.length
-      ? supabase.from('inquiries').select('id,reference,title').in('id', inquiryIds)
+      ? supabase.from('inquiries').select('id,reference,title,original_customer_text').in('id', inquiryIds)
       : Promise.resolve({ data: [] as Array<{ id: string; reference: string; title: string }> }),
     supplierIds.length
       ? supabase.from('suppliers').select('id,legal_name').in('id', supplierIds)
@@ -176,12 +176,29 @@ export async function listRfqs(search?: string, status?: string) {
     if (!replyMap.has(reply.rfq_id)) replyMap.set(reply.rfq_id, reply);
   }
 
+  const { data: conversationRows } = rows.length
+    ? await supabase.from('communications')
+        .select('id,rfq_id,supplier_id,direction,subject,body,received_at,sent_at,created_at,metadata')
+        .eq('channel', 'email')
+        .in('rfq_id', rows.map((row) => row.id))
+        .order('created_at', { ascending: true })
+    : { data: [] as Array<Record<string, unknown>> };
+
+  const conversationMap = new Map<string, Array<Record<string, unknown>>>();
+  for (const message of conversationRows ?? []) {
+    if (!message.rfq_id) continue;
+    const list = conversationMap.get(message.rfq_id) ?? [];
+    list.push(message);
+    conversationMap.set(message.rfq_id, list);
+  }
+
   return rows.map((row) => ({
     ...row,
     inquiries: row.inquiry_id ? inquiryMap.get(row.inquiry_id) ?? null : null,
     suppliers: row.supplier_id ? supplierMap.get(row.supplier_id) ?? null : null,
     supplierNotification: notificationMap.get(row.id) ?? null,
     supplierReply: replyMap.get(row.id) ?? null,
+    conversation: conversationMap.get(row.id) ?? [],
   }));
 }
 
@@ -207,17 +224,34 @@ export async function listSupplierRfqsBySupplierIds(supplierIds: string[]) {
 
   const { data, error } = await supabase
     .from('rfqs')
-    .select('id,rfq_code,status,subject,body,recipient_email,created_at,sent_at,supplier_id')
+    .select('id,rfq_code,status,subject,body,recipient_email,created_at,sent_at,supplier_id,inquiry_id')
     .in('supplier_id', supplierIds)
     .order('created_at', { ascending: false })
     .limit(500);
 
   if (error) throw error;
 
+  const rfqIds = (data ?? []).map((row) => row.id);
+  const { data: communications } = rfqIds.length
+    ? await supabase.from('communications')
+        .select('id,rfq_id,supplier_id,direction,subject,body,received_at,sent_at,created_at,metadata')
+        .eq('channel', 'email')
+        .in('rfq_id', rfqIds)
+        .order('created_at', { ascending: true })
+    : { data: [] as Array<Record<string, unknown>> };
+
+  const communicationMap = new Map<string, Array<Record<string, unknown>>>();
+  for (const message of communications ?? []) {
+    if (!message.rfq_id) continue;
+    const list = communicationMap.get(message.rfq_id) ?? [];
+    list.push(message);
+    communicationMap.set(message.rfq_id, list);
+  }
+
   const map = new Map<string, Array<Record<string, unknown>>>();
   for (const row of data ?? []) {
     const list = map.get(row.supplier_id) ?? [];
-    list.push(row);
+    list.push({ ...row, conversation: (communicationMap.get(row.id) ?? []).filter((message) => message.supplier_id === row.supplier_id) });
     map.set(row.supplier_id, list);
   }
   return map;
