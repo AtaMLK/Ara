@@ -67,6 +67,8 @@ export default function CustomerNotificationCenter({
 
   const selectedDetail = selected ? details[selected.id] : undefined;
   const selectedTone = selected ? tone(selected) : 'info';
+  const latestUnread = items.find((item) => !item.read_at) ?? items[0];
+  const indicatorTone = latestUnread ? tone(latestUnread) : 'info';
 
   return (
     <>
@@ -78,7 +80,7 @@ export default function CustomerNotificationCenter({
         title="Notifications"
       >
         <Bell size={17} /><span>Notifications</span>
-        {items.some((item) => !item.read_at) && <span className="customer-notification-dot" />}
+        {items.some((item) => !item.read_at) && <span className={`customer-notification-dot customer-notification-dot--${indicatorTone}`} />}
       </button>
 
       {selected && typeof document !== 'undefined' && createPortal(
