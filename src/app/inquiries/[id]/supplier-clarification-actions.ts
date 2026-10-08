@@ -6,7 +6,9 @@ import { requireAdmin } from '@/lib/ai/guards';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getEmailProvider } from '@/lib/email/provider';
 
-export async function approveSupplierClarificationReplyAction(communicationId: string) {
+export async function approveSupplierClarificationReplyAction(formData: FormData) {
+  const communicationId = String(formData.get('communicationId') ?? '');
+  if (!communicationId) throw new Error('Communication ID is required');
   const { user } = await requireAdmin();
   const supabase = createSupabaseAdminClient();
 
