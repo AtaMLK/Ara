@@ -14,6 +14,18 @@ type Rfq = {
   recipient_email: string | null;
   created_at: string;
   sent_at: string | null;
+  conversation?: Array<{
+    id: string;
+    rfq_id?: string | null;
+    supplier_id?: string | null;
+    direction: 'incoming' | 'outgoing';
+    subject: string | null;
+    body: string | null;
+    received_at?: string | null;
+    sent_at?: string | null;
+    created_at: string;
+    metadata?: unknown;
+  }>;
 };
 
 export function SupplierRfqButton({ supplierName, rfqs }: { supplierName: string; rfqs: Rfq[] }) {
@@ -65,6 +77,8 @@ export function SupplierRfqButton({ supplierName, rfqs }: { supplierName: string
                         status={rfq.status}
                         createdAt={rfq.created_at}
                         sentAt={rfq.sent_at}
+                        conversation={rfq.conversation ?? []}
+                        showCustomerConversation={false}
                       />
                     </div>
                   </div>
