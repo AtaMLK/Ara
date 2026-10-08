@@ -421,6 +421,15 @@ export const supplierVerificationOutputSchema = z.object({
   evidence: z.array(z.string()).min(1),
 });
 
+export const supplierEmailAnalysisOutputSchema = z.object({
+  hasActionableInformation: z.boolean(),
+  summary: z.string().min(1),
+  supplierIntent: z.enum(['quote', 'clarification', 'unavailable', 'general_update', 'unknown']).default('unknown'),
+  customerActionRequired: z.boolean().default(false),
+  customerQuestion: z.string().min(1).optional(),
+  confidence: z.number().min(0).max(1).default(0.5),
+});
+
 export const quoteExtractionOutputSchema = z.object({
   quotes: z.array(z.object({
     productId: z.string().uuid().optional(),
