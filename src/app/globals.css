@@ -1842,3 +1842,16 @@ html[data-theme="dark"] .rfq-table .row.header{
 @media(max-width:700px){.customer-item-grid{grid-template-columns:1fr}.customer-item-card{padding:14px}}
 html[data-theme="dark"] .customer-item-card{background:var(--arat-surface);border-color:var(--arat-border)}
 html[data-theme="dark"] .form-error{border-color:#6b3d3d;background:#2b1c1c;color:#f0a6a6}
+
+
+.rfq-notification-button{position:relative}
+.rfq-notification-button.is-unread{border-color:#d8b84c;color:#7b641a;background:#fff9e8}
+.rfq-notification-dot{position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#c49319;border:1px solid var(--arat-surface)}
+.rfq-notification-dialog{position:relative;width:min(760px,calc(100vw - 40px));max-height:min(760px,calc(100vh - 48px));overflow:auto;border:1px solid var(--arat-border-strong);border-radius:18px;background:var(--arat-surface);color:var(--arat-text);box-shadow:0 30px 90px rgba(20,35,50,.24);animation:arat-dialog-in .18s cubic-bezier(.2,.8,.2,1) both}
+.rfq-notification-summary{margin:18px 24px 0;padding:16px;border:1px solid var(--arat-border);border-radius:12px;background:var(--arat-surface-soft)}
+.rfq-notification-summary-head{display:flex;align-items:center;gap:8px}
+.rfq-notification-summary p{margin:10px 0;line-height:1.6}
+.rfq-notification-email{margin:18px 24px 24px;padding:16px;border:1px solid var(--arat-border);border-radius:12px;background:var(--arat-surface)}
+.rfq-notification-email-subject{margin-top:12px;padding-top:12px;border-top:1px solid var(--arat-border);font-weight:650}
+.rfq-notification-email-body{margin-top:10px;white-space:pre-wrap;line-height:1.65;max-height:320px;overflow:auto;color:var(--arat-text-soft)}
+
