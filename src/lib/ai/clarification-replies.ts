@@ -59,7 +59,6 @@ export async function applyCustomerClarificationAnswer(input: {
     .single();
 
   if (clarificationError || !clarification) throw new ToolError('NOT_FOUND', 'Clarification not found');
-  if (!clarification.requirement_id) throw new ToolError('VALIDATION', 'Clarification is not linked to a requirement');
 
   if (clarification.status === 'answered') {
     await continueInquiryWorkflow(input.inquiryId);
@@ -68,6 +67,41 @@ export async function applyCustomerClarificationAnswer(input: {
 
   if (clarification.status !== 'sent') {
     throw new ToolError('CONFLICT', 'Only sent clarifications can be answered');
+  }
+
+  if (!clarification.requirement_id) {
+    const { data: clarificationUpdated, error: clarificationUpdateError } = await supabase
+      .from('clarifications')
+      .update({
+        answer,
+        status: 'answered',
+        answered_at: new Date().toISOString(),
+      })
+      .eq('id', clarification.id)
+      .eq('status', 'sent')
+      .select('id')
+      .single();
+
+    if (clarificationUpdateError || !clarificationUpdated) {
+      throw new ToolError('CONFLICT', 'Clarification could not be updated. Refresh and try again.');
+    }
+
+    await supabase.from('timeline_events').insert({
+      inquiry_id: input.inquiryId,
+      event_type: input.communicationId ? 'clarification_answer_received_by_email' : 'clarification_answer_applied',
+      visibility: 'customer',
+      actor_type: 'customer',
+      actor_user_id: input.customerUserId ?? null,
+      metadata: {
+        clarification_id: clarification.id,
+        communication_id: input.communicationId ?? null,
+        channel: input.communicationId ? 'email' : 'portal',
+        generic_supplier_clarification: true,
+      },
+    });
+
+    await continueInquiryWorkflow(input.inquiryId);
+    return { ok: true, duplicate: false, requirementId: null };
   }
 
   const { data: requirement, error: requirementError } = await supabase
