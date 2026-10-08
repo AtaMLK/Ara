@@ -9,6 +9,7 @@ import { RequirementEdit } from './requirement-edit';
 import { WorkflowPanel } from './workflow-panel';
 import { CandidatePanel } from './candidate-panel';
 import InquiryProcess, { type InquiryProcessStep } from '@/components/inquiry-process';
+import { approveSupplierClarificationReplyAction } from './supplier-clarification-actions';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -132,6 +133,30 @@ export default async function InquiryDetailPage({ params }: Props) {
                   <div className="email-center-subject">{email.subject || '(No subject)'}</div>
                   <div className="email-center-meta">{incoming ? 'Received' : 'Sent'} · {email.channel}</div>
                   <div className="email-center-body">{email.body || 'No message body recorded.'}</div>
+                  {(() => {
+                    const aiAnalysis = metadata.ai_analysis && typeof metadata.ai_analysis === 'object' && !Array.isArray(metadata.ai_analysis)
+                      ? metadata.ai_analysis as Record<string, unknown>
+                      : {};
+                    const reviewPending = aiAnalysis.admin_review_required === true && aiAnalysis.admin_review_status === 'pending';
+                    const draft = typeof aiAnalysis.supplier_reply_draft === 'string' ? aiAnalysis.supplier_reply_draft : '';
+                    if (!reviewPending || !draft) return null;
+                    return (
+                      <div className="supplier-reply-approval">
+                        <div className="supplier-reply-approval-head">
+                          <div>
+                            <strong>ARAT Agent prepared a reply</strong>
+                            <div className="muted">The requested information already exists in the inquiry. Admin approval is required before sending it to the supplier.</div>
+                          </div>
+                          <span className="badge status-pending_approval">Approval required</span>
+                        </div>
+                        <div className="supplier-reply-draft">{draft}</div>
+                        <form action={approveSupplierClarificationReplyAction}>
+                          <input type="hidden" name="communicationId" value={email.id} />
+                          <button className="primary-button" type="submit">Approve &amp; Send to Supplier</button>
+                        </form>
+                      </div>
+                    );
+                  })()}
                 </article>
               );
             })}
