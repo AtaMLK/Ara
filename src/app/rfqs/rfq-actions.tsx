@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Bell, Eye, Loader2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteRfqAction } from './actions';
+import { markNotificationReadAction } from '@/app/notifications/actions';
 
 type Props = {
   rfqId: string;
@@ -40,6 +41,17 @@ export function RfqActions(props: Props) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  async function openSupplierNotification() {
+    setNotificationOpen(true);
+    if (props.supplierNotification && !props.supplierNotification.read_at) {
+      try {
+        await markNotificationReadAction(props.supplierNotification.id);
+      } catch {
+        // The notification is still useful even if marking it read fails.
+      }
+    }
+  }
+
   async function remove() {
     setBusy(true);
     try {
@@ -62,7 +74,7 @@ export function RfqActions(props: Props) {
     <>
       <div className="rfq-row-actions">
         {props.supplierNotification && (
-          <button type="button" className={`icon-button rfq-notification-button${!props.supplierNotification.read_at ? ' is-unread' : ''}`} onClick={() => setNotificationOpen(true)} title="Supplier update" aria-label={`Supplier update for ${props.rfqCode}`}>
+          <button type="button" className={`icon-button rfq-notification-button${!props.supplierNotification.read_at ? ' is-unread' : ''}`} onClick={() => void openSupplierNotification()} title="Supplier update" aria-label={`Supplier update for ${props.rfqCode}`}>
             <Bell size={16} />
             {!props.supplierNotification.read_at && <span className="rfq-notification-dot" aria-hidden="true" />}
           </button>
