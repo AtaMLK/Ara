@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Bell, Eye, Loader2, Trash2, X } from 'lucide-react';
+import { Bell, Eye, Loader2, Mail, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteRfqAction } from './actions';
 import { markNotificationReadAction } from '@/app/notifications/actions';
