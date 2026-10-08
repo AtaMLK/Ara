@@ -31,7 +31,8 @@ export default function InquiryProcess({ steps, eyebrow = 'PROCESS' }: { steps: 
             <button type="button" role="listitem" key={step.key}
               className={`inquiry-process-step inquiry-process-step--${step.state}`}
               onClick={() => setSelected(step)}
-              aria-label={`${step.title}: ${step.state}`}>
+              aria-label={`${step.title}: ${step.state}`}
+              title={step.detail || step.description}>
               <span className="inquiry-process-icon">
                 {step.state === 'completed' ? <Check size={15} /> : step.state === 'warning' ? <Clock3 size={15} /> : step.state === 'current' ? <span className="inquiry-process-current-dot" /> : <Circle size={13} />}
               </span>
