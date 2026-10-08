@@ -138,6 +138,19 @@ async function analyzeSupplierEmailAndNotify(input: {
 }) {
   const supabase = createSupabaseAdminClient();
 
+  const { data: inquiryRequirements } = await supabase
+    .from('requirements')
+    .select('type,value,status')
+    .eq('inquiry_id', input.inquiryId)
+    .order('created_at', { ascending: true })
+    .limit(100);
+
+  const requirementContext = (inquiryRequirements ?? []).map((item) => ({
+    type: item.type,
+    value: item.value,
+    status: item.status,
+  }));
+
   let analysis: {
     hasActionableInformation: boolean;
     summary: string;
@@ -162,6 +175,7 @@ async function analyzeSupplierEmailAndNotify(input: {
           supplier_email: input.supplierEmail,
           subject: input.subject,
           supplier_email_body: input.body,
+          inquiry_requirements: requirementContext,
           instructions: [
             'Analyze the supplier email for an internal procurement workflow.',
             'Determine whether it contains actionable commercial information such as price, availability, lead time, MOQ, payment terms, quotation validity, or a clear statement that the supplier can/cannot supply.',
@@ -170,7 +184,7 @@ async function analyzeSupplierEmailAndNotify(input: {
             'customerQuestion is CUSTOMER-FACING and must contain only the minimum information the customer needs to provide.',
             'Never expose supplier name, supplier email, supplier contact person, supplier internal notes, supplier pricing, supplier commercial terms, private supplier details, or raw supplier wording in customerQuestion.',
             'Do not mention that a specific supplier asked for the information. Say only that the request needs additional information to continue.',
-            'If the supplier email is vague but clearly asks for more product/technical information (for example "please provide detailed information about the specifications"), treat that as customerActionRequired=true and ask the customer for the relevant specifications based on the inquiry context. Do not invent a specific specification that is not supported by the inquiry.',
+            'If the supplier email is vague but clearly asks for more product/technical information (for example "please provide detailed information about the specifications"), treat that as customerActionRequired=true and ask the customer for the relevant missing information based on the inquiry context and the supplier email. Use the inquiry_requirements context to make the question specific when the context supports it. Do not invent a specification that is not supported by the inquiry or supplier email.',
             'If there is no useful supplier information and no clear customer question, set customerActionRequired=false and explain the situation in summary.',
             'Do not invent prices, quantities, models, availability, or customer requirements.',
             'summary must be concise and suitable for an Admin notification.',
