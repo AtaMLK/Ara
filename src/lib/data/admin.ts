@@ -131,7 +131,7 @@ export async function listSuppliers(search?: string, status?: string) {
 }
 
 export async function listRfqs(search?: string, status?: string) {
-  await requireAdminPage();
+  const { user } = await requireAdminPage();
   const supabase = createSupabaseAdminClient();
 
   let query = supabase
@@ -150,22 +150,38 @@ export async function listRfqs(search?: string, status?: string) {
   const inquiryIds = rows.map((row) => row.inquiry_id).filter(Boolean);
   const supplierIds = rows.map((row) => row.supplier_id).filter(Boolean);
 
-  const [{ data: inquiries }, { data: suppliers }] = await Promise.all([
+  const [{ data: inquiries }, { data: suppliers }, { data: notifications }, { data: replies }] = await Promise.all([
     inquiryIds.length
       ? supabase.from('inquiries').select('id,reference,title').in('id', inquiryIds)
       : Promise.resolve({ data: [] as Array<{ id: string; reference: string; title: string }> }),
     supplierIds.length
       ? supabase.from('suppliers').select('id,legal_name').in('id', supplierIds)
       : Promise.resolve({ data: [] as Array<{ id: string; legal_name: string }> }),
+    rows.length
+      ? supabase.from('notifications').select('id,record_id,title,message,priority,read_at,created_at').eq('user_id', user.id).eq('record_type', 'rfq').in('record_id', rows.map((row) => row.id)).order('created_at', { ascending: false })
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+    rows.length
+      ? supabase.from('communications').select('id,rfq_id,subject,body,received_at,created_at,metadata').eq('direction', 'incoming').eq('channel', 'email').in('rfq_id', rows.map((row) => row.id)).order('created_at', { ascending: false })
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
   ]);
 
   const inquiryMap = new Map((inquiries ?? []).map((item) => [item.id, item]));
   const supplierMap = new Map((suppliers ?? []).map((item) => [item.id, item]));
+  const notificationMap = new Map<string, (typeof notifications)[number]>();
+  for (const notification of notifications ?? []) {
+    if (!notificationMap.has(notification.record_id)) notificationMap.set(notification.record_id, notification);
+  }
+  const replyMap = new Map<string, (typeof replies)[number]>();
+  for (const reply of replies ?? []) {
+    if (!replyMap.has(reply.rfq_id)) replyMap.set(reply.rfq_id, reply);
+  }
 
   return rows.map((row) => ({
     ...row,
     inquiries: row.inquiry_id ? inquiryMap.get(row.inquiry_id) ?? null : null,
     suppliers: row.supplier_id ? supplierMap.get(row.supplier_id) ?? null : null,
+    supplierNotification: notificationMap.get(row.id) ?? null,
+    supplierReply: replyMap.get(row.id) ?? null,
   }));
 }
 
