@@ -8,6 +8,7 @@ import { InquiryEditForm } from './edit-form';
 import { RequirementEdit } from './requirement-edit';
 import { WorkflowPanel } from './workflow-panel';
 import { CandidatePanel } from './candidate-panel';
+import InquiryProcess, { type InquiryProcessStep } from '@/components/inquiry-process';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -41,6 +42,27 @@ export default async function InquiryDetailPage({ params }: Props) {
   const customerName = customer?.company_name || customer?.name || 'Customer';
   const displayReference = getInquiryDisplayReference(inquiry.reference, customerName, inquiry.created_at, inquiry.current_version, inquiry.updated_at);
 
+  const supplierReplyCount = (communicationsResult.data ?? []).filter((item) => item.direction === 'incoming' && item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata) && (item.metadata as Record<string, unknown>).type === 'supplier_rfq_reply').length;
+  const hasClarification = (clarificationsResult.data ?? []).some((item) => ['sent', 'pending_approval', 'draft'].includes(item.status));
+  const hasCompletedResearch = (researchResult.data ?? []).some((item) => item.status === 'completed');
+  const hasVerifiedSupplier = (candidatesResult.data ?? []).some((item) => item.supplier_id && item.suppliers?.verification_status === 'verified');
+  const hasSentRfq = (rfqsResult.data ?? []).some((item) => item.status === 'sent' || item.sent_at);
+  const hasQuote = inquiry.status === 'quoting' || inquiry.status === 'converted';
+  const hasCustomerDecision = inquiry.status === 'converted';
+  const adminProcessSteps: InquiryProcessStep[] = [
+    { key: 'request', title: 'Request Received', description: 'Customer request has been submitted.', state: 'completed' },
+    { key: 'ai', title: 'AI Understanding', description: 'Requirements are extracted and normalized.', state: executionsResult.data?.length ? 'completed' : 'current' },
+    { key: 'research', title: 'Supplier Research', description: 'Potential suppliers are researched and enriched.', state: hasCompletedResearch ? 'completed' : inquiry.status === 'researching' ? 'current' : 'upcoming' },
+    { key: 'verification', title: 'Supplier Verification', description: 'Supplier identity and contact details are verified.', state: hasVerifiedSupplier ? 'completed' : hasCompletedResearch ? 'current' : 'upcoming' },
+    { key: 'rfq', title: 'RFQ Sent', description: 'Approved quotation requests are sent to suppliers.', state: hasSentRfq ? 'completed' : inquiry.status === 'rfq' ? 'current' : 'upcoming' },
+    { key: 'response', title: 'Supplier Response', description: 'Supplier email responses are received and processed.', state: supplierReplyCount > 0 ? 'completed' : hasSentRfq ? 'current' : 'upcoming', detail: supplierReplyCount > 0 ? `${supplierReplyCount} supplier email response(s) received. Review the full email in Email Center.` : 'Waiting for a supplier response.' },
+    { key: 'clarification', title: 'Additional Information', description: 'Extra information may be requested from the customer.', state: hasClarification ? 'warning' : hasQuote ? 'completed' : supplierReplyCount > 0 ? 'current' : 'upcoming', detail: hasClarification ? 'Additional information is required from the customer before the process can continue.' : 'No customer clarification is currently pending.' },
+    { key: 'quote', title: 'Quote Preparation', description: 'Supplier responses are analyzed and the customer quote is prepared.', state: hasQuote ? (inquiry.status === 'converted' ? 'completed' : 'current') : 'upcoming' },
+    { key: 'quotation', title: 'Quotation Sent', description: 'The prepared quotation is sent to the customer.', state: inquiry.status === 'converted' ? 'completed' : 'upcoming' },
+    { key: 'decision', title: 'Customer Decision', description: 'Customer accepts, rejects, or requests a revision.', state: hasCustomerDecision ? 'completed' : 'upcoming' },
+    { key: 'completed', title: 'Completed', description: 'The procurement request has reached its final state.', state: inquiry.status === 'converted' ? 'completed' : 'upcoming' },
+  ];
+
   return (
     <>
       <header className="topbar">
@@ -52,6 +74,8 @@ export default async function InquiryDetailPage({ params }: Props) {
         </div>
         <div className="topbar-actions"><span className={`badge status-badge status-${inquiry.status}`}>{label(inquiry.status)}</span><InquiryEditForm inquiryId={inquiry.id} title={inquiry.title} description={inquiry.description ?? ""} version={inquiry.current_version} /></div>
       </header>
+
+      <InquiryProcess steps={adminProcessSteps} eyebrow="PROCUREMENT PROCESS" />
 
       <CandidatePanel inquiryId={inquiry.id} requirements={requirementsResult.data ?? []} candidates={candidatesResult.data ?? []} />
 
