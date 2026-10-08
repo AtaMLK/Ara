@@ -3,10 +3,11 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Bell, Eye, Loader2, Mail, Trash2, X } from 'lucide-react';
+import { Bell, Eye, Loader2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteRfqAction } from './actions';
 import { markNotificationReadAction } from '@/app/notifications/actions';
+import { RfqConversationModal, type RfqConversationMessage } from '@/components/rfq-conversation';
 
 type Props = {
   rfqId: string;
@@ -32,12 +33,15 @@ type Props = {
     received_at: string | null;
     metadata: unknown;
   } | null;
+  customerRequest?: string | null;
+  conversation?: RfqConversationMessage[];
+  showCustomerConversation?: boolean;
 };
 
 export function RfqActions(props: Props) {
   const router = useRouter();
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
+  const [conversationOpen, setConversationOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -80,7 +84,7 @@ export function RfqActions(props: Props) {
             {!props.supplierNotification.read_at && <span className="rfq-notification-dot" aria-hidden="true" />}
           </button>
         )}
-        <button type="button" className="icon-button" onClick={() => setPreviewOpen(true)} title="Preview RFQ" aria-label={'Preview ' + props.rfqCode}>
+        <button type="button" className="icon-button" onClick={() => setConversationOpen(true)} title="View RFQ conversation" aria-label={'Preview ' + props.rfqCode}>
           <Eye size={16} />
         </button>
         <button type="button" className="icon-button icon-button-danger" onClick={() => setDeleteOpen(true)} title="Delete RFQ" aria-label={'Delete ' + props.rfqCode}>
@@ -125,35 +129,15 @@ export function RfqActions(props: Props) {
         document.body
       )}
 
-      {previewOpen && typeof document !== 'undefined' && createPortal(
-        <div className="arat-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreviewOpen(false); }}>
-          <div className="rfq-preview-dialog" style={{ width: "min(920px, calc(100vw - 40px))", height: "min(760px, calc(100vh - 48px))", maxHeight: "none" }} role="dialog" aria-modal="true" aria-labelledby="rfq-preview-title">
-            <div className="rfq-preview-head">
-              <div>
-                <div className="eyebrow">RFQ PREVIEW</div>
-                <h2 id="rfq-preview-title">{props.rfqCode}</h2>
-                <div className="muted">{props.supplier}</div>
-              </div>
-              <button type="button" className="arat-dialog-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><X size={17} /></button>
-            </div>
-
-            <div className="rfq-preview-meta">
-              <div><span>Recipient</span><strong>{props.recipient || '—'}</strong></div>
-              <div><span>Status</span><strong>{props.status.replaceAll('_', ' ')}</strong></div>
-              <div><span>Created</span><strong>{new Date(props.createdAt).toLocaleString('en-GB')}</strong></div>
-              {props.sentAt && <div><span>Sent</span><strong>{new Date(props.sentAt).toLocaleString('en-GB')}</strong></div>}
-            </div>
-
-            <div className="rfq-preview-subject">
-              <span>Subject</span>
-              <strong>{props.subject || 'Quotation Request'}</strong>
-            </div>
-
-            <div className="rfq-preview-email">
-              <div dangerouslySetInnerHTML={{ __html: props.body || '<p>No email content available.</p>' }} />
-            </div>
-          </div>
-        </div>,
+      {conversationOpen && typeof document !== 'undefined' && createPortal(
+        <RfqConversationModal
+          rfqCode={props.rfqCode}
+          supplier={props.supplier}
+          customerRequest={props.customerRequest}
+          messages={props.conversation ?? []}
+          showCustomer={props.showCustomerConversation !== false}
+          onClose={() => setConversationOpen(false)}
+        />,
         document.body
       )}
 
