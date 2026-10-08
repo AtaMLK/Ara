@@ -303,13 +303,16 @@ export async function findCustomerClarificationForEmail(input: {
       .eq('customer_id', customer.id)
       .eq('direction', 'outgoing')
       .eq('channel', 'email')
-      .contains('metadata', { type: 'clarification' })
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(50);
 
     const candidate = (communications ?? []).find((row) => {
+      const metadata = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+        ? row.metadata as Record<string, unknown>
+        : {};
+      const type = String(metadata.type ?? '');
       const subject = (row.subject ?? '').trim().toLowerCase().replace(/^re:\s*/i, '');
-      return subject === normalizedSubject;
+      return ['clarification', 'supplier_clarification_to_customer'].includes(type) && subject === normalizedSubject;
     });
     inquiryId = candidate?.inquiry_id ?? null;
   }
