@@ -289,11 +289,16 @@ export async function findCustomerClarificationForEmail(input: {
     .eq('inquiry_id', inquiryId)
     .eq('direction', 'outgoing')
     .eq('channel', 'email')
-    .contains('metadata', { type: 'clarification' })
     .order('created_at', { ascending: false })
-    .limit(20);
+    .limit(50);
 
   const sent = (communications ?? [])
+    .filter((row) => {
+      const metadata = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+        ? row.metadata as Record<string, unknown>
+        : {};
+      return ['clarification', 'supplier_clarification_to_customer'].includes(String(metadata.type ?? ''));
+    })
     .map((row) => ({
       clarificationId: typeof row.metadata?.clarification_id === 'string' ? row.metadata.clarification_id : null,
       createdAt: row.created_at,
