@@ -316,6 +316,8 @@ async function analyzeSupplierEmailAndNotify(input: {
     .insert({
       inquiry_id: input.inquiryId,
       requirement_id: null,
+      rfq_id: input.rfqId,
+      source_communication_id: input.communicationId,
       question: analysis.customerQuestion,
       status: 'sent',
       sent_at: new Date().toISOString(),
