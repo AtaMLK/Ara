@@ -315,10 +315,11 @@ function isVerified(candidate: Candidate) {
             const rows = grouped.get(product.id) ?? [];
             const validCount = rows.length;
             const model = requirements.find((item) => item.type === 'model_part_number' && item.source_ref === product.source_ref)?.value;
+            const brand = requirements.find((item) => item.type === 'specification' && item.source_ref === product.source_ref && /^brand\s*:/i.test(item.value))?.value.replace(/^brand\s*:\s*/i, '').trim();
             return (
               <div className="row" key={product.id}>
                 <div><strong>{product.value}</strong></div>
-                <div>{model || '—'}</div>
+                <div>{brand || '—'}{model ? <><span className="muted"> / </span>{model}</> : ''}</div>
                 <div>
                   <button className="supplier-count-button" onClick={() => { setSelectedProductId(product.id); setSelected([]); setPreview(null); setError(''); }}>
                     {validCount}
