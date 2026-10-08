@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { getSupplierRfqRecipientsAction, sendSupplierRfqAction, verifySupplierCandidateAction } from './supplier-rfq-actions';
 
@@ -331,7 +332,7 @@ function isVerified(candidate: Candidate) {
       )}
 
 
-      {selectedProductId && (
+      {selectedProductId && typeof document !== 'undefined' && createPortal(
         <div className="supplier-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedProductId(null); }}>
           <div className="supplier-modal" role="dialog" aria-modal="true">
             <div className="supplier-modal-head">
@@ -450,10 +451,11 @@ function isVerified(candidate: Candidate) {
               );
             })}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {preview && (
+      {preview && typeof document !== 'undefined' && createPortal(
         <div className="supplier-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}>
           <div className="supplier-modal supplier-preview-modal" role="dialog" aria-modal="true">
             <div className="supplier-modal-head">
@@ -468,7 +470,8 @@ function isVerified(candidate: Candidate) {
               <button className="primary-button" disabled={busy} onClick={send}>{busy ? 'Sending…' : 'Confirm & Send'}</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </section>
   );
