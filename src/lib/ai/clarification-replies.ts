@@ -3,6 +3,9 @@ import 'server-only';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { continueInquiryWorkflow } from './workflow';
+import { runAgent } from './agent-runner';
+import { customerClarificationResolutionOutputSchema } from './agent-schemas';
+import { getEmailProvider } from '@/lib/email/provider';
 
 function stripHtml(value: string) {
   return value
@@ -53,7 +56,7 @@ export async function applyCustomerClarificationAnswer(input: {
 
   const { data: clarification, error: clarificationError } = await supabase
     .from('clarifications')
-    .select('id,inquiry_id,requirement_id,status,question')
+    .select('id,inquiry_id,requirement_id,status,question,rfq_id,source_communication_id')
     .eq('id', input.clarificationId)
     .eq('inquiry_id', input.inquiryId)
     .single();
@@ -244,6 +247,69 @@ export async function applyCustomerClarificationAnswer(input: {
     reason: input.communicationId ? 'Customer clarification answer received by email' : 'Customer clarification answer applied',
   });
 
+  const { data: sourceEmail } = clarification.source_communication_id
+    ? await supabase.from('communications').select('id,subject,body,rfq_id,supplier_id').eq('id', clarification.source_communication_id).maybeSingle()
+    : { data: null };
+
+  const rfqId = clarification.rfq_id ?? sourceEmail?.rfq_id ?? null;
+  let resolution: { decision: 'auto_send' | 'admin_review'; answerValid: boolean; supplierReply: string; summary: string; reason: string; requiresRequirementChange: boolean; confidence: number } | null = null;
+
+  if (rfqId && process.env.OPENAI_API_KEY) {
+    const [{ data: rfq }, { data: requirements }] = await Promise.all([
+      supabase.from('rfqs').select('id,rfq_code,subject,supplier_id').eq('id', rfqId).maybeSingle(),
+      supabase.from('requirements').select('type,value,status,source,source_ref').eq('inquiry_id', input.inquiryId).order('created_at', { ascending: true }).limit(100),
+    ]);
+    try {
+      const ai = await runAgent({ agentId: 'email_response', executionId: input.clarificationId, inquiryId: input.inquiryId }, {
+        clarification_question: clarification.question,
+        customer_answer: answer,
+        supplier_original_email: sourceEmail?.body ?? '',
+        inquiry_requirements: requirements ?? [],
+        instructions: [
+          'You are ARAT Agent handling a procurement clarification response.',
+          'Decide whether the customer answer can be sent to the supplier automatically or requires Admin review first.',
+          'auto_send is allowed only when the answer directly and clearly answers the supplier question, does not introduce an unverified technical requirement, does not conflict with confirmed requirements, and does not require interpretation beyond clean wording.',
+          'Use admin_review when the answer introduces new technical specifications, model/part data, datasheet information, attachments/files, conflicting information, ambiguous information, or anything that should be verified before it is sent.',
+          'Never invent technical facts. supplierReply must be concise and professional and must not mention AI, Admin review, or private customer information.',
+        ],
+      }, customerClarificationResolutionOutputSchema);
+      resolution = ai.output;
+    } catch (error) {
+      console.error('[ARAT][clarification-resolution] failed', { clarificationId: input.clarificationId, error: error instanceof Error ? error.message : String(error) });
+    }
+
+    if (rfq && resolution) {
+      const { data: supplier } = await supabase.from('suppliers').select('id,primary_email_id').eq('id', rfq.supplier_id).maybeSingle();
+      let supplierEmail: string | null = null;
+      if (supplier?.primary_email_id) {
+        const { data: e } = await supabase.from('supplier_emails').select('email,status').eq('id', supplier.primary_email_id).eq('status','active').maybeSingle();
+        supplierEmail = e?.email ?? null;
+      }
+      if (!supplierEmail) {
+        const { data: e } = await supabase.from('supplier_emails').select('email,status,is_primary').eq('supplier_id', rfq.supplier_id).eq('status','active').order('is_primary',{ascending:false}).limit(1).maybeSingle();
+        supplierEmail = e?.email ?? null;
+      }
+
+      if (resolution.decision === 'auto_send' && resolution.answerValid && supplierEmail) {
+        try {
+          const provider = getEmailProvider();
+          const subject = rfq.subject?.startsWith('Re:') ? rfq.subject : `Re: ${rfq.subject ?? rfq.rfq_code}`;
+          const html = `<p>Merhaba,</p><p>${escapeHtml(resolution.supplierReply)}</p><p>İyi çalışmalar,<br/>Arya Automation</p>`;
+          const sent = await provider.send({ to: [supplierEmail], subject, html, text: `Merhaba,\\n\\n${resolution.supplierReply}\\n\\nİyi çalışmalar,\\nArya Automation`, from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com', idempotencyKey: `clarification-answer:${input.clarificationId}` });
+          await supabase.from('communications').insert({ inquiry_id: input.inquiryId, supplier_id: rfq.supplier_id, rfq_id: rfq.id, direction: 'outgoing', channel: 'email', provider_message_id: sent.providerMessageId ?? null, thread_id: sent.threadId ?? null, subject, body: html, sent_at: sent.sentAt ?? new Date().toISOString(), metadata: { type: 'customer_clarification_reply_to_supplier', clarification_id: clarification.id, source_communication_id: clarification.source_communication_id, agent: 'ARAT Agent' } });
+          const { data: admins } = await supabase.from('profiles').select('user_id').eq('role','admin').eq('status','active');
+          if (admins?.length) await supabase.from('notifications').insert(admins.map((admin) => ({ user_id: admin.user_id, category: 'supplier', priority: 'normal', title: 'ARAT Agent replied to supplier', message: `Customer clarification was verified and a clean response was sent to ${rfq.rfq_code}.`, record_type: 'rfq', record_id: rfq.id, action_url: `/inquiries/${input.inquiryId}#email-center` })));
+        } catch (error) {
+          await supabase.from('ai_alerts').insert({ inquiry_id: input.inquiryId, agent_id: 'email_response', alert_type: 'CUSTOMER_CLARIFICATION_SUPPLIER_EMAIL_FAILED', message: `Customer answer was valid, but ARAT Agent could not send the supplier response: ${error instanceof Error ? error.message : String(error)}`, priority: 'urgent' });
+        }
+      } else {
+        const { data: admins } = await supabase.from('profiles').select('user_id').eq('role','admin').eq('status','active');
+        if (admins?.length) await supabase.from('notifications').insert(admins.map((admin) => ({ user_id: admin.user_id, category: 'approval', priority: 'urgent', title: 'Supplier clarification answer needs review', message: `ARAT Agent received the customer answer for ${rfq.rfq_code}. Admin review is required before sending it to the supplier. ${resolution.reason}`, record_type: 'rfq', record_id: rfq.id, action_url: `/inquiries/${input.inquiryId}#email-center` })));
+      }
+    }
+  } else if (rfqId) {
+    await supabase.from('ai_alerts').insert({ inquiry_id: input.inquiryId, agent_id: 'email_response', alert_type: 'CUSTOMER_CLARIFICATION_REVIEW_REQUIRED', message: 'Customer clarification answer was received but ARAT Agent validation was unavailable. Admin review is required before sending.', priority: 'urgent' });
+  }
   await supabase.from('timeline_events').insert({
     inquiry_id: input.inquiryId,
     event_type: input.communicationId ? 'clarification_answer_received_by_email' : 'clarification_answer_applied',
