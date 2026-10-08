@@ -42,22 +42,6 @@ export type InboundEmail = {
 };
 
 
-async function notifyActiveAdmins(input: { category: string; priority: string; title: string; message: string; inquiryId: string; recordType: string; recordId: string; actionUrl: string }) {
-  const supabase = createSupabaseAdminClient();
-  const { data: admins } = await supabase.from('profiles').select('user_id').eq('role', 'admin').eq('status', 'active');
-  if (!admins?.length) return;
-  await supabase.from('notifications').insert(admins.map((admin) => ({
-    user_id: admin.user_id,
-    category: input.category,
-    priority: input.priority,
-    title: input.title,
-    message: input.message,
-    record_type: input.recordType,
-    record_id: input.recordId,
-    action_url: input.actionUrl,
-  })));
-}
-
 function safeStorageName(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 180);
 }
