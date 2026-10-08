@@ -153,7 +153,7 @@ export async function listRfqs(search?: string, status?: string) {
   const [{ data: inquiries }, { data: suppliers }, { data: notifications }, { data: replies }] = await Promise.all([
     inquiryIds.length
       ? supabase.from('inquiries').select('id,reference,title,original_customer_text').in('id', inquiryIds)
-      : Promise.resolve({ data: [] as Array<{ id: string; reference: string; title: string }> }),
+      : Promise.resolve({ data: [] as Array<{ id: string; reference: string; title: string; original_customer_text: string | null }> }),
     supplierIds.length
       ? supabase.from('suppliers').select('id,legal_name').in('id', supplierIds)
       : Promise.resolve({ data: [] as Array<{ id: string; legal_name: string }> }),
