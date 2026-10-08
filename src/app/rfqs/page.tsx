@@ -66,6 +66,8 @@ export default async function RfqsPage({ searchParams }: Props) {
                   status={item.status}
                   createdAt={item.created_at}
                   sentAt={item.sent_at}
+                  customerRequest={item.inquiries?.original_customer_text ?? null}
+                  conversation={item.conversation}
                   supplierNotification={item.supplierNotification}
                   supplierReply={item.supplierReply}
                 />
