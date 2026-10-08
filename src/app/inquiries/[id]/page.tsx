@@ -42,7 +42,25 @@ export default async function InquiryDetailPage({ params }: Props) {
   const customerName = customer?.company_name || customer?.name || 'Customer';
   const displayReference = getInquiryDisplayReference(inquiry.reference, customerName, inquiry.created_at, inquiry.current_version, inquiry.updated_at);
 
-  const supplierReplyCount = (communicationsResult.data ?? []).filter((item) => item.direction === 'incoming' && item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata) && (item.metadata as Record<string, unknown>).type === 'supplier_rfq_reply').length;
+  const communications = communicationsResult.data ?? [];
+  const supplierMessages = communications.filter((item) => item.supplier_id && item.direction === 'incoming');
+  const supplierReplyCount = supplierMessages.filter((item) => {
+    const metadata = item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata) ? item.metadata as Record<string, unknown> : {};
+    return metadata.type === 'supplier_rfq_reply';
+  }).length;
+  const supplierAskedForInfo = supplierMessages.some((item) => {
+    const metadata = item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata) ? item.metadata as Record<string, unknown> : {};
+    const analysis = metadata.ai_analysis && typeof metadata.ai_analysis === 'object' && !Array.isArray(metadata.ai_analysis) ? metadata.ai_analysis as Record<string, unknown> : {};
+    return metadata.type === 'supplier_rfq_reply' && analysis.customerActionRequired === true;
+  });
+  const clarificationSentToCustomer = communications.some((item) => {
+    const metadata = item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata) ? item.metadata as Record<string, unknown> : {};
+    return metadata.type === 'supplier_clarification_to_customer';
+  });
+  const customerClarificationReply = communications.some((item) => {
+    const metadata = item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata) ? item.metadata as Record<string, unknown> : {};
+    return metadata.type === 'customer_clarification_reply';
+  });
   const hasClarification = (clarificationsResult.data ?? []).some((item) => ['sent', 'pending_approval', 'draft'].includes(item.status));
   const hasCompletedResearch = (researchResult.data ?? []).some((item) => item.status === 'completed');
   const hasVerifiedSupplier = (candidatesResult.data ?? []).some((item) => item.supplier_id && item.suppliers?.verification_status === 'verified');
@@ -54,9 +72,9 @@ export default async function InquiryDetailPage({ params }: Props) {
     { key: 'ai', title: 'AI Understanding', description: 'Requirements are extracted and normalized.', state: executionsResult.data?.length ? 'completed' : 'current' },
     { key: 'research', title: 'Supplier Research', description: 'Potential suppliers are researched and enriched.', state: hasCompletedResearch ? 'completed' : inquiry.status === 'researching' ? 'current' : 'upcoming' },
     { key: 'verification', title: 'Supplier Verification', description: 'Supplier identity and contact details are verified.', state: hasVerifiedSupplier ? 'completed' : hasCompletedResearch ? 'current' : 'upcoming' },
-    { key: 'rfq', title: 'RFQ Sent', description: 'Approved quotation requests are sent to suppliers.', state: hasSentRfq ? 'completed' : inquiry.status === 'rfq' ? 'current' : 'upcoming' },
-    { key: 'response', title: 'Supplier Response', description: 'Supplier email responses are received and processed.', state: supplierReplyCount > 0 ? 'completed' : hasSentRfq ? 'current' : 'upcoming', detail: supplierReplyCount > 0 ? `${supplierReplyCount} supplier email response(s) received. Review the full email in Email Center.` : 'Waiting for a supplier response.' },
-    { key: 'clarification', title: 'Additional Information', description: 'Extra information may be requested from the customer.', state: hasClarification ? 'warning' : hasQuote ? 'completed' : supplierReplyCount > 0 ? 'current' : 'upcoming', detail: hasClarification ? 'Additional information is required from the customer before the process can continue.' : 'No customer clarification is currently pending.' },
+    { key: 'rfq', title: 'RFQ Sent', description: 'Approved quotation requests are sent to suppliers.', state: hasSentRfq ? 'completed' : inquiry.status === 'rfq' ? 'current' : 'upcoming', detail: hasSentRfq ? 'The quotation request was sent to the supplier.' : 'The RFQ has not been sent yet.' },
+    { key: 'response', title: 'Supplier Response', description: supplierAskedForInfo ? 'Supplier requested additional information.' : 'Supplier email responses are received and processed.', state: supplierAskedForInfo ? 'warning' : supplierReplyCount > 0 ? 'completed' : hasSentRfq ? 'current' : 'upcoming', detail: supplierAskedForInfo ? 'Additional information is needed. Hover this stage for context and open the RFQ conversation to review the supplier message.' : supplierReplyCount > 0 ? supplierReplyCount + ' supplier email response(s) received. Review the full email in Email Center.' : 'Waiting for a supplier response.' },
+    { key: 'clarification', title: 'Additional Information', description: clarificationSentToCustomer || hasClarification ? 'Customer information is required before continuing.' : customerClarificationReply ? 'Customer clarification was received.' : 'Extra information may be requested from the customer.', state: clarificationSentToCustomer && !customerClarificationReply ? 'warning' : customerClarificationReply ? 'completed' : hasQuote ? 'completed' : supplierAskedForInfo ? 'current' : 'upcoming', detail: clarificationSentToCustomer && !customerClarificationReply ? 'The customer has been asked for the additional information requested by the supplier.' : customerClarificationReply ? 'The customer answered the clarification and the workflow can continue.' : 'No customer clarification is currently pending.' },
     { key: 'quote', title: 'Quote Preparation', description: 'Supplier responses are analyzed and the customer quote is prepared.', state: hasQuote ? (inquiry.status === 'converted' ? 'completed' : 'current') : 'upcoming' },
     { key: 'quotation', title: 'Quotation Sent', description: 'The prepared quotation is sent to the customer.', state: inquiry.status === 'converted' ? 'completed' : 'upcoming' },
     { key: 'decision', title: 'Customer Decision', description: 'Customer accepts, rejects, or requests a revision.', state: hasCustomerDecision ? 'completed' : 'upcoming' },
