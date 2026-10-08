@@ -32,7 +32,7 @@ function titleOf(message: RfqConversationMessage) {
 
 function bodyText(value: string | null) {
   if (!value) return 'No message body recorded.';
-  return value.replace(/<br\\s*\\/?>(?=\\s*)/gi, '\\n').replace(/<\\/(p|div)>/gi, '\\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').trim();
+  return value.replace(/<br\s*\/?>(?=\s*)/gi, '\\n').replace(/<\\/(p|div)>/gi, '\\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').trim();
 }
 
 function toneOf(message: RfqConversationMessage) {
