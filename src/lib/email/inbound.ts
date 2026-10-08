@@ -192,14 +192,15 @@ async function analyzeSupplierEmailAndNotify(input: {
           instructions: [
             'Analyze the supplier email for an internal procurement workflow.',
             'Determine whether it contains actionable commercial information such as price, availability, lead time, MOQ, payment terms, quotation validity, or a clear statement that the supplier can/cannot supply.',
-            'If the supplier is asking for specifications, model/part number, technical details, quantity, documents, confirmation, or any other missing information needed to continue, set customerActionRequired=true and write one concise customer-friendly question in customerQuestion.',
-            'Translate the supplier request into clear customer language. Do not merely repeat the supplier email.',
-            'customerQuestion is CUSTOMER-FACING and must contain only the minimum information the customer needs to provide.',
+            'If the supplier asks for information, first compare the request with inquiry_requirements. Do not ask the customer for information that is already present in the original request, confirmed requirements, or supplied documents.',
+            'If the requested information is already available in the inquiry/files and can answer the supplier, set customerActionRequired=false, set adminReviewRequired=true, and prepare supplierReplyDraft containing only the relevant confirmed information. Admin must approve before ARAT Agent sends existing technical data or a datasheet-derived answer to the supplier.',
+            'If the information is genuinely missing from the inquiry/files, set customerActionRequired=true and write one concise customer-facing question in customerQuestion. Never copy the whole supplier email or the whole inquiry.',
+            'If the customer answer will only confirm a simple fact already established in the request, ARAT Agent may later send a clean supplier reply automatically after customer confirmation.',
+            'customerQuestion must contain only the minimum missing information the customer needs to provide.',
             'Never expose supplier name, supplier email, supplier contact person, supplier internal notes, supplier pricing, supplier commercial terms, private supplier details, or raw supplier wording in customerQuestion.',
-            'Do not mention that a specific supplier asked for the information. Say only that the request needs additional information to continue.',
-            'If the supplier email is vague but clearly asks for more product/technical information (for example "please provide detailed information about the specifications"), treat that as customerActionRequired=true and ask the customer for the relevant missing information based on the inquiry context and the supplier email. Use the inquiry_requirements context to make the question specific when the context supports it. Do not invent a specification that is not supported by the inquiry or supplier email.',
-            'If there is no useful supplier information and no clear customer question, set customerActionRequired=false and explain the situation in summary.',
-            'Do not invent prices, quantities, models, availability, or customer requirements.',
+            'Do not mention that a specific supplier asked for the information. Say only that additional information is needed to continue.',
+            'If the supplier email is vague (for example "please provide detailed information about the specifications"), use inquiry_requirements to determine whether the requested information is already available. If yes, prepare an admin-review supplier reply; if not, ask the customer only for the missing datasheet/specification.',
+            'Do not invent prices, quantities, models, availability, technical values, or customer requirements.',
             'summary must be concise and suitable for an Admin notification.',
           ],
         },
@@ -284,6 +285,31 @@ async function analyzeSupplierEmailAndNotify(input: {
       record_id: input.rfqId,
       action_url: `/inquiries/${input.inquiryId}#email-center`,
     })));
+  }
+
+  if (analysis.adminReviewRequired && analysis.supplierReplyDraft) {
+    const { data: admins } = await supabase.from('profiles').select('user_id').eq('role', 'admin').eq('status', 'active');
+    if (admins?.length) {
+      await supabase.from('notifications').insert(admins.map((admin) => ({
+        user_id: admin.user_id,
+        category: 'approval',
+        priority: 'urgent',
+        title: 'Supplier information ready for approval',
+        message: `ARAT Agent prepared a supplier reply using information already available in the request. Review and approve before sending. Draft: ${analysis.supplierReplyDraft}`,
+        record_type: 'rfq',
+        record_id: input.rfqId,
+        action_url: `/inquiries/${input.inquiryId}#email-center`,
+      })));
+    }
+    await supabase.from('communications').update({
+      metadata: {
+        ...metadata,
+        arat_agent: {
+          status: 'admin_review_required',
+          supplier_reply_draft: analysis.supplierReplyDraft,
+        },
+      },
+    }).eq('id', input.communicationId);
   }
 
   if (!analysis.customerActionRequired || !analysis.customerQuestion || !input.customerEmail) {
