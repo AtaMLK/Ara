@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Eye, X } from 'lucide-react';
 import { RfqActions } from '@/app/rfqs/rfq-actions';
 
@@ -26,7 +27,7 @@ export function SupplierRfqButton({ supplierName, rfqs }: { supplierName: string
         <b>{rfqs.length}</b>
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div className="arat-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
           <div className="supplier-rfq-dialog" role="dialog" aria-modal="true" aria-labelledby="supplier-rfq-title">
             <div className="supplier-rfq-head">
@@ -71,7 +72,8 @@ export function SupplierRfqButton({ supplierName, rfqs }: { supplierName: string
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
