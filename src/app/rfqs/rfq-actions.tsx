@@ -46,6 +46,7 @@ export function RfqActions(props: Props) {
     if (props.supplierNotification && !props.supplierNotification.read_at) {
       try {
         await markNotificationReadAction(props.supplierNotification.id);
+        router.refresh();
       } catch {
         // The notification is still useful even if marking it read fails.
       }
