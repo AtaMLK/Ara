@@ -287,11 +287,55 @@ async function analyzeSupplierEmailAndNotify(input: {
   }
 
   if (!analysis.customerActionRequired || !analysis.customerQuestion || !input.customerEmail) {
+    if (analysis.supplierIntent === 'unavailable' && input.customerUserId) {
+      await supabase.from('notifications').insert({
+        user_id: input.customerUserId,
+        category: 'customer',
+        priority: 'urgent',
+        title: 'Supplier could not provide the requested item',
+        message: 'We are sorry, but the requested item could not be supplied through the current sourcing process.',
+        record_type: 'inquiry',
+        record_id: input.inquiryId,
+        action_url: `/customer/inquiries/${input.inquiryId}`,
+      });
+    }
+    return;
+  }
+
+  const { data: existingClarification } = await supabase
+    .from('clarifications')
+    .select('id')
+    .eq('inquiry_id', input.inquiryId)
+    .eq('status', 'sent')
+    .eq('question', analysis.customerQuestion)
+    .limit(1)
+    .maybeSingle();
+
+  const clarification = existingClarification ?? (await supabase
+    .from('clarifications')
+    .insert({
+      inquiry_id: input.inquiryId,
+      requirement_id: null,
+      question: analysis.customerQuestion,
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+    })
+    .select('id')
+    .single()).data;
+
+  if (!clarification?.id) {
+    await supabase.from('ai_alerts').insert({
+      inquiry_id: input.inquiryId,
+      agent_id: 'email_response',
+      alert_type: 'SUPPLIER_CLARIFICATION_RECORD_FAILED',
+      message: 'Supplier clarification was understood by AI but could not be persisted as a customer clarification.',
+      priority: 'urgent',
+    });
     return;
   }
 
   const provider = getEmailProvider();
-  const customerSubject = `Action required | ${input.inquiryReference} | ${input.rfqCode}`;
+  const customerSubject = `ARAT needs more information — ${input.inquiryReference} — ${input.rfqCode}`;
   const customerHtml =
     `<p>Dear ${escapeHtml(input.customerName || 'Customer')},</p>` +
     `<p>To complete your request, we need the following information:</p>` +
@@ -324,6 +368,7 @@ async function analyzeSupplierEmailAndNotify(input: {
         type: 'supplier_clarification_to_customer',
         source_communication_id: input.communicationId,
         customer_question: analysis.customerQuestion,
+        clarification_id: clarification.id,
       },
     });
 
@@ -334,8 +379,8 @@ async function analyzeSupplierEmailAndNotify(input: {
         priority: 'urgent',
         title: 'More information is needed for your request',
         message: analysis.customerQuestion,
-        record_type: 'rfq',
-        record_id: input.rfqId,
+        record_type: 'clarification',
+        record_id: clarification.id,
         action_url: `/customer/inquiries/${input.inquiryId}`,
       });
     }
