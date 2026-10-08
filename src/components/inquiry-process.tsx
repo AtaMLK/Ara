@@ -13,7 +13,7 @@ export type InquiryProcessStep = {
 
 export default function InquiryProcess({ steps, eyebrow = 'PROCESS' }: { steps: InquiryProcessStep[]; eyebrow?: string }) {
   const [selected, setSelected] = useState<InquiryProcessStep | null>(null);
-  const current = steps.find((step) => step.state === 'current' || step.state === 'warning');
+  const current = steps.find((step) => step.state === 'warning') ?? steps.find((step) => step.state === 'current');
 
   return (
     <>
