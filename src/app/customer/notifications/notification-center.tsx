@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, Check, FileText, X } from 'lucide-react';
+import { Bell, Check, X } from 'lucide-react';
 import AnswerClarificationForm from '@/app/customer/inquiries/[id]/answer-form';
 import { markCustomerNotificationReadAction } from './actions';
 
@@ -77,7 +77,7 @@ export default function CustomerNotificationCenter({
         aria-label={items.some((item) => !item.read_at) ? 'Open unread notifications' : 'Open notifications'}
         title="Notifications"
       >
-        <Bell size={17} />
+        <Bell size={17} /><span>Notifications</span>
         {items.some((item) => !item.read_at) && <span className="customer-notification-dot" />}
       </button>
 
