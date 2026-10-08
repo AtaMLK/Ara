@@ -59,7 +59,7 @@ export default async function InquiryDetailPage({ params }: Props) {
         <div className="section-head">
           <div>
             <div className="eyebrow">EMAIL</div>
-            <h2>Email Center</h2>
+            <h2 id="email-center">Email Center</h2>
             <div className="muted">All customer and supplier email activity for this inquiry. Supplier email content is visible only in the Admin portal.</div>
           </div>
           <span className="badge">{communicationsResult.data?.length ?? 0} emails</span>
