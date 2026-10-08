@@ -2451,7 +2451,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             .filter((item, index, arr) =>
               index === arr.findIndex((x) => x.result.source_url === item.result.source_url)
             )
-            .slice(0, 10)
+            .slice(0, 50)
             .map((item) => item.result)
         );
       }
