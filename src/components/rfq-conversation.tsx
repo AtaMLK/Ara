@@ -30,6 +30,11 @@ function titleOf(message: RfqConversationMessage) {
   return 'Incoming message';
 }
 
+function bodyText(value: string | null) {
+  if (!value) return 'No message body recorded.';
+  return value.replace(/<br\\s*\\/?>(?=\\s*)/gi, '\\n').replace(/<\\/(p|div)>/gi, '\\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').trim();
+}
+
 function toneOf(message: RfqConversationMessage) {
   const type = typeof metaOf(message).type === 'string' ? metaOf(message).type : '';
   if (type === 'supplier_rfq_reply') return 'supplier';
@@ -95,8 +100,8 @@ export function RfqConversationModal({
                     </div>
                     <span className="muted">{new Date(when).toLocaleString('en-GB')}</span>
                   </div>
-                  {open && <div className="rfq-conversation-content">{message.body || 'No message body recorded.'}</div>}
-                  {!open && <div className="rfq-conversation-preview">{(message.body || '').replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 180) || 'No message body recorded.'}</div>}
+                  {open && <div className="rfq-conversation-content">{bodyText(message.body)}</div>}
+                  {!open && <div className="rfq-conversation-preview">{bodyText(message.body).replace(/\\s+/g, ' ').slice(0, 180)}</div>}
                 </button>
               </article>
             );
