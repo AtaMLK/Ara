@@ -1247,7 +1247,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       let createdItems = 0;
       let blockedItems = 0;
-      const today = new Date().toISOString().slice(0, 10);
+      const today = new Date().toISOString() .slice(0, 50);
       for (const line of ai.output.lines) {
         const supplierQuote = supplierQuotes?.find((item) => item.id === line.supplierQuoteId);
         if (!supplierQuote || supplierQuote.match_status === 'mismatch') {
@@ -2092,7 +2092,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const currentCount = [...discoveryCandidates.values()].filter(
               (candidate) => candidate.requirementId === productRequirement.id,
             ).length;
-            if (!productResults.length || currentCount >= 3) continue;
+            if (!productResults.length || currentCount >= 50) continue;
 
             const extractionAi = await runAgent(
               { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
@@ -2109,7 +2109,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 })),
                 instructions: [
                   'Extract supplier/manufacturer/distributor candidates for THIS product only.',
-                  'Return up to 10 candidates, strongest evidence first.',
+                  'Return every supported candidate found in the supplied research evidence, strongest evidence first. Do not arbitrarily cap the list at 10.',
                   'The company name must be explicitly present in source_name, page title, finding, or evidence.',
                   'Use the exact supplied source_url supporting that company and product relationship.',
                   'Official manufacturer pages are valid even when they do not say supplier or distributor.',
@@ -2303,7 +2303,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                   'Do not require the page to contain the literal word supplier if it is clearly the official manufacturer/company page for the requested product.',
                   'Do not invent names. Do not use marketplaces, social media, directories, government sites, or unrelated companies.',
                   'Every sourceUrl must exactly match one of the supplied research_results.',
-                  'Return every supported supplier candidate, not an empty list merely because some results are weak.',
+                  'Return every supported supplier candidate, not an empty list merely because some results are weak. Do not cap the output to four or ten suppliers.',
                 ],
               },
               supplierDiscoveryOutputSchema,
@@ -2395,7 +2395,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }
         }
 
-        // Keep the strongest 10 candidates per requested product.
+        // Keep all evidence-supported candidates per requested product. Do not hide valid suppliers just because the list is large.
         // IMPORTANT: a candidate's website can be a supplier homepage while
         // sourceUrl is the research page that actually supports the candidate.
         // Preserve the evidence source instead of falling back to an unrelated
