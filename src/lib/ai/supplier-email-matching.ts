@@ -23,10 +23,13 @@ function normalizeMessageId(value: string | null | undefined) {
   return value?.trim().replace(/^<|>$/g, '').toLowerCase() || null;
 }
 
-function extractMessageIds(value: string | null | undefined) {
+function extractMessageIds(value: string | string[] | null | undefined) {
   if (!value) return [];
-  return value
-    .split(/\s+/)
+
+  const values = Array.isArray(value) ? value : [value];
+
+  return values
+    .flatMap((item) => String(item).split(/\s+/))
     .map((item) => normalizeMessageId(item))
     .filter((item): item is string => Boolean(item));
 }
