@@ -121,6 +121,19 @@ function escapeHtml(value: string) {
   }[char] ?? char));
 }
 
+function looksLikeCustomerClarificationRequest(body: string) {
+  const normalized = body.toLocaleLowerCase('tr-TR');
+  return [
+    /özelliklerle?\s+ilgili.*detaylı.*bilgi/,
+    /teknik.*bilgi.*rica/,
+    /detaylı.*bilgi.*rica/,
+    /please.*provide.*(detailed|technical).*information/,
+    /please.*send.*(specification|datasheet|technical)/,
+    /need.*(specification|technical information|details)/,
+    /more.*information.*required/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
 async function analyzeSupplierEmailAndNotify(input: {
   inquiryId: string;
   rfqId: string;
@@ -212,6 +225,18 @@ async function analyzeSupplierEmailAndNotify(input: {
     return;
   }
 
+  // The AI remains the primary interpreter, but a clear supplier request for
+  // missing specifications must never silently stop at an admin-only reply.
+  if (looksLikeCustomerClarificationRequest(input.body) && !analysis.customerActionRequired) {
+    analysis = {
+      ...analysis,
+      customerActionRequired: true,
+      supplierIntent: 'clarification',
+      customerQuestion: 'Please provide the detailed technical specifications or datasheet for the requested product, including any relevant operating or application requirements.',
+      summary: 'Supplier requested additional technical/product specifications before continuing the quotation.',
+    };
+  }
+
   const currentCommunication = await supabase
     .from('communications')
     .select('metadata')
@@ -257,7 +282,7 @@ async function analyzeSupplierEmailAndNotify(input: {
       message: notificationMessage,
       record_type: 'rfq',
       record_id: input.rfqId,
-      action_url: `/rfqs?rfq=${input.rfqId}`,
+      action_url: `/inquiries/${input.inquiryId}#email-center`,
     })));
   }
 
@@ -286,7 +311,7 @@ async function analyzeSupplierEmailAndNotify(input: {
 
     await supabase.from('communications').insert({
       inquiry_id: input.inquiryId,
-      customer_id: customerRecord?.id ?? null,
+      customer_id: input.customerId ?? null,
       rfq_id: input.rfqId,
       direction: 'outgoing',
       channel: 'email',
@@ -464,6 +489,11 @@ export async function processInboundEmail(email: InboundEmail) {
     },
   }).select('id').single();
 
+  if (communicationError || !communication) {
+    if (communicationError?.code === '23505') return { ok: true, duplicate: true };
+    throw new ToolError('CONFLICT', communicationError?.message ?? 'Could not store supplier email');
+  }
+
   const { data: inquiryContext } = await supabase
     .from('inquiries')
     .select('reference,customers(id,user_id,email,name,company_name)')
@@ -494,11 +524,6 @@ export async function processInboundEmail(email: InboundEmail) {
     customerEmail: customerRecord?.email ?? null,
     customerName: customerRecord?.company_name || customerRecord?.name || 'Customer',
   });
-
-  if (communicationError || !communication) {
-    if (communicationError?.code === '23505') return { ok: true, duplicate: true };
-    throw new ToolError('CONFLICT', communicationError?.message ?? 'Could not store supplier email');
-  }
 
   const responseId = crypto.randomUUID();
   const attachmentMetadata = await storeSupplierAttachments(
