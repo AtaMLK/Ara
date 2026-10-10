@@ -14,7 +14,18 @@ export default function SignOutButton() {
   }
 
   return (
-    <button type="button" className="nav-button" onClick={signOut}>
+    <button
+      type="button"
+      className="nav-button customer-sign-out-button"
+      onClick={signOut}
+      style={{
+        width: 'auto',
+        border: '1px solid var(--arat-border-strong)',
+        background: 'var(--arat-surface-soft)',
+        color: 'var(--arat-text)',
+        textAlign: 'center',
+      }}
+    >
       Sign out
     </button>
   );
