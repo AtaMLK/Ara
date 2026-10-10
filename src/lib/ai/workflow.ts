@@ -3018,11 +3018,38 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .limit(1)
         .maybeSingle();
 
-      // Research is an expensive external operation. Once a completed research
-      // case exists, retries/recovery runs MUST reuse its persisted results
-      // instead of calling SerpAPI again and consuming another search quota.
-      // A new research case is created only when no completed case exists yet.
+      // Reuse a completed case only when it actually contains persisted evidence.
+      // Earlier provider-quota failures could incorrectly mark an empty case
+      // completed; after the provider is fixed, a retry must run a fresh search.
       let researchCase = existing?.status === 'completed' ? existing : null;
+      let runReason = 'initial_product_research';
+
+      if (researchCase) {
+        const { count, error: countError } = await supabase
+          .from('research_results')
+          .select('id', { count: 'exact', head: true })
+          .eq('research_case_id', researchCase.id);
+
+        if (countError) {
+          throw new ToolError('TRANSIENT', countError.message);
+        }
+
+        if ((count ?? 0) === 0) {
+          console.warn('[ARAT][research] COMPLETED CASE HAS NO EVIDENCE; STARTING FRESH SEARCH', {
+            research_case_id: researchCase.id,
+            reason: 'completed_case_without_persisted_results',
+          });
+          researchCase = null;
+          runReason = 'retry_after_empty_research';
+        } else {
+          console.log('[ARAT][research] REUSING COMPLETED RESEARCH CASE', {
+            research_case_id: researchCase.id,
+            created_at: researchCase.created_at,
+            persisted_result_count: count,
+            reason: 'completed_case_has_persisted_evidence',
+          });
+        }
+      }
 
       if (!researchCase) {
         const created = await supabase
@@ -3032,7 +3059,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             status: 'pending',
             scope: {
               source_types: ['web', 'public_specialized_sources'],
-              run_reason: 'initial_product_research',
+              run_reason: runReason,
             },
           })
           .select('id,status,created_at')
@@ -3041,12 +3068,6 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           throw new ToolError('TRANSIENT', created.error?.message ?? 'Failed to create research case');
         }
         researchCase = created.data;
-      } else {
-        console.log('[ARAT][research] REUSING COMPLETED RESEARCH CASE', {
-          research_case_id: researchCase.id,
-          created_at: researchCase.created_at,
-          reason: 'workflow_retry_without_new_external_search',
-        });
       }
 
       const provider = getResearchProvider();
