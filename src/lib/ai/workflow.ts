@@ -3130,45 +3130,27 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             ...item.specifications,
           ].filter(Boolean).join(' ');
 
+          // Search by commercial supply route, not only exact model wording.
+          // Many authorized distributors can order the product from the brand even
+          // when the requested model is not listed on their public website.
+          // Keep this list focused to avoid wasting provider quota on near-duplicate queries.
+          const brand = item.brand?.trim() ?? '';
+          const model = item.model?.trim() ?? '';
+          const product = item.product.trim();
           const commercial = [
-            ...(item.brand?.toLowerCase() === 'gmi' ? [
-              '"GMI Energy" "VPG750"',
-              '"VMAX Portable Power Station 500W / 786Wh"',
-              '"VPG750" "786Wh" "500W"',
-              'site:gmienergy.com "VPG750"',
-              'site:gmienergy.com "VMAX Portable Power Station"',
-              '"GMI Energy" "portable power station" distributor Turkey',
-              '"GMI Energy" "VPG750" distributor',
-            ] : []),
-            ...(item.brand?.toLowerCase().includes('hansford') ? [
-              `"${item.model ?? ''}" "Hansford Sensors"`,
-              `"${item.model ?? ''}" vibration sensor`,
-              `site:hansfordsensors.com "${item.model ?? ''}"`,
-              `"${item.model ?? ''}" supplier Turkey`,
-              `"${item.model ?? ''}" distributor Turkey`,
-              '"Hansford Sensors" Turkey distributor',
-            ].filter((query) => !query.includes('""')) : []),
-            [item.model, item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
-            [item.model, item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
-            [item.model, item.brand, item.product, 'official distributor'].filter(Boolean).join(' '),
-            [item.model, item.brand, item.product, 'manufacturer'].filter(Boolean).join(' '),
-            [item.model, item.brand, 'supplier'].filter(Boolean).join(' '),
-            [item.model, item.brand, 'distributor'].filter(Boolean).join(' '),
-            [item.model, item.brand, 'official'].filter(Boolean).join(' '),
-            identity,
-            [item.brand, item.model, 'exact product'].filter(Boolean).join(' '),
-            [item.brand, item.model, 'official website'].filter(Boolean).join(' '),
-            [item.brand, item.model, 'Turkey'].filter(Boolean).join(' '),
-            item.model ? `"${item.model}"` : '',
-            item.brand && item.model ? `"${item.brand}" "${item.model}"` : '',
-            item.brand && item.model ? `"${item.brand}" "${item.model}" supplier` : '',
-            item.brand && item.model ? `site:${item.brand.toLowerCase().replace(/[^a-z0-9.-]/g, '')} ${item.model}` : '',
-            [item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
-            [item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
-            [item.product, 'manufacturer Turkey'].filter(Boolean).join(' '),
-            [item.product, 'supplier Turkey'].filter(Boolean).join(' '),
-            [item.brand, item.product, 'manufacturer distributor'].filter(Boolean).join(' '),
-          ];
+            [brand, model, 'official product'].filter(Boolean).join(' '),
+            [brand, model, 'authorized distributor Turkey'].filter(Boolean).join(' '),
+            [brand, 'official distributor Turkey'].filter(Boolean).join(' '),
+            [brand, 'representative distributor Turkey'].filter(Boolean).join(' '),
+            [brand, 'authorized distributor Europe'].filter(Boolean).join(' '),
+            [brand, 'official distributor Europe'].filter(Boolean).join(' '),
+            [brand, 'authorized distributor United States'].filter(Boolean).join(' '),
+            [brand, 'authorized distributor Asia'].filter(Boolean).join(' '),
+            [brand, 'worldwide distributor locator official'].filter(Boolean).join(' '),
+            [model, brand, product, 'supplier'].filter(Boolean).join(' '),
+            [product, 'supplier Turkey'].filter(Boolean).join(' '),
+            [product, 'distributor Turkey'].filter(Boolean).join(' '),
+          ].filter((query) => query.trim().length > 0);
 
           return {
             requirementId: item.requirementId,
@@ -3243,6 +3225,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           if (model && haystack.includes(model)) return { accepted: true, reason: 'exact_model' };
           if (brand && product && haystack.includes(brand) && haystack.includes(product)) {
             return { accepted: true, reason: 'brand_and_product' };
+          }
+
+          // A legitimate official distributor/representative may not list every
+          // orderable model on its public site. Accept brand-specific commercial
+          // relationship evidence as a candidate, but classify it as a brand route,
+          // not as confirmation that the exact model is stocked.
+          const commercialRelationship = /authorized distributor|official distributor|distributor|representative|dealer|sales partner|where to buy|find a distributor|distribution partner|official partner/i.test(haystack);
+          const officialOrBrandEvidence = brand && haystack.includes(brand);
+          if (officialOrBrandEvidence && commercialRelationship) {
+            return { accepted: true, reason: 'same_brand_commercial_route' };
           }
 
           const matchedSpec = specs.find((spec) => spec.length >= 4 && haystack.includes(spec));
