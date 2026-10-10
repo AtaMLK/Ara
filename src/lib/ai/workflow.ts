@@ -2414,7 +2414,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         // result for the same product. That previous fallback caused valid
         // candidates to disappear in the persistence loop because the candidate
         // no longer matched the selected result URL.
-        const selectedByRequirement = new Map<string, { result: ResearchResult; score: number }[]>();
+        const supplierRegionPriority = (country?: string | null) => {
+          const normalized = (country ?? '').trim().toLowerCase();
+          if (/^(turkey|türkiye|turkiye)$/.test(normalized)) return 0;
+          if (/germany|france|italy|spain|portugal|netherlands|belgium|luxembourg|ireland|united kingdom|uk|england|scotland|wales|poland|czechia|czech republic|austria|switzerland|sweden|norway|denmark|finland|iceland|greece|romania|bulgaria|croatia|slovenia|slovakia|hungary|estonia|latvia|lithuania|serbia|ukraine/.test(normalized)) return 1;
+          if (/united states|usa|u\.s\.?a?\.?|america|canada|mexico/.test(normalized)) return 2;
+          if (/china|japan|south korea|korea|taiwan|india|singapore|malaysia|thailand|indonesia|vietnam|philippines|pakistan|bangladesh|sri lanka|hong kong|asia|uae|united arab emirates/.test(normalized)) return 3;
+          return 4;
+        };
+
+        const selectedByRequirement = new Map<string, { result: ResearchResult; score: number; regionPriority: number }[]>();
         for (const [candidateKey, candidate] of discoveryCandidates.entries()) {
           if (!candidate.requirementId || !candidate.name) continue;
 
@@ -2453,13 +2462,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           list.push({
             result: candidateSource,
             score: candidate.matchScore ?? ((candidateSource.relevance ?? 0) * 100),
+            regionPriority: supplierRegionPriority(
+              candidate.country ?? String(candidateSource.structured_data?.country ?? ''),
+            ),
           });
           selectedByRequirement.set(candidate.requirementId, list);
         }
 
         selectedResults = [...selectedByRequirement.values()].flatMap((items) =>
           items
-            .sort((a, b) => b.score - a.score)
+            // Geographic preference is intentional: Turkey first, then Europe,
+            // Americas, Asia. Within a region, stronger product/brand evidence wins.
+            .sort((a, b) => a.regionPriority - b.regionPriority || b.score - a.score)
             .filter((item, index, arr) =>
               index === arr.findIndex((x) => x.result.source_url === item.result.source_url)
             )
