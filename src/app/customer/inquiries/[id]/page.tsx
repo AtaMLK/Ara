@@ -6,7 +6,6 @@ import CustomerFileLink from './file-link';
 import RetryProcessingButton from './retry-processing-button';
 import ActivityTimeline from './activity-timeline';
 import { getInquiryDisplayReference } from '@/lib/ui/inquiry-reference';
-import InquiryProcess, { type InquiryProcessStep } from '@/components/inquiry-process';
 
 
 type Props = { params: Promise<{ id: string }> };
@@ -42,17 +41,6 @@ export default async function CustomerInquiryPage({ params }: Props) {
   const hasCustomerClarification = clarifications.length > 0;
   const hasClarificationSentEvent = timelineEvents.some((event) => event.event_type === 'supplier_clarification_sent_to_customer' || event.event_type === 'clarification_sent');
   const status = inquiryResult.data.status;
-  const customerProcessSteps: InquiryProcessStep[] = [
-    { key: 'request', title: 'Request Received', description: 'Your request has been submitted.', state: 'completed' },
-    { key: 'review', title: 'Request Review', description: 'Your request and documents are being reviewed.', state: ['processing', 'open'].includes(status) ? 'current' : 'completed' },
-    { key: 'sent', title: 'Request Sent to Suppliers', description: 'Quotation requests are being handled with suitable suppliers.', state: ['rfq', 'quoting', 'converted'].includes(status) ? 'completed' : 'upcoming' },
-    { key: 'clarification', title: 'Additional Information', description: 'We may need more information from you to continue.', state: hasCustomerClarification || hasClarificationSentEvent || status === 'clarification_required' ? 'warning' : ['quoting', 'converted'].includes(status) ? 'completed' : 'upcoming', detail: hasCustomerClarification ? 'Please provide the requested information below.' : 'No additional information is currently required from you.' },
-    { key: 'quote', title: 'Quotation Preparation', description: 'Your quotation is being prepared.', state: status === 'quoting' ? 'current' : status === 'converted' ? 'completed' : 'upcoming' },
-    { key: 'quotation', title: 'Quotation Ready', description: 'Your quotation is available for review.', state: latestQuote ? 'completed' : status === 'quoting' ? 'current' : 'upcoming', detail: latestQuote ? 'A quotation is available. Open the notification or quotation section to review it.' : 'Your quotation is not available yet.' },
-    { key: 'decision', title: 'Your Decision', description: 'Review the quotation and accept, reject, or request a revision.', state: latestQuote && latestQuote.status !== 'sent' ? 'completed' : 'upcoming' },
-    { key: 'completed', title: 'Completed', description: 'Your request has been completed.', state: status === 'converted' ? 'completed' : 'upcoming' },
-  ];
-
   return (
     <main className="portal-shell inquiry-detail-page">
       <header className="topbar">
@@ -64,8 +52,6 @@ export default async function CustomerInquiryPage({ params }: Props) {
         </div>
         <span className={`badge status-badge status-${inquiryResult.data.status}`}>{inquiryResult.data.status.replaceAll('_',' ')}</span>
       </header>
-
-      <InquiryProcess steps={customerProcessSteps} eyebrow="REQUEST PROCESS" />
 
       <section className="detail-grid">
         <div className="detail-card">
