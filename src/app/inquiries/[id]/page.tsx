@@ -6,7 +6,6 @@ import { notFound } from 'next/navigation';
 import { requireAdminPage } from '@/lib/data/admin';
 import { InquiryEditForm } from './edit-form';
 import { RequirementEdit } from './requirement-edit';
-import { WorkflowPanel } from './workflow-panel';
 import { CandidatePanel } from './candidate-panel';
 import InquiryProcess, { type InquiryProcessStep } from '@/components/inquiry-process';
 import { approveSupplierClarificationReplyAction } from './supplier-clarification-actions';
@@ -190,14 +189,6 @@ export default async function InquiryDetailPage({ params }: Props) {
         )}
       </section>
 
-      <WorkflowPanel
-        inquiryId={inquiry.id}
-        status={inquiry.status}
-        executions={executionsResult.data ?? []}
-        alerts={alertsResult.data ?? []}
-        clarifications={clarificationsResult.data ?? []}
-        researchCases={researchResult.data ?? []}
-      />
 
       <section className="detail-grid">
         <div className="detail-card">
@@ -226,9 +217,9 @@ export default async function InquiryDetailPage({ params }: Props) {
         </div>
       </section>
 
-      <section className="section">
+      <section className="section requirements-compact-section">
         <div className="section-head"><h2>Requirements</h2></div>
-        <div className="table">
+        <div className="table requirements-compact-table">
           <div className="row header"><div>Type</div><div>Value</div><div>Status</div><div>Source</div></div>
           {requirementsResult.data.length === 0 ? <div className="empty">No requirements extracted.</div> : requirementsResult.data.map((item) => (
             <div className="row" key={item.id}>
