@@ -205,7 +205,10 @@ function isVerified(candidate: Candidate) {
     // Verification controls supplier selection. Email availability is validated
     // when the admin sends the RFQ, so a verified supplier is not hidden/disabled
     // merely because its contact email has not been added yet.
-    return candidate.status === 'finalized'
+    // The server action persists status='finalized'. Reflect that successful
+    // verification immediately in this client view instead of waiting for a
+    // server-component refresh to replace the candidate props.
+    return (candidate.status === 'finalized' || verifiedIds.includes(candidate.id))
       && Boolean(candidate.supplier_id)
       && verified;
   }
