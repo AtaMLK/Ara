@@ -104,7 +104,10 @@ function matchMeta(candidate: Candidate) {
   const evidence = (candidate.match_evidence ?? {}) as Record<string, unknown>;
   const type = typeof evidence.match_type === 'string' ? evidence.match_type : 'same_brand_distributor';
   const score = typeof evidence.match_score === 'number' ? evidence.match_score : null;
-  const note = typeof evidence.match_note === 'string' ? evidence.match_note : '';
+  const rawNote = typeof evidence.match_note === 'string' ? evidence.match_note : '';
+  const note = /supplemental web research added manually|supplier relationship and exact model\/quantity availability require confirmation/i.test(rawNote)
+    ? ''
+    : rawNote;
   const coverageCount = typeof evidence.coverage_count === 'number' ? evidence.coverage_count : 1;
   const coverageTotal = typeof evidence.coverage_total === 'number' ? evidence.coverage_total : 1;
   const labels: Record<string, string> = {
@@ -472,10 +475,10 @@ function isVerified(candidate: Candidate) {
                                 {meta.type !== 'exact_product' && (
                                   <div className="supplier-match-warning">
                                     ⚠ {meta.type === 'same_brand_distributor'
-                                      ? 'Exact requested product is not confirmed, but this supplier/distributor is supported as a supplier for the requested brand.'
+                                      ? 'Exact model not confirmed'
                                       : meta.type === 'same_brand_similar'
-                                        ? 'Exact requested model is not confirmed, but a similar product from the requested brand is supported by the evidence.'
-                                        : 'This is not an exact product match; the supplier is shown as a related alternative based on the research evidence.'}
+                                        ? 'Similar product; exact model not confirmed'
+                                        : 'Related alternative'}
                                   </div>
                                 )}
                                 {meta.note && <div className="muted">{meta.note}</div>}
