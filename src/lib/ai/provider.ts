@@ -37,7 +37,7 @@ class OpenAICompatibleProvider implements AIModelProvider {
     const baseUrl = (options.baseUrl ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '');
     const model = options.model ?? process.env.OPENAI_MODEL ?? 'gpt-5.6';
 
-    if (!apiKey) throw new ToolError('TRANSIENT', 'OPENAI_API_KEY is not configured');
+    if (!apiKey) throw new ToolError('TRANSIENT', 'AI provider API key is not configured');
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -75,7 +75,7 @@ class OpenAICompatibleProvider implements AIModelProvider {
       throw new ToolError('AI_PROCESSING', `AI output failed schema validation: ${validated.error.message.slice(0, 800)}`);
     }
 
-    const provider = options.provider ?? (baseUrl.includes('generativelanguage.googleapis.com') ? 'gemini-openai-compatible' : 'openai-compatible');
+    const provider = options.provider?.trim() || (baseUrl.includes('generativelanguage.googleapis.com') ? 'gemini-openai-compatible' : 'openai-compatible');
     return { output: validated.data, provider, model };
   }
 }
