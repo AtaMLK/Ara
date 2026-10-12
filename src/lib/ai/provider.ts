@@ -19,7 +19,7 @@ export interface AIModelProvider {
   generate<T>(
     messages: AIMessage[],
     schema: z.ZodType<T>,
-    options?: { model?: string; temperature?: number },
+    options?: { model?: string; temperature?: number; apiKey?: string; baseUrl?: string; provider?: string },
   ): Promise<AIModelResponse<T>>;
 }
 
@@ -31,13 +31,13 @@ class OpenAICompatibleProvider implements AIModelProvider {
   async generate<T>(
     messages: AIMessage[],
     schema: z.ZodType<T>,
-    options: { model?: string; temperature?: number } = {},
+    options: { model?: string; temperature?: number; apiKey?: string; baseUrl?: string; provider?: string } = {},
   ): Promise<AIModelResponse<T>> {
-    const apiKey = process.env.OPENAI_API_KEY;
-    const baseUrl = (process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+    const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
+    const baseUrl = (options.baseUrl ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '');
     const model = options.model ?? process.env.OPENAI_MODEL ?? 'gpt-5.6';
 
-    if (!apiKey) throw new ToolError('TRANSIENT', 'OPENAI_API_KEY is not configured');
+    if (!apiKey) throw new ToolError('TRANSIENT', 'AI provider API key is not configured');
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -45,6 +45,7 @@ class OpenAICompatibleProvider implements AIModelProvider {
       body: JSON.stringify({
         model,
         messages,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
         response_format: { type: 'json_object' },
       }),
       cache: 'no-store',
@@ -74,7 +75,8 @@ class OpenAICompatibleProvider implements AIModelProvider {
       throw new ToolError('AI_PROCESSING', `AI output failed schema validation: ${validated.error.message.slice(0, 800)}`);
     }
 
-    return { output: validated.data, provider: 'openai-compatible', model };
+    const provider = options.provider?.trim() || (baseUrl.includes('generativelanguage.googleapis.com') ? 'gemini-openai-compatible' : 'openai-compatible');
+    return { output: validated.data, provider, model };
   }
 }
 

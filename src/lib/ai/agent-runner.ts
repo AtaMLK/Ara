@@ -55,7 +55,17 @@ export async function runAgent<T>(
     },
   ];
 
-  const result = await provider.generate(messages, outputSchema, options);
+  const providerOptions = ctx.agentId === 'supplier_discovery'
+    ? {
+        ...options,
+        model: process.env.SUPPLIER_DISCOVERY_AI_MODEL?.trim() || options.model,
+        baseUrl: process.env.SUPPLIER_DISCOVERY_AI_BASE_URL?.trim() || undefined,
+        apiKey: process.env.SUPPLIER_DISCOVERY_AI_API_KEY?.trim() || undefined,
+        provider: process.env.SUPPLIER_DISCOVERY_AI_PROVIDER?.trim() || undefined,
+      }
+    : options;
+
+  const result = await provider.generate(messages, outputSchema, providerOptions);
 
   return {
     output: result.output,
