@@ -2926,6 +2926,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             match_note: aiCandidate.matchNote ?? null,
             coverage_count: 1,
             coverage_total: 1,
+            // Keep email provenance with the candidate so the UI can show where
+            // the contact detail was found, even though supplier_emails stores
+            // normalized addresses separately.
+            contact_email_evidence: explicitEmails.map((item) => ({
+              email: item.email.trim().toLowerCase(),
+              source_url: typeof item.evidence === 'string' && /^https?:\/\//i.test(item.evidence)
+                ? item.evidence
+                : website,
+              evidence: item.evidence,
+            })),
           },
           availability_evidence: {},
           verification_evidence: {
