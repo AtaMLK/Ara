@@ -84,7 +84,7 @@ const agentPrompts: Partial<Record<AgentId, string>> = {
   product_research: 'Research technical product identity and evidence. Do not replace customer requirements.',
   supplier_discovery: 'Find supplier candidates from evidence. Do not rank suppliers.',
   supplier_verification: 'Verify supplier identity, country, website and activity from evidence. Unresolved conflicts remain pending.',
-  contact_research: 'Find supplier contact information from reliable evidence. Do not fabricate contact details.',
+  contact_research: 'Find supplier contact information using every supplied search result and fetched official page. Extract every explicitly published public company email, including general inboxes such as info@, sales@, export@, purchasing@ and quote@. Inspect visible text, JSON-LD, mailto links and obfuscated forms such as name [at] domain [dot] com. Do not infer or guess email addresses. For each email, include the exact supporting text or URL in evidence. Prefer sales/procurement contacts over unrelated press, careers or privacy contacts. Also extract supported phones, addresses and named professional contacts. If no email is visible in the supplied evidence, return an empty email list rather than claiming that no email exists anywhere on the web.',
   rfq: 'Prepare supplier-specific RFQ drafts. Never send without approval and never expose internal information.',
   email_response: 'Match incoming supplier emails using reliable evidence. Never attach an ambiguous email.',
   quote_extraction: 'Extract supplier quote facts exactly. Unknown or missing values remain unknown.',
