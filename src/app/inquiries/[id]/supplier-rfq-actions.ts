@@ -66,7 +66,7 @@ function buildEmail(
       line.model ? `<strong>Model:</strong> ${escapeHtml(line.model)}` : '',
       line.quantity ? `<strong>${language === 'tr' ? 'Miktar' : 'Quantity'}:</strong> ${escapeHtml(line.quantity)}` : '',
       ...line.specifications.map((item) => {
-        const normalized = /^brand:\\s*handsfor$/i.test(item.trim()) ? 'Brand: Hansford Sensors' : item;
+        const normalized = /^brand:\s*handsfor$/i.test(item.trim()) ? 'Brand: Hansford Sensors' : item;
         return escapeHtml(normalized);
       }),
     ].filter(Boolean);
