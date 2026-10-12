@@ -2673,6 +2673,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               `site:${hostname} "sales" "email"`,
               `site:${hostname} "request a quote" email`,
               `site:${hostname} address headquarters phone contact`,
+              // Local suppliers often publish contact details only on Turkish pages.
+              `site:${hostname} iletişim e-posta`,
+              `site:${hostname} satış mail telefon`,
+              `site:${hostname} iletişim adres telefon`,
             ];
             const contactRuns = await Promise.all(
               contactQueries.map(async (query) => {
@@ -2721,7 +2725,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           ];
           const uniquePageUrls = [...new Set(pageUrls)].filter((url) => {
             try { return new URL(url).hostname.replace(/^www\./, '') === hostname; } catch { return false; }
-          }).slice(0, 16);
+          }).slice(0, 20);
           fetchedPages = (await Promise.all(uniquePageUrls.map(async (url) => ({ url, text: await fetchSupplierPage(url) })))).filter((item) => item.text.length > 0);
 
           if (contactResults.length > 0 || fetchedPages.length > 0) {
