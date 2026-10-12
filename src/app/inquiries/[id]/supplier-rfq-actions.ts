@@ -63,23 +63,24 @@ function buildEmail(
 ) {
   const rows = productLines.map((line, index) => {
     const details = [
-      line.model ? `Model / Part Number: ${escapeHtml(line.model)}` : '',
-      line.quantity ? `Quantity: ${escapeHtml(line.quantity)}` : '',
-      ...line.specifications.map((item) => escapeHtml(item)),
+      line.model ? `<strong>Model:</strong> ${escapeHtml(line.model)}` : '',
+      line.quantity ? `<strong>${language === 'tr' ? 'Miktar' : 'Quantity'}:</strong> ${escapeHtml(line.quantity)}` : '',
+      ...line.specifications.map((item) => {
+        const normalized = /^brand:\\s*handsfor$/i.test(item.trim()) ? 'Brand: Hansford Sensors' : item;
+        return escapeHtml(normalized);
+      }),
     ].filter(Boolean);
 
-    return language === 'tr'
-      ? `<p><strong>${index + 1}. ${escapeHtml(line.product)}</strong><br/>${details.join('<br/>')}</p>`
-      : `<p><strong>${index + 1}. ${escapeHtml(line.product)}</strong><br/>${details.join('<br/>')}</p>`;
+    return `<p><strong>${index + 1}. ${escapeHtml(line.product)}</strong><br/>${details.join('<br/>')}</p>`;
   }).join('');
 
   const subject = language === 'tr'
-    ? `Teklif Talebi – ${inquiryReference}`
-    : `RFQ – ${inquiryReference}`;
+    ? `Fiyat Teklifi Talebi | ${inquiryReference}`
+    : `Request for Quotation | ${inquiryReference}`;
 
   const html = language === 'tr'
-    ? `<p>Merhaba,</p><p>Aşağıdaki ürün(ler) için fiyat teklifinizi ve teslim süresini paylaşmanızı rica ederiz.</p>${rows}<p>Lütfen birim fiyat, stok/uygunluk, teslim süresi, ödeme şartları ve teklif geçerlilik süresini belirtiniz.</p><p>İyi çalışmalar,<br/>Arya Automation</p>`
-    : `<p>Dear Sir/Madam,</p><p>We would like to request your quotation for the following item(s).</p>${rows}<p>Please provide unit price, availability, delivery time, payment terms and quotation validity.</p><p>Best regards,<br/>Arya Automation</p>`;
+    ? `<p>Merhaba,</p><p>Aşağıdaki ürün için fiyat teklifinizi rica ederiz.</p>${rows}<p>Teklifinizde birim fiyatı, mevcut stok/tedarik durumunu ve tahmini teslim süresini belirtmenizi rica ederiz.</p><p>Teşekkür eder, iyi çalışmalar dileriz.<br/>Arya Automation</p>`
+    : `<p>Dear Sales Team,</p><p>Please provide your quotation for the following item:</p>${rows}<p>Kindly include your unit price, current availability and estimated lead time.</p><p>Thank you for your support.<br/>Best regards,<br/>Arya Automation</p>`;
 
   return { subject, html };
 }
