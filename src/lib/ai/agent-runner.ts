@@ -58,10 +58,10 @@ export async function runAgent<T>(
   const providerOptions = ctx.agentId === 'supplier_discovery'
     ? {
         ...options,
-        model: process.env.SUPPLIER_DISCOVERY_AI_MODEL ?? options.model,
-        baseUrl: process.env.SUPPLIER_DISCOVERY_AI_BASE_URL,
-        apiKey: process.env.SUPPLIER_DISCOVERY_AI_API_KEY,
-        provider: process.env.SUPPLIER_DISCOVERY_AI_PROVIDER,
+        model: process.env.SUPPLIER_DISCOVERY_AI_MODEL?.trim() || options.model,
+        baseUrl: process.env.SUPPLIER_DISCOVERY_AI_BASE_URL?.trim() || undefined,
+        apiKey: process.env.SUPPLIER_DISCOVERY_AI_API_KEY?.trim() || undefined,
+        provider: process.env.SUPPLIER_DISCOVERY_AI_PROVIDER?.trim() || undefined,
       }
     : options;
 
