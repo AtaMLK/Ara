@@ -14,7 +14,7 @@ function isDomestic(country: string | null | undefined) {
 
 function candidateEvidenceEmail(...roots: unknown[]): string | null {
   const seen = new Set<object>();
-  const emailPattern = /^[A-Z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i;
+  const emailPattern = /^[A-Z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i;
 
   function walk(value: unknown, depth = 0): string | null {
     if (!value || typeof value !== 'object' || depth > 8 || seen.has(value as object)) return null;
