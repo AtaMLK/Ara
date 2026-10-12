@@ -22,15 +22,52 @@ function inferCountryFromHostname(hostname: string): string | null {
   return tldMap[tld] ?? null;
 }
 
+function extractPublicEmails(value: string): string[] {
+  const normalized = value
+    .replace(/&#64;|&commat;/gi, '@')
+    .replace(/&#46;|&period;/gi, '.')
+    .replace(/\s*(?:\[at\]|\(at\)|\{at\})\s*/gi, '@')
+    .replace(/\s*(?:\[dot\]|\(dot\)|\{dot\})\s*/gi, '.');
+  const matches = normalized.match(/[A-Z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+/gi) ?? [];
+  return [...new Set(matches.map((email) => email.replace(/[),.;:]+$/, '').toLowerCase()))]
+    .filter((email) => email.length <= 254 && !/\.(?:png|jpe?g|gif|webp|svg)$/i.test(email));
+}
+
 async function fetchSupplierPage(url: string): Promise<string> {
   try {
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol)) return '';
     const response = await fetch(parsed.toString(), { method: 'GET', cache: 'no-store', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'ARAT Supplier Research Bot/1.0', Accept: 'text/html,application/xhtml+xml' } });
     if (!response.ok) return '';
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType && !/html|text\//i.test(contentType)) return '';
     const html = await response.text();
     const jsonLd = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]).join('\n');
-    return (jsonLd + '\n' + html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, ' ').trim().slice(0, 24000);
+    // Preserve addresses in mailto links and visible/obfuscated email text before
+    // stripping HTML tags (the old implementation discarded href="mailto:...").
+    const mailtoEmails = [...html.matchAll(/href=["']mailto:([^"'?]+)/gi)].map((match) => decodeURIComponent(match[1]).replace(/\?.*$/, ''));
+    const cloudflareEmails = [...html.matchAll(/data-cfemail=["']([0-9a-f]{6,})["']/gi)].map((match) => {
+      const encoded = match[1];
+      const key = Number.parseInt(encoded.slice(0, 2), 16);
+      let decoded = '';
+      for (let index = 2; index < encoded.length; index += 2) {
+        decoded += String.fromCharCode(Number.parseInt(encoded.slice(index, index + 2), 16) ^ key);
+      }
+      return decoded;
+    });
+    const visibleText = (jsonLd + '\n' + html)
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+    const emails = extractPublicEmails([visibleText, ...mailtoEmails, ...cloudflareEmails].join('\n'));
+    return [visibleText.slice(0, 24000), emails.length ? 'PUBLIC_EMAIL_ADDRESSES: ' + emails.join(', ') : ''].filter(Boolean).join('\n');
   } catch { return ''; }
 }
 function normalizeEvidence(value: unknown): string[] {
@@ -2669,14 +2706,22 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             });
           }
 
+          // Always try standard contact pages before search-result URLs. Previously,
+          // a long list of search hits could consume the page limit and prevent /contact
+          // and /iletisim from ever being fetched.
+          const contactPaths = [
+            '/contact', '/contact-us', '/contactus', '/iletisim', '/iletisim.html',
+            '/about', '/about-us', '/about-us/contact', '/company/contact',
+            '/sales', '/support', '/impressum', '/kontakt',
+          ];
           const pageUrls = [
+            ...contactPaths.map((path) => 'https://' + hostname + path),
             website,
             ...contactResults.map((item) => item.source_url),
-            ...['/contact', '/contact-us', '/about', '/about-us', '/impressum', '/iletisim', '/kontakt'].map((path) => 'https://' + hostname + path),
           ];
           const uniquePageUrls = [...new Set(pageUrls)].filter((url) => {
             try { return new URL(url).hostname.replace(/^www\./, '') === hostname; } catch { return false; }
-          }).slice(0, 10);
+          }).slice(0, 16);
           fetchedPages = (await Promise.all(uniquePageUrls.map(async (url) => ({ url, text: await fetchSupplierPage(url) })))).filter((item) => item.text.length > 0);
 
           if (contactResults.length > 0 || fetchedPages.length > 0) {
@@ -2720,11 +2765,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         const explicitEmails = [
           ...contactResearch.emails.map((item) => ({ email: item.email, evidence: item.evidence })),
+          ...contactResearch.contacts.flatMap((item) => item.email ? [{ email: item.email, evidence: item.evidence.join(' | ') }] : []),
           ...contactResults.flatMap((item) => {
             const haystack = [item.finding ?? '', item.source_name ?? '', ...(normalizeEvidence(item.evidence))].join(' ');
-            const matches = haystack.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi) ?? [];
-            return matches.map((email) => ({ email, evidence: [item.finding ?? item.source_url] }));
+            return extractPublicEmails(haystack).map((email) => ({ email, evidence: item.source_url }));
           }),
+          ...fetchedPages.flatMap((item) =>
+            extractPublicEmails(item.text).map((email) => ({ email, evidence: item.url })),
+          ),
         ];
         const uniqueEmails = new Set<string>();
         for (const item of explicitEmails) {
