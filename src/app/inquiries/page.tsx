@@ -1,3 +1,4 @@
+import { oneRelated } from '@/lib/data/relations';
 import Link from 'next/link';
 import { listInquiries } from '@/lib/data/admin';
 import { getInquiryDisplayReference } from '@/lib/ui/inquiry-reference';
@@ -44,7 +45,7 @@ export default async function InquiriesPage({ searchParams }: Props) {
             <div className="row" key={item.id}>
               <div>
                 <Link className="table-link" href={`/inquiries/${item.id}`}>
-                  <strong>{getInquiryDisplayReference(item.reference, item.customers?.company_name || item.customers?.name, item.created_at, item.current_version, item.updated_at)}</strong>
+                  <strong>{getInquiryDisplayReference(item.reference, oneRelated(item.customers)?.company_name || oneRelated(item.customers)?.name, item.created_at, item.current_version, item.updated_at)}</strong>
                 </Link>
                 <div className="muted inquiry-reference-full">{item.reference}</div>
                 <div className="muted">{item.priority}</div>

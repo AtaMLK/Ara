@@ -80,7 +80,7 @@ const intakeItemSchema = z.object({
   deliveryRequirement: z.coerce.string().min(1).optional(),
   confidence: z.coerce.number().min(0).max(1),
   inferredFields: z.array(z.coerce.string().transform((value) => {
-    const normalized = value.trim().toLowerCase().replace(/[\\s-]+/g, '');
+    const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, '');
     const aliases: Record<string, 'product'|'brand'|'model'|'partNumber'|'quantity'|'unit'|'specification'|'delivery'> = {
       product: 'product',
       productname: 'product',
@@ -196,8 +196,8 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
     exact: 'exact_product',
     exact_match: 'exact_product',
     exact_product_match: 'exact_product',
-    manufacturer: 'exact_product',
-    official_manufacturer: 'exact_product',
+    manufacturer: 'same_brand_distributor',
+    official_manufacturer: 'same_brand_distributor',
     distributor: 'same_brand_distributor',
     brand_distributor: 'same_brand_distributor',
     same_brand: 'same_brand_distributor',
@@ -235,15 +235,15 @@ const supplierDiscoveryCandidateSchema = z.preprocess((value) => {
       (canonicalMatchType.includes('exact_product') ||
         canonicalMatchType.includes('exact_manufacturer') ||
         canonicalMatchType.includes('exact_model') ||
-        canonicalMatchType === 'exact' ||
-        canonicalMatchType.includes('manufacturer')
+        canonicalMatchType === 'exact'
         ? 'exact_product'
         : canonicalMatchType.includes('same_brand_distributor') ||
           canonicalMatchType.includes('brand_distributor') ||
           canonicalMatchType.includes('official_distributor') ||
           canonicalMatchType.includes('official_representative') ||
-          canonicalMatchType.includes('same_brand') ||
-          canonicalMatchType.includes('distributor')
+          (canonicalMatchType.includes('same_brand') && !canonicalMatchType.includes('similar')) ||
+          canonicalMatchType.includes('distributor') ||
+          canonicalMatchType.includes('manufacturer')
           ? 'same_brand_distributor'
           : canonicalMatchType.includes('same_brand_similar') ||
             canonicalMatchType.includes('similar_product') ||
@@ -321,7 +321,7 @@ const optionalContactEmail = z.preprocess(
     // AI sometimes returns labels, placeholders, or otherwise malformed
     // contact values. Do not fail the whole supplier-research stage for one
     // bad contact; only persist a syntactically valid email.
-    const emailPattern = /^[A-Z0-9._%+'-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$/i;
+    const emailPattern = /^[A-Z0-9._%+'-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
     return emailPattern.test(email) ? email : undefined;
   },
   z.string().email().optional(),

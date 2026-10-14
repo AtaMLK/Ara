@@ -5,6 +5,7 @@ import { requireAdmin } from '@/lib/ai/guards';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getEmailProvider } from '@/lib/email/provider';
 import { ToolError } from '@/lib/errors';
+import { oneRelated } from '@/lib/data/relations';
 
 function isDomestic(country: string | null | undefined) {
   const value = (country ?? '').trim().toLowerCase();
@@ -15,11 +16,6 @@ function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (char) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
   }[char] ?? char));
-}
-
-function requirementItemIndex(sourceRef: string | null | undefined) {
-  const match = sourceRef?.match(/intake:item:(\d+)/i);
-  return match ? Number(match[1]) : null;
 }
 
 function buildEmail(
@@ -56,13 +52,14 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
 
   const { data: candidate, error: candidateError } = await admin
     .from('supplier_candidates')
-    .select('id,inquiry_id,supplier_id,status,proposed_name')
+    .select('id,inquiry_id,supplier_id,status,proposed_name,verification_evidence')
     .eq('id', input.candidateId)
     .eq('inquiry_id', input.inquiryId)
     .single();
 
   if (candidateError || !candidate) throw new ToolError('NOT_FOUND', 'Supplier candidate not found');
   if (!candidate.supplier_id) throw new Error('This candidate has no supplier record yet.');
+  if (['admin_removed', 'admin_rejected'].includes(candidate.status)) throw new ToolError('CONFLICT', 'Removed or rejected candidates cannot be verified');
 
   const { data: supplier, error: supplierError } = await admin
     .from('suppliers')
@@ -79,6 +76,7 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
       .from('suppliers')
       .update({
         verification_status: 'verified',
+        last_verified_at: now,
         updated_at: now,
       })
       .eq('id', supplier.id);
@@ -91,6 +89,7 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
     .update({
       status: 'finalized',
       verification_evidence: {
+        ...((candidate.verification_evidence ?? {}) as Record<string, unknown>),
         verified_by: user.id,
         verified_at: now,
         verification_status: 'verified',
@@ -100,6 +99,11 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
     .eq('id', candidate.id);
 
   if (candidateUpdateError) throw new ToolError('TRANSIENT', candidateUpdateError.message);
+  const { error: historyError } = await admin.from('supplier_verification_history').insert({
+    supplier_id: supplier.id, old_status: supplier.verification_status, new_status: 'verified',
+    reason: 'Admin verified the supplier candidate', changed_by: user.id,
+  });
+  if (historyError) throw new ToolError('TRANSIENT', historyError.message);
 
   await admin.from('timeline_events').insert({
     inquiry_id: input.inquiryId,
@@ -189,15 +193,19 @@ export async function sendSupplierRfqAction(input: {
 
   const { data: candidates, error: candidateError } = await admin
     .from('supplier_candidates')
-    .select('id,requirement_id,status,supplier_id,proposed_name,proposed_country,suppliers(id,legal_name,primary_country,supplier_type,verification_status)')
+    .select('id,requirement_id,status,supplier_id,proposed_name,proposed_country,verification_evidence,suppliers(id,legal_name,primary_country,supplier_type,verification_status)')
     .eq('inquiry_id', input.inquiryId)
     .in('id', input.candidateIds);
 
   if (candidateError) throw new ToolError('TRANSIENT', candidateError.message);
   if (!candidates?.length) throw new Error('Selected supplier candidates were not found.');
 
-  const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-  const selected = input.candidateIds.map((id) => candidateById.get(id)).filter(Boolean);
+  const candidateById = new Map(candidates.map((candidate) => [candidate.id, { ...candidate, suppliers: oneRelated(candidate.suppliers) }]));
+  const selected = [...new Set(input.candidateIds)].map((id) => {
+    const candidate = candidateById.get(id);
+    if (!candidate) throw new ToolError('NOT_FOUND', 'One or more selected candidates do not belong to this inquiry');
+    return candidate;
+  });
 
   const invalid = selected.filter((candidate) => {
     const evidence = (candidate.verification_evidence ?? {}) as Record<string, unknown>;
@@ -240,16 +248,14 @@ export async function sendSupplierRfqAction(input: {
       throw new Error(`Supplier ${candidate.proposed_name} is not linked to a product requirement yet.`);
     }
 
-    const itemIndex = requirementItemIndex(productRequirement.source_ref);
     const itemRequirements = (requirements ?? []).filter((item) => {
-      const idx = requirementItemIndex(item.source_ref);
-      return item.id === productRequirement.id || (itemIndex !== null && idx === itemIndex);
+      return item.id === productRequirement.id || (Boolean(productRequirement.source_ref) && item.source_ref === productRequirement.source_ref);
     });
 
     const product = productRequirement.value;
-    const model = itemRequirements.find((item) => item.type === 'model_part_number')?.value ?? '';
+    const model = itemRequirements.filter((item) => item.type === 'model_part_number').map((item) => item.value).join(' / ');
     const quantityRow = itemRequirements.find((item) => item.type === 'quantity')?.value ?? '';
-    const specifications = itemRequirements.filter((item) => item.type === 'specification').map((item) => item.value);
+    const specifications = itemRequirements.filter((item) => item.type === 'specification' || item.type === 'delivery' || item.type === 'other').map((item) => item.value);
 
     const domestic = isDomestic(supplier.primary_country || candidate.proposed_country);
     const language = domestic ? 'tr' : 'en';

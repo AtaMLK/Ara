@@ -4,7 +4,9 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 import { getResearchProvider, type ResearchResult } from './research/provider';
 import { runAgent } from './agent-runner';
-import { documentOutputSchema, intakeOutputSchema, intakeRepairOutputSchema, clarificationOutputSchema, clarificationRepairOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema, supplierDiscoveryOutputSchema } from './agent-schemas';
+import { isPublishedContact, extractPublishedEmails, sameWebsiteHost } from './supplier-evidence';
+import { readSupplierHtml } from './supplier-page';
+import { documentOutputSchema, intakeOutputSchema, intakeRepairOutputSchema, clarificationOutputSchema, clarificationRepairOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema, supplierDiscoveryOutputSchema, supplierVerificationOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
   enqueueWorkflow,
@@ -26,11 +28,10 @@ async function fetchSupplierPage(url: string): Promise<string> {
   try {
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol)) return '';
-    const response = await fetch(parsed.toString(), { method: 'GET', cache: 'no-store', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'ARAT Supplier Research Bot/1.0', Accept: 'text/html,application/xhtml+xml' } });
-    if (!response.ok) return '';
-    const html = await response.text();
+    const html = await readSupplierHtml(parsed.toString());
     const jsonLd = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]).join('\n');
-    return (jsonLd + '\n' + html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, ' ').trim().slice(0, 24000);
+    const mailto = [...html.matchAll(/href=["']mailto:([^"'?]+)/gi)].map((match) => match[1]).join(' ');
+    return (jsonLd + '\n' + mailto + '\n' + html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, ' ').trim().slice(0, 24000);
   } catch { return ''; }
 }
 function normalizeEvidence(value: unknown): string[] {
@@ -246,6 +247,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
   }
 
   const running = await markExecutionRunning(execution.id);
+  if (!running) return { execution, outcome: 'already_running' as const };
   const supabase = createSupabaseAdminClient();
 
   try {
@@ -262,7 +264,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .from('inquiry_files')
         .select('id,storage_path,original_name,mime_type,status')
         .eq('inquiry_id', inquiryId)
-        .in('status', ['uploaded', 'processing'])
+        .in('status', ['uploaded', 'processing', 'processing_failed'])
         .order('uploaded_at', { ascending: true });
 
       if (filesError) throw new ToolError('TRANSIENT', filesError.message);
@@ -275,6 +277,9 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         try {
           const bytes = await downloadInquiryFile(file.storage_path);
           const parsed = await parseInquiryFile(bytes, file.mime_type, file.original_name);
+          if (!parsed.extractedText.trim()) {
+            throw new ToolError('AI_PROCESSING', 'Document has no readable text. OCR or a readable replacement is required before sourcing.');
+          }
 
           let extraction = {
             extractedText: parsed.extractedText,
@@ -297,6 +302,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                     'Do not infer missing values.',
                     'Return requirements only when the document explicitly supports them.',
                     'Use sourceRef values that identify a useful location such as page number, sheet name, or row range when available.',
+                    'Use one stable sourceRef per procurement item. All product, brand, model, quantity, specifications and delivery fields for that item must share that sourceRef. Distinct items must have distinct sourceRef values.',
                     'Flag ambiguity or unreadable content in qualityFlags.',
                   ],
                 },
@@ -341,11 +347,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               .eq('inquiry_id', inquiryId)
               .eq('type', requirement.type)
               .eq('value', requirement.value)
+              .eq('source_ref', sourceRef)
               .eq('source', file.mime_type === 'text/csv' || file.mime_type.includes('spreadsheet') || file.mime_type === 'application/vnd.ms-excel' ? 'excel' : file.mime_type.startsWith('image/') ? 'image' : 'pdf')
               .maybeSingle();
 
             if (!duplicate) {
-              await supabase.from('requirements').insert({
+              const { error: requirementError } = await supabase.from('requirements').insert({
                 inquiry_id: inquiryId,
                 type: requirement.type,
                 value: requirement.value,
@@ -354,6 +361,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 status: 'open',
                 admin_edited: false,
               });
+              if (requirementError) throw new ToolError('TRANSIENT', requirementError.message);
             }
           }
 
@@ -394,6 +402,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
       }
 
+      if (failed > 0) throw new ToolError('AI_PROCESSING', `${failed} inquiry file(s) could not be fully processed. Resolve these files before supplier research.`);
       const aiReady = Boolean(process.env.OPENAI_API_KEY);
 
       await markExecutionSuccess(running.id, {
@@ -518,7 +527,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 instructions: [
                   'Repair the procurement item extraction. Use the customer text as the primary source.',
                   'Return one item for every distinct product explicitly requested by the customer.',
-                  'For this request, "temprature sensor handsfor 50 pcs" is one product item and "powerstation GMI 2 pcs" is another.',
+                  'Keep each distinct requested product in its own item group; preserve every stated quantity and unit.',
                   'Normalize obvious spelling errors such as temprature -> temperature, but preserve the original phrase in requestedText.',
                   'Extract brand when explicitly stated or strongly supported by wording; do not invent model or part number.',
                   'Quantity and unit must come from the customer request unless explicitly supported elsewhere.',
@@ -553,7 +562,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
             requirements.push({
               type: 'product',
-              value: normalizeProductRequirementValue(item.product),
+              value: normalizeProductRequirementValue(item.product ?? item.requestedText),
               source: 'customer_text',
               sourceRef,
             });
@@ -633,13 +642,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           if (latestError) throw new ToolError('TRANSIENT', latestError.message);
 
           const existingKeys = new Set(
-            (latest ?? []).map((item) => `${item.type}|${item.value.trim().toLowerCase()}`)
+            (latest ?? []).map((item) => `${item.source_ref ?? ''}|${item.type}|${item.value.trim().toLowerCase()}`)
           );
           const ambiguityTypes = new Set(result.ambiguities.map((a) => a.requirementType));
           const inserts = customerTextRequirements
             .filter((item) => {
-              const key = `${item.type}|${item.value.trim().toLowerCase()}`;
-              return !existingKeys.has(key);
+              const key = `${item.sourceRef ?? ''}|${item.type}|${item.value.trim().toLowerCase()}`;
+              const protectedRow = (latest ?? []).some((row) => row.admin_edited && row.source_ref === item.sourceRef && row.type === item.type);
+              if (protectedRow || existingKeys.has(key)) return false;
+              existingKeys.add(key);
+              return true;
             })
             .map((item) => ({
               inquiry_id: inquiryId,
@@ -972,9 +984,17 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       let verified = 0;
       let pending = 0;
+      const checkedSuppliers = new Set<string>();
 
       for (const candidate of candidates) {
         if (!candidate.supplier_id) continue;
+        if (checkedSuppliers.has(candidate.supplier_id)) continue;
+        checkedSuppliers.add(candidate.supplier_id);
+        const { data: supplier, error: supplierError } = await supabase.from('suppliers')
+          .select('legal_name,primary_country,verification_status').eq('id', candidate.supplier_id).single();
+        if (supplierError || !supplier) throw new ToolError('TRANSIENT', supplierError?.message ?? 'Supplier not found');
+        if (supplier.verification_status === 'verified') { verified++; continue; }
+        if (supplier.verification_status === 'rejected') { pending++; continue; }
 
         const evidence = {
           candidate_id: candidate.id,
@@ -985,15 +1005,34 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         };
 
         const hasIdentity = Boolean(candidate.proposed_name?.trim());
-        const hasCountry = Boolean(candidate.proposed_country?.trim());
+        const hasCountry = Boolean(candidate.proposed_country?.trim()) && candidate.proposed_country !== 'Unknown';
         const hasWebsite = Boolean(candidate.proposed_website?.trim());
+        const officialPage = hasWebsite ? await fetchSupplierPage(candidate.proposed_website!) : '';
+        const { data: supplierEmails, error: emailError } = await supabase.from('supplier_emails')
+          .select('email').eq('supplier_id', candidate.supplier_id).eq('status', 'active');
+        if (emailError) throw new ToolError('TRANSIENT', emailError.message);
+        let assessment = { status: 'pending' as 'pending'|'verified'|'rejected', explanation: 'Official identity evidence or a published contact email is missing.', evidence: [] as string[] };
+        if (hasIdentity && hasCountry && hasWebsite && officialPage && supplierEmails?.length) {
+          const review = await runAgent(
+            { agentId: 'supplier_verification', executionId: running.id, inquiryId },
+            {
+              supplier, candidate: evidence, official_page: officialPage,
+              emails: supplierEmails,
+              instructions: [
+                'Verify the real company identity, relevant business activity and published contact information using the supplied official page and source evidence.',
+                'A name, country, website or search snippet alone is not sufficient for verified status.',
+                'Return pending for unresolved identity, domain, country or contact conflicts. Never invent facts.',
+                'Supplier verification does not prove exact product availability or stock.',
+              ],
+            }, supplierVerificationOutputSchema,
+          );
+          assessment = review.output;
+        }
 
-        if (hasIdentity && hasCountry && hasWebsite) {
+        if (assessment.status === 'verified') {
           const { error: updateError } = await supabase
             .from('suppliers')
             .update({
-              legal_name: candidate.proposed_name,
-              primary_country: candidate.proposed_country,
               verification_status: 'verified',
               last_verified_at: new Date().toISOString(),
             })
@@ -1006,34 +1045,40 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             source_type: 'AI Research',
             source_url: candidate.proposed_website,
             source_name: candidate.proposed_name,
-            evidence,
+            evidence: { ...evidence, assessment },
           });
 
           await supabase.from('supplier_verification_history').insert({
             supplier_id: candidate.supplier_id,
             new_status: 'verified',
-            reason: 'Verified from finalized candidate evidence',
-            explanation: 'Identity, country, and website evidence were available from the approved research candidate.',
+            old_status: supplier.verification_status,
+            reason: 'Verified from official supplier evidence',
+            explanation: assessment.explanation,
             agent_id: 'supplier_verification',
           });
 
           verified++;
         } else {
-          await supabase
+          const { error: pendingError } = await supabase
             .from('suppliers')
-            .update({ verification_status: 'pending' })
+            .update({ verification_status: assessment.status, last_verified_at: null })
             .eq('id', candidate.supplier_id);
+          if (pendingError) throw new ToolError('TRANSIENT', pendingError.message);
 
           await supabase.from('supplier_verification_history').insert({
             supplier_id: candidate.supplier_id,
-            new_status: 'pending',
+            old_status: supplier.verification_status,
+            new_status: assessment.status,
             reason: 'Insufficient verification evidence',
-            explanation: 'Required supplier identity, country, or website evidence is missing.',
+            explanation: assessment.explanation,
             agent_id: 'supplier_verification',
           });
 
           pending++;
         }
+        const { error: evidenceError } = await supabase.from('supplier_candidates')
+          .update({ verification_evidence: { ...evidence, assessment } }).eq('id', candidate.id);
+        if (evidenceError) throw new ToolError('TRANSIENT', evidenceError.message);
       }
 
       const outcome = pending > 0 && verified === 0 ? 'verification_pending' : 'verification_completed';
@@ -1061,7 +1106,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       }, 'supplier_verification');
 
       if (pending === 0 && verified > 0) {
-        await enqueueStage(inquiryId, 'rfq');
+        await enqueueWorkflow(inquiryId, 'rfq');
       }
 
       return { execution: running, outcome };
@@ -1628,7 +1673,23 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       let comparisonExecutionId: string | null = null;
       if (processed > 0) {
         const comparison = await enqueueWorkflow(inquiryId, 'comparison');
+        if (comparison.status === 'succeeded') {
+          const { error: comparisonQueueError } = await supabase.from('ai_executions')
+            .update({ status: 'queued', output_ref: {}, error_code: null, error_message: null, started_at: null, completed_at: null })
+            .eq('id', comparison.id).eq('status','succeeded');
+          if (comparisonQueueError) throw new ToolError('TRANSIENT',comparisonQueueError.message);
+        }
         comparisonExecutionId = comparison.id;
+      }
+      // A reply can arrive while this stage is already processing its snapshot.
+      const { data: lateResponses, error: lateResponseError } = await supabase.from('supplier_responses')
+        .select('id').eq('inquiry_id',inquiryId).eq('status','received');
+      if (lateResponseError) throw new ToolError('TRANSIENT',lateResponseError.message);
+      const responseSnapshotIds = new Set((responses ?? []).map(response => response.id));
+      if (lateResponses?.some(response => !responseSnapshotIds.has(response.id))) {
+        const { error: reopenError } = await supabase.from('ai_executions')
+          .update({ status: 'queued', started_at: null, completed_at: null }).eq('id',running.id).eq('status','succeeded');
+        if (reopenError) throw new ToolError('TRANSIENT',reopenError.message);
       }
 
       await timeline(inquiryId, 'quote_extraction_completed', {
@@ -1957,7 +2018,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       const { data: existingCandidates } = await supabase
         .from('supplier_candidates')
-        .select('proposed_name,status')
+        .select('proposed_name,requirement_id,status,verification_evidence')
         .eq('inquiry_id', inquiryId);
 
       const blockedNames = new Set(
@@ -1968,6 +2029,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       const seen = new Set<string>();
       let createdCount = 0;
+      const productModels = new Map<string, string[]>();
       const discoveryCandidates = new Map<string, { name: string; country?: string; website?: string; evidence: string[]; requirementId?: string; matchType?: 'exact_product' | 'same_brand_distributor' | 'same_brand_similar' | 'related_alternative'; matchScore?: number; matchNote?: string }>();
 
       let selectedResults = results ?? [];
@@ -1979,6 +2041,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .eq('status', 'confirmed');
 
         const productRequirements = (confirmedRequirements.data ?? []).filter((item) => item.type === 'product');
+        for (const product of productRequirements) {
+          productModels.set(product.id, (confirmedRequirements.data ?? [])
+            .filter((item) => Boolean(product.source_ref) && item.source_ref === product.source_ref && item.type === 'model_part_number')
+            .map((item) => item.value));
+        }
 
         // Research results normally carry arat_requirement_id. Older/partial
         // research rows may not, so scope them by source_ref and product identity
@@ -1990,7 +2057,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           if (byId.length) return byId;
 
           const sameSource = (results ?? []).filter((item) =>
-            String(item.structured_data?.source_ref ?? item.structured_data?.arat_source_ref ?? '') === String(requirement.source_ref ?? '')
+            Boolean(requirement.source_ref) && String(item.structured_data?.source_ref ?? item.structured_data?.arat_source_ref ?? '') === String(requirement.source_ref ?? '')
           );
           if (sameSource.length) return sameSource;
 
@@ -2000,8 +2067,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           const identityValues = relatedRequirements
             .filter((item) => item.type === 'product' || item.type === 'model_part_number' || item.type === 'specification')
             .flatMap((item) => {
-              const brand = item.value.match(/brand\s*:\\s*(.+)/i)?.[1]?.trim();
-              return [brand ?? '', item.value.replace(/^brand\s*:\\s*/i, '').trim()];
+              const brand = item.value.match(/brand\s*:\s*(.+)/i)?.[1]?.trim();
+              return [brand ?? '', item.value.replace(/^brand\s*:\s*/i, '').trim()];
             })
             .map((value) => value.toLowerCase())
             .filter((value) => value.length >= 3);
@@ -2140,7 +2207,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               const name = candidate.name?.trim();
               if (!name || !allowedProductUrls.has(candidate.sourceUrl)) continue;
               const source = productResults.find((item) => item.source_url === candidate.sourceUrl);
-              const key = productRequirement.id + '::' + name.toLowerCase();
+              const key = candidate.sourceUrl + '::' + productRequirement.id;
               discoveryCandidates.set(key, {
                 name,
                 country: candidate.country?.trim() || undefined,
@@ -2400,8 +2467,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               website: /^https?:\/\//i.test(result.source_url) ? result.source_url : undefined,
               evidence: [result.finding].filter(Boolean),
               requirementId,
-              matchType: /\bmanufacturer\b|\bofficial\b|\bproduct\b/i.test(result.finding ?? '') ? 'exact_product' : 'same_brand_distributor',
-              matchScore: /\bmanufacturer\b|\bofficial\b|\bproduct\b/i.test(result.finding ?? '') ? 96 : 86,
+              matchType: 'same_brand_distributor',
+              matchScore: 75,
               matchNote: 'Candidate derived directly from the research evidence; exactness should be confirmed from the cited source.',
             });
           }
@@ -2414,7 +2481,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         // result for the same product. That previous fallback caused valid
         // candidates to disappear in the persistence loop because the candidate
         // no longer matched the selected result URL.
-        const selectedByRequirement = new Map<string, { result: ResearchResult; score: number }[]>();
+        const selectedByRequirement = new Map<string, { result: NonNullable<typeof results>[number]; score: number }[]>();
         for (const [candidateKey, candidate] of discoveryCandidates.entries()) {
           if (!candidate.requirementId || !candidate.name) continue;
 
@@ -2463,7 +2530,6 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             .filter((item, index, arr) =>
               index === arr.findIndex((x) => x.result.source_url === item.result.source_url)
             )
-            .slice(0, 50)
             .map((item) => item.result)
         );
       }
@@ -2479,7 +2545,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
 
         const text = `${result.source_name ?? ''} ${result.finding ?? ''} ${result.structured_data?.title ?? ''}`.toLowerCase();
-        const blockedSource = /(scribd|manualslib|manualmachine|pdfcoffee|researchgate|academia\\.edu|merriam-webster|newyorkfed|irs|sba|developer\\.android|arenasolutions)/i.test(hostname);
+        const blockedSource = /(scribd|manualslib|manualmachine|pdfcoffee|researchgate|academia\.edu|merriam-webster|newyorkfed|irs|sba|developer\.android|arenasolutions)/i.test(hostname);
         const supplierSignal = /(manufacturer|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?|electronics|sensor|instrumentation|power station|portable power|battery|energy storage|inverter|brand|product)/i.test(text);
         const commercialSignal = /(sales|contact|products?|catalog|quote|quotation|rfq|buy|stock|inventory|dealer|distributor|manufacturer)/i.test(text);
         const genericInformationSource = /(dictionary|survey|government|regulation|documentation|glossary|reference)/i.test(text);
@@ -2501,6 +2567,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             )
           );
         if (!aiCandidate?.name) continue;
+        const normalizeIdentity = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const supportingText = normalizeIdentity([result.finding, result.structured_data?.title, ...normalizeEvidence(result.evidence)].join(' '));
+        const requestedModels = productModels.get(requirementId) ?? [];
+        if (aiCandidate.matchType === 'exact_product' && requestedModels.some((model) => !supportingText.includes(normalizeIdentity(model)))) {
+          aiCandidate.matchType = 'same_brand_distributor';
+          aiCandidate.matchScore = Math.min(aiCandidate.matchScore ?? 75, 85);
+          aiCandidate.matchNote = 'The supplier relationship is supported, but the exact requested model or part number is not confirmed by the cited evidence.';
+        }
 
         const proposedName = aiCandidate.name.slice(0, 240);
         const key = `${requirementId}::${proposedName.toLowerCase()}`;
@@ -2508,6 +2582,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         seen.add(key);
 
         const website = aiCandidate.website || `https://${hostname}`;
+        try {
+          const supplierUrl = new URL(website);
+          if (!['http:', 'https:'].includes(supplierUrl.protocol)) continue;
+          hostname = supplierUrl.hostname.replace(/^www\./, '');
+        } catch { continue; }
         const country = aiCandidate.country ||
           (result.structured_data?.country as string | undefined)?.trim() ||
           null;
@@ -2519,8 +2598,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         let supplierId: string | null = null;
         const { data: existingSupplier, error: supplierLookupError } = await supabase
           .from('suppliers')
-          .select('id,primary_website_id,primary_email_id,primary_address_id,primary_phone_id')
-          .ilike('legal_name', proposedName.slice(0, 240))
+          .select('id,primary_website_id,primary_email_id,primary_address_id,primary_phone_id,primary_country,verification_status')
+          .eq('legal_name', proposedName.slice(0, 240))
           .limit(1)
           .maybeSingle();
 
@@ -2586,32 +2665,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .from('suppliers')
           .update({
             ...(shouldSetPrimaryWebsite ? { primary_website_id: websiteId } : {}),
-            description: [
+            ...(existingSupplier?.verification_status !== 'verified' ? { description: [
               result.finding?.slice(0, 1600) || '',
               aiCandidate.evidence.join(' ').slice(0, 400),
-            ].filter(Boolean).join(' ').slice(0, 2000) || null,
-            ...(country ? { primary_country: country } : {}),
+            ].filter(Boolean).join(' ').slice(0, 2000) || null } : {}),
+            ...(country && existingSupplier?.verification_status !== 'verified' ? { primary_country: country } : {}),
           })
           .eq('id', supplierId);
 
         // Before a supplier can be used for RFQ, research its real contact channels.
         // Search specifically for the supplier's own domain and let the AI extract only
         // contact facts supported by the returned evidence.
-        let contactResearch: {
-          contacts: Array<{
-            name?: string;
-            email?: string;
-            phone?: string;
-            jobTitle?: string;
-            department?: string;
-            country?: string;
-            professionalProfile?: string;
-            evidence: string[];
-          }>;
-          emails: Array<{ email: string; evidence: string }>;
-          addresses: Array<{ address: string; country?: string; evidence: string }>;
-          phones: Array<{ phone: string; country?: string; evidence: string }>;
-        } = { contacts: [], emails: [], addresses: [], phones: [] };
+        let contactResearch = supplierContactResearchOutputSchema.parse({});
 
         let contactResults: ResearchResult[] = [];
         let fetchedPages: Array<{ url: string; text: string }> = [];
@@ -2640,8 +2705,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             );
             const seenContactUrls = new Set<string>();
             contactResults = contactRuns.flat().filter((item) => {
-              if (!item.source_url || seenContactUrls.has(item.source_url)) return false;
-              seenContactUrls.add(item.source_url);
+              if (!item.sourceUrl || seenContactUrls.has(item.sourceUrl)) return false;
+              try {
+            if (!sameWebsiteHost(item.sourceUrl, hostname)) return false;
+              } catch { return false; }
+              seenContactUrls.add(item.sourceUrl);
               return true;
             }).slice(0, 20);
           } catch (error) {
@@ -2654,28 +2722,30 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               error: error instanceof Error ? error.message : String(error),
             });
           }
+        }
 
           const pageUrls = [
             website,
-            ...contactResults.map((item) => item.source_url),
+            ...contactResults.map((item) => item.sourceUrl),
             ...['/contact', '/contact-us', '/about', '/about-us', '/impressum', '/iletisim', '/kontakt'].map((path) => 'https://' + hostname + path),
           ];
           const uniquePageUrls = [...new Set(pageUrls)].filter((url) => {
-            try { return new URL(url).hostname.replace(/^www\./, '') === hostname; } catch { return false; }
+            return sameWebsiteHost(url, hostname);
           }).slice(0, 10);
           fetchedPages = (await Promise.all(uniquePageUrls.map(async (url) => ({ url, text: await fetchSupplierPage(url) })))).filter((item) => item.text.length > 0);
 
           if (contactResults.length > 0 || fetchedPages.length > 0) {
+            try {
             const contactAi = await runAgent(
               { agentId: 'contact_research', executionId: running.id, inquiryId },
               {
                 supplier: { name: proposedName, website, country },
                 search_results: [
                   ...contactResults.map((item) => ({
-                    source_name: item.source_name,
-                    source_url: item.source_url,
+                    source_name: item.sourceName,
+                    source_url: item.sourceUrl,
                     finding: item.finding,
-                    structured_data: item.structured_data,
+                    structured_data: item.structuredData,
                     evidence: item.evidence,
                   })),
                   ...fetchedPages.map((item) => ({
@@ -2701,16 +2771,43 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               supplierContactResearchOutputSchema,
             );
             contactResearch = contactAi.output;
+            } catch (error) {
+              await timeline(inquiryId, 'supplier_contact_extraction_failed', {
+                supplier_id: supplierId,
+                message: error instanceof Error ? error.message : 'Contact extraction failed',
+              }, 'contact_research');
+            }
           }
-        }
 
+        const contactEvidenceText = [
+          ...contactResults.map((item) => [item.finding, ...normalizeEvidence(item.evidence)].join(' ')),
+          ...fetchedPages.map((page) => page.text),
+        ];
+        contactResearch = {
+          ...contactResearch,
+          emails: contactResearch.emails.filter((item) => isPublishedContact(item.email, contactEvidenceText)),
+          addresses: contactResearch.addresses.filter((item) => isPublishedContact(item.address, contactEvidenceText)).map((item) => ({ ...item, country: isPublishedContact(item.country, contactEvidenceText) ? item.country : undefined })),
+          phones: contactResearch.phones.filter((item) => isPublishedContact(item.phone, contactEvidenceText)),
+          contacts: contactResearch.contacts.filter((item) => isPublishedContact(item.name, contactEvidenceText)).map((item) => ({
+            ...item,
+            email: isPublishedContact(item.email, contactEvidenceText) ? item.email : undefined,
+            phone: isPublishedContact(item.phone, contactEvidenceText) ? item.phone : undefined,
+            jobTitle: isPublishedContact(item.jobTitle, contactEvidenceText) ? item.jobTitle : undefined,
+            department: isPublishedContact(item.department, contactEvidenceText) ? item.department : undefined,
+            country: isPublishedContact(item.country, contactEvidenceText) ? item.country : undefined,
+            professionalProfile: isPublishedContact(item.professionalProfile, contactEvidenceText) ? item.professionalProfile : undefined,
+          })),
+        };
         const explicitEmails = [
           ...contactResearch.emails.map((item) => ({ email: item.email, evidence: item.evidence })),
           ...contactResults.flatMap((item) => {
-            const haystack = [item.finding ?? '', item.source_name ?? '', ...(normalizeEvidence(item.evidence))].join(' ');
-            const matches = haystack.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi) ?? [];
-            return matches.map((email) => ({ email, evidence: [item.finding ?? item.source_url] }));
+            const haystack = [item.finding ?? '', item.sourceName ?? '', ...(normalizeEvidence(item.evidence))].join(' ');
+            const matches = extractPublishedEmails(haystack);
+            return matches.map((email) => ({ email, evidence: item.finding || item.sourceUrl }));
           }),
+          ...fetchedPages.flatMap((page) => extractPublishedEmails(page.text)
+            .map((email) => ({ email, evidence: page.url }))),
+          ...contactResearch.contacts.filter((contact) => contact.email).map((contact) => ({ email: contact.email!, evidence: contact.evidence.join(' | ') })),
         ];
         const uniqueEmails = new Set<string>();
         for (const item of explicitEmails) {
@@ -2765,13 +2862,15 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
 
         const addresses = [...new Set(contactResearch.addresses.map((item) => item.address?.trim()).filter((value): value is string => Boolean(value)))];
+        let hasPrimaryAddress = Boolean(existingSupplier?.primary_address_id);
         for (const address of addresses) {
           const { data: existingAddress } = await supabase.from('supplier_addresses').select('id').eq('supplier_id', supplierId).eq('address', address).maybeSingle();
           if (!existingAddress) {
             const { data: createdAddress, error: addressError } = await supabase.from('supplier_addresses')
-              .insert({ supplier_id: supplierId, address, is_primary: !Boolean(existingSupplier?.primary_address_id) })
+              .insert({ supplier_id: supplierId, address, is_primary: !hasPrimaryAddress })
               .select('id').single();
             if (addressError || !createdAddress) throw new ToolError('CONFLICT', addressError?.message ?? 'Failed to create supplier address');
+            hasPrimaryAddress = true;
           }
         }
         const { data: primaryAddress } = await supabase.from('supplier_addresses').select('id').eq('supplier_id', supplierId).eq('is_primary', true).order('created_at', { ascending: true }).limit(1).maybeSingle();
@@ -2783,7 +2882,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         ].filter((value): value is string => Boolean(value)))];
         for (const phone of phones) {
           const { data: existingPhone } = await supabase.from('supplier_phones').select('id').eq('supplier_id', supplierId).eq('phone', phone).maybeSingle();
-          if (!existingPhone) await supabase.from('supplier_phones').insert({ supplier_id: supplierId, phone, is_primary: false, status: 'active' });
+          if (!existingPhone) {
+            const { error: phoneError } = await supabase.from('supplier_phones').insert({ supplier_id: supplierId, phone, is_primary: false, status: 'active' });
+            if (phoneError) throw new ToolError('CONFLICT', phoneError.message);
+          }
         }
         const { data: primaryPhone } = await supabase.from('supplier_phones').select('id').eq('supplier_id', supplierId).eq('status', 'active').order('is_primary', { ascending: false }).order('created_at', { ascending: true }).limit(1).maybeSingle();
         if (primaryPhone?.id) {
@@ -2791,7 +2893,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           await supabase.from('suppliers').update({ primary_phone_id: primaryPhone.id }).eq('id', supplierId);
         }
 
-        const inferredCountry = contactResearch.contacts.find((item) => item.country?.trim())?.country?.trim()
+        const inferredCountry = (existingSupplier?.verification_status === 'verified' ? existingSupplier.primary_country : null)
+          || contactResearch.contacts.find((item) => item.country?.trim())?.country?.trim()
           || contactResearch.addresses.find((item) => item.country?.trim())?.country?.trim()
           || (country && country !== 'Unknown' ? country : null)
           || inferCountryFromHostname(hostname);
@@ -2852,7 +2955,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           requirement_id: aiCandidate.requirementId ?? null,
           supplier_id: supplierId,
           proposed_name: proposedName.slice(0, 240),
-          proposed_country: country,
+          proposed_country: inferredCountry ?? country,
           proposed_website: website,
           match_evidence: {
             research_result_id: result.id,
@@ -2867,13 +2970,23 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           },
           availability_evidence: {},
           verification_evidence: {
+            ...((existingCandidates ?? []).find((candidate) => candidate.proposed_name === proposedName && candidate.requirement_id === aiCandidate.requirementId)?.verification_evidence ?? {}),
             source_url: result.source_url,
             source_name: result.source_name,
+            contact_sources: fetchedPages.map((page) => page.url),
+            contact_research: contactResearch,
+            missing_contact_fields: [
+              ...(!explicitEmails.length ? ['email'] : []),
+              ...(!phones.length ? ['phone'] : []),
+              ...(!addresses.length ? ['address'] : []),
+              ...(!inferredCountry ? ['country'] : []),
+            ],
           },
           status: 'finalized',
         }, { onConflict: 'inquiry_id,proposed_name,requirement_id', ignoreDuplicates: false });
 
-        if (!error) createdCount++;
+        if (error) throw new ToolError('CONFLICT', `Failed to save supplier candidate ${proposedName}: ${error.message}`);
+        createdCount++;
       }
 
       // Rank suppliers higher when the same supplier can cover multiple requested products.
@@ -2882,6 +2995,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .from('supplier_candidates')
         .select('id,supplier_id,requirement_id,match_evidence')
         .eq('inquiry_id', inquiryId)
+        .eq('status', 'finalized')
         .not('supplier_id', 'is', null)
         .not('requirement_id', 'is', null);
 
@@ -2981,7 +3095,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       await markExecutionSuccess(running.id, {
         research_case_id: research.id,
         candidate_count: createdCount,
-        next_stage: 'rfq',
+        next_stage: 'verification',
         blocked: false,
       });
 
@@ -2990,7 +3104,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         inquiry_id: inquiryId,
         agent_id: 'supplier_discovery',
         alert_type: 'SUPPLIER_CANDIDATES_READY',
-        message: `${createdCount} supplier(s) were discovered and enriched. Admin verification is required before an RFQ can be created or sent.`,
+        message: `${createdCount} supplier candidate(s) were discovered. Evidence verification is queued; missing contact fields remain visible for Admin review.`,
         priority: 'normal',
       });
       await timeline(inquiryId, 'workflow_supplier_candidates_ready', {
@@ -2999,20 +3113,31 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         admin_approval_required_at: 'rfq_send',
       }, 'supplier_discovery');
 
-      await timeline(inquiryId, 'workflow_supplier_discovery_waiting_for_admin_verification', {
+      await timeline(inquiryId, 'workflow_supplier_verification_queued', {
         research_case_id: research.id,
         candidate_count: createdCount,
-        approval_required: true,
+        approval_required: false,
       }, 'supplier_discovery');
 
-      return { execution: running, outcome: 'awaiting_admin_verification' as const };
+      const verification = await enqueueWorkflow(inquiryId, 'verification');
+      if (verification.status === 'succeeded') {
+        const { error: verificationQueueError } = await supabase.from('ai_executions')
+          .update({ status: 'queued', output_ref: {}, error_code: null, error_message: null, started_at: null, completed_at: null })
+          .eq('id', verification.id).eq('status', 'succeeded');
+        if (verificationQueueError) throw new ToolError('TRANSIENT', verificationQueueError.message);
+      }
+      return { execution: running, outcome: 'verification_queued' as const };
     }
 
 
     if (stage === 'research') {
+      const { data: confirmedRows, error: requirementsError } = await supabase.from('requirements')
+        .select('id,type,value,source_ref').eq('inquiry_id', inquiryId).eq('status', 'confirmed').order('created_at', { ascending: true });
+      if (requirementsError) throw new ToolError('TRANSIENT', requirementsError.message);
+      const requirementsKey = JSON.stringify((confirmedRows ?? []).map((row) => [row.id, row.type, row.value, row.source_ref]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
       const { data: existing } = await supabase
         .from('research_cases')
-        .select('id,status,created_at')
+        .select('id,status,created_at,scope')
         .eq('inquiry_id', inquiryId)
         .order('created_at', { ascending: false })
         .limit(1)
@@ -3022,7 +3147,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       // case exists, retries/recovery runs MUST reuse its persisted results
       // instead of calling SerpAPI again and consuming another search quota.
       // A new research case is created only when no completed case exists yet.
-      let researchCase = existing?.status === 'completed' ? existing : null;
+      let researchCase = existing?.status === 'completed' && existing.scope?.requirements_key === requirementsKey ? existing : null;
 
       if (!researchCase) {
         const created = await supabase
@@ -3033,9 +3158,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             scope: {
               source_types: ['web', 'public_specialized_sources'],
               run_reason: 'initial_product_research',
+              requirements_key: requirementsKey,
             },
           })
-          .select('id,status,created_at')
+          .select('id,status,created_at,scope')
           .single();
         if (created.error || !created.data) {
           throw new ToolError('TRANSIENT', created.error?.message ?? 'Failed to create research case');
@@ -3049,23 +3175,21 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         });
       }
 
+      if (researchCase.status === 'completed') {
+        const discovery = await enqueueWorkflow(inquiryId, 'supplier_discovery');
+        await markExecutionSuccess(running.id, { research_case_id: researchCase.id, next_stage: 'supplier_discovery', supplier_discovery_execution_id: discovery.id, reused: true });
+        return { execution: running, outcome: 'research_reused' as const };
+      }
       const provider = getResearchProvider();
 
       if (provider && researchCase.status !== 'completed') {
-        const { data: requirements } = await supabase
-          .from('requirements')
-          .select('id,type,value,source_ref')
-          .eq('inquiry_id', inquiryId)
-          .eq('status', 'confirmed')
-          .order('created_at', { ascending: true });
-
-        const confirmedRequirements = requirements ?? [];
+        const confirmedRequirements = confirmedRows ?? [];
         const productItems = confirmedRequirements
           .filter((item) => item.type === 'product')
           .map((product) => {
             const relatedRows = confirmedRequirements
               .filter((item) =>
-                item.source_ref === product.source_ref &&
+                Boolean(product.source_ref) && item.source_ref === product.source_ref &&
                 (item.type === 'specification' || item.type === 'model_part_number')
               )
               .filter((item) => item.value?.trim() && item.value.trim().toLowerCase() !== 'null');
@@ -3074,9 +3198,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               .find((item) => /^brand\s*:/i.test(item.value))
               ?.value.replace(/^brand\s*:\s*/i, '').trim();
 
-            const model = relatedRows
-              .find((item) => item.type === 'model_part_number')
-              ?.value.trim();
+            const model = relatedRows.filter((item) => item.type === 'model_part_number').map((item) => item.value.trim()).join(' ') || undefined;
 
             const specifications = relatedRows
               .filter((item) => item.type === 'specification' && !/^brand\s*:/i.test(item.value))
@@ -3110,23 +3232,6 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           ].filter(Boolean).join(' ');
 
           const commercial = [
-            ...(item.brand?.toLowerCase() === 'gmi' ? [
-              '"GMI Energy" "VPG750"',
-              '"VMAX Portable Power Station 500W / 786Wh"',
-              '"VPG750" "786Wh" "500W"',
-              'site:gmienergy.com "VPG750"',
-              'site:gmienergy.com "VMAX Portable Power Station"',
-              '"GMI Energy" "portable power station" distributor Turkey',
-              '"GMI Energy" "VPG750" distributor',
-            ] : []),
-            ...(item.brand?.toLowerCase().includes('hansford') ? [
-              `"${item.model ?? ''}" "Hansford Sensors"`,
-              `"${item.model ?? ''}" vibration sensor`,
-              `site:hansfordsensors.com "${item.model ?? ''}"`,
-              `"${item.model ?? ''}" supplier Turkey`,
-              `"${item.model ?? ''}" distributor Turkey`,
-              '"Hansford Sensors" Turkey distributor',
-            ].filter((query) => !query.includes('""')) : []),
             [item.model, item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
             [item.model, item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
             [item.model, item.brand, item.product, 'official distributor'].filter(Boolean).join(' '),
@@ -3141,7 +3246,6 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             item.model ? `"${item.model}"` : '',
             item.brand && item.model ? `"${item.brand}" "${item.model}"` : '',
             item.brand && item.model ? `"${item.brand}" "${item.model}" supplier` : '',
-            item.brand && item.model ? `site:${item.brand.toLowerCase().replace(/[^a-z0-9.-]/g, '')} ${item.model}` : '',
             [item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
             [item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
             [item.product, 'manufacturer Turkey'].filter(Boolean).join(' '),
@@ -3229,23 +3333,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             return { accepted: true, reason: 'brand_and_spec' };
           }
 
-          // GMI/VMAX has several public names. Accept an exact identity only when
-          // at least one strong identity marker is present.
-          if (brand.includes('gmi')) {
-            const gmiStrong = ['vpg750', '786wh', '500w', 'vmax portable power station', 'gmi energy'];
-            if (gmiStrong.some((token) => haystack.includes(normalizeResearchText(token)))) {
-              return { accepted: true, reason: 'gmi_identity_marker' };
-            }
-          }
-
-          if (brand.includes('hansford')) {
-            const hansfordStrong = [
-              model,
-              'hansford sensors',
-            ].filter(Boolean);
-            if (hansfordStrong.some((token) => haystack.includes(normalizeResearchText(String(token))))) {
-              return { accepted: true, reason: 'hansford_identity_marker' };
-            }
+          if (brand && haystack.includes(brand) && /manufacturer|distributor|supplier|official|sales/.test(haystack)) {
+            return { accepted: true, reason: 'requested_brand_business' };
           }
 
           const tokens = meaningfulProductTokens(item.product);
@@ -3284,6 +3373,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             'TRANSIENT',
             'Supplier research provider authentication failed. Check SERPAPI_API_KEY.',
           );
+        }
+        if (failedQueries > 0 && successfulQueries === 0) {
+          await supabase.from('research_cases').update({ status: 'failed', completed_at: new Date().toISOString() }).eq('id', researchCase.id);
+          throw new ToolError('TRANSIENT', 'All supplier research queries failed. No completed research or supplier facts were produced.');
+        }
+        if (failedQueries > 0) {
+          await createAlert(inquiryId, 'product_research', 'RESEARCH_PARTIAL_COVERAGE', `${failedQueries} of ${resultBatches.length} supplier searches failed. Results cover only the successful searches.`, 'normal');
         }
 
         const resultMap = new Map<string, { result: ResearchResult; requirementId: string | null; product: string; query: string; relevanceReason: string }>();
@@ -3328,7 +3424,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         for (const entry of resultMap.values()) {
           const key = entry.requirementId ?? entry.product;
           const bucket = perRequirement.get(key) ?? [];
-          if (bucket.length < 30) bucket.push(entry);
+          bucket.push(entry);
           perRequirement.set(key, bucket);
         }
         const balancedResults = [...perRequirement.values()].flat();
@@ -3352,7 +3448,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         })));
 
         for (const result of results) {
-          await supabase.from('research_results').insert({
+          const { error: resultError } = await supabase.from('research_results').insert({
             research_case_id: researchCase.id,
             source_type: result.sourceType,
             source_name: result.sourceName,
@@ -3363,6 +3459,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             confidence: result.confidence,
             evidence: result.evidence,
           });
+          if (resultError) throw new ToolError('TRANSIENT', `Failed to persist research evidence: ${resultError.message}`);
         }
 
         await supabase.from('research_cases')
@@ -3371,14 +3468,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         let discovery = await enqueueWorkflow(inquiryId, 'supplier_discovery');
 
-        // A previous discovery run may have completed successfully with zero
-        // candidates. Reopen it after fresh research so the new evidence is
-        // actually evaluated instead of enqueueWorkflow returning the old
-        // succeeded execution unchanged.
-        const previousCandidateCount = Number(
-          (discovery.output_ref as { candidate_count?: number } | null)?.candidate_count ?? 0,
-        );
-        if (discovery.status === 'succeeded' && previousCandidateCount === 0) {
+        // New research must be evaluated even when an earlier discovery succeeded.
+        if (existing?.status === 'completed' && existing.scope?.requirements_key !== requirementsKey) {
+          const { error: staleCandidatesError } = await supabase.from('supplier_candidates')
+            .update({ status: 'proposed' }).eq('inquiry_id', inquiryId).eq('status', 'finalized');
+          if (staleCandidatesError) throw new ToolError('TRANSIENT', staleCandidatesError.message);
+        }
+        if (discovery.status === 'succeeded') {
           const reopened = await supabase
             .from('ai_executions')
             .update({
@@ -3609,6 +3705,10 @@ export async function continueInquiryWorkflow(inquiryId: string) {
   }
 
   if (inquiry.status === 'rfq') {
+    const { data: pendingResponses, error: responseError } = await supabase.from('supplier_responses')
+      .select('id').eq('inquiry_id',inquiryId).in('status',['received','processing']).limit(1);
+    if (responseError) throw new ToolError('TRANSIENT',responseError.message);
+    if (pendingResponses?.length) return runStage(inquiryId,'quote_extraction');
     const { data: pendingClarifications } = await supabase
       .from('clarifications')
       .select('id,status')
@@ -3649,13 +3749,13 @@ export async function continueInquiryWorkflow(inquiryId: string) {
           .eq('inquiry_id', inquiryId)
           .eq('rfq_id', supplierReply.rfq_id)
           .eq('direction', 'outgoing')
-          .contains('metadata', { type: 'customer_clarification_reply_to_supplier', clarification_id: answeredClarifications[0].id })
+          .contains('metadata', { type: 'customer_clarification_reply_to_supplier', clarification_id: answeredClarifications![0].id })
           .limit(1)
           .maybeSingle();
 
         if (!existingFollowUp) {
           await timeline(inquiryId, 'customer_clarification_answer_ready_for_supplier', {
-            clarification_id: answeredClarifications[0].id,
+            clarification_id: answeredClarifications![0].id,
             rfq_id: supplierReply.rfq_id,
             supplier_id: supplierReply.supplier_id,
           }, 'email_response');

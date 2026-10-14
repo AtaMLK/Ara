@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { ToolError } from '@/lib/errors';
 
 function extractEmailAddress(value: string) {
   const match = value.match(/<([^>]+)>/);
@@ -8,7 +9,7 @@ function extractEmailAddress(value: string) {
 }
 
 function normalizeSubject(value: string) {
-  return value.trim().replace(/^(re|fw|fwd):\s*/i, '').trim().toLowerCase();
+  return value.trim().replace(/^(?:(?:re|fw|fwd):\s*)+/i, '').trim().toLowerCase();
 }
 
 export type SupplierEmailMatchInput = {
@@ -39,23 +40,28 @@ export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
   const senderEmail = extractEmailAddress(input.sender);
   const subject = normalizeSubject(input.subject);
 
-  const { data: emailRows } = await supabase
+  const { data: emailRows, error: emailError } = await supabase
     .from('supplier_emails')
     .select('supplier_id,email')
-    .ilike('email', senderEmail)
+    .ilike('email', senderEmail.replace(/[%_\\]/g, '\\$&'))
     .eq('status', 'active');
 
-  const { data: contactRows } = await supabase
+  const { data: contactRows, error: contactError } = await supabase
     .from('supplier_contacts')
     .select('supplier_id,email')
-    .ilike('email', senderEmail)
+    .ilike('email', senderEmail.replace(/[%_\\]/g, '\\$&'))
     .eq('status', 'active');
+  if (emailError || contactError) throw new ToolError('TRANSIENT', emailError?.message ?? contactError!.message);
 
   const supplierIds = [...new Set([
     ...(emailRows ?? []).map((row) => row.supplier_id),
     ...(contactRows ?? []).map((row) => row.supplier_id),
   ])];
 
+  if (supplierIds.length === 0) {
+    const alternateMatch = await matchAlternateSupplierMailbox(input, senderEmail);
+    if (alternateMatch) return alternateMatch;
+  }
   if (supplierIds.length !== 1) {
     return {
       matched: false as const,
@@ -65,13 +71,14 @@ export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
 
   const supplierId = supplierIds[0];
 
-  const { data: rfqs } = await supabase
+  const { data: rfqs, error: rfqError } = await supabase
     .from('rfqs')
     .select('id,inquiry_id,supplier_id,rfq_code,subject,status,created_at')
     .eq('supplier_id', supplierId)
     .in('status', ['sent', 'completed'])
     .order('created_at', { ascending: false })
     .limit(50);
+  if (rfqError) throw new ToolError('TRANSIENT', rfqError.message);
 
   if (!rfqs?.length) {
     return { matched: false as const, reason: 'no_supplier_rfq_found' as const };
@@ -102,7 +109,7 @@ export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
     const rfqIds = rfqs.map((rfq) => rfq.id);
     const { data: outgoingCommunications } = await supabase
       .from('communications')
-      .select('rfq_id,thread_id,metadata,created_at')
+      .select('rfq_id,provider_message_id,thread_id,metadata,created_at')
       .in('rfq_id', rfqIds)
       .eq('direction', 'outgoing')
       .eq('channel', 'email')
@@ -113,6 +120,8 @@ export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
       const candidates = new Set<string>();
       const threadId = normalizeMessageId(communication.thread_id);
       if (threadId) candidates.add(threadId);
+      const providerId = normalizeMessageId(communication.provider_message_id);
+      if (providerId) candidates.add(providerId);
 
       const metadata = communication.metadata;
       if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
@@ -167,6 +176,46 @@ export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
   }
 
   return { matched: false as const, reason: 'no_unique_rfq_match' as const };
+}
+
+const sharedEmailDomains = new Set(['gmail.com','googlemail.com','outlook.com','hotmail.com','live.com','msn.com','yahoo.com','yahoo.co.uk','aol.com','icloud.com','me.com','proton.me','protonmail.com','mail.com','gmx.com','gmx.de','yandex.com','yandex.ru','qq.com','163.com','126.com']);
+
+/** An alternate sender needs both a unique RFQ reference and a known company domain. */
+async function matchAlternateSupplierMailbox(input: SupplierEmailMatchInput, senderEmail: string) {
+  const supabase = createSupabaseAdminClient();
+  const senderDomain = senderEmail.split('@')[1];
+  if (!senderDomain || sharedEmailDomains.has(senderDomain)) return null;
+  const token = input.subject.match(/\bRFQ-\d{8}-[A-Z0-9]{6,12}\b/i)?.[0]?.toUpperCase();
+  const ids = extractMessageIds([input.inReplyTo ?? '', ...(input.references ?? [])]);
+  const variants = [...new Set(ids.flatMap(id => [id, `<${id}>`]))];
+  const rfqIds = new Set<string>();
+  if (variants.length) {
+    const threadQueries = await Promise.all(['provider_message_id','thread_id','metadata->>message_id'].map(column =>
+      supabase.from('communications').select('rfq_id').eq('direction','outgoing').eq('channel','email').in(column, variants).not('rfq_id','is',null),
+    ));
+    for (const result of threadQueries) {
+      if (result.error) throw new ToolError('TRANSIENT', result.error.message);
+      for (const row of result.data ?? []) if (row.rfq_id) rfqIds.add(row.rfq_id);
+    }
+  }
+  const query = supabase.from('rfqs').select('id,inquiry_id,supplier_id,rfq_code,subject,status,created_at,recipient_email').in('status',['sent','completed']);
+  if (rfqIds.size) query.in('id',[...rfqIds]);
+  else if (token) query.eq('rfq_code',token);
+  else return null;
+  const { data: rfqs, error } = await query.limit(2);
+  if (error) throw new ToolError('TRANSIENT',error.message);
+  if (rfqs?.length !== 1) return null;
+  const rfq = rfqs[0];
+  if (token && String(rfq.rfq_code).toUpperCase() !== token) return null;
+  const [emails, contacts] = await Promise.all([
+    supabase.from('supplier_emails').select('email').eq('supplier_id',rfq.supplier_id).eq('status','active'),
+    supabase.from('supplier_contacts').select('email').eq('supplier_id',rfq.supplier_id).eq('status','active'),
+  ]);
+  if (emails.error || contacts.error) throw new ToolError('TRANSIENT',emails.error?.message ?? contacts.error!.message);
+  const knownAddresses = [rfq.recipient_email,...(emails.data ?? []).map(row => row.email),...(contacts.data ?? []).map(row => row.email)];
+  const belongsToCompany = knownAddresses.some(address => typeof address === 'string' && extractEmailAddress(address).split('@')[1] === senderDomain);
+  if (!belongsToCompany) return null;
+  return { matched: true as const, supplierId: rfq.supplier_id, inquiryId: rfq.inquiry_id, rfq, matchMethod: 'alternate_sender_company_domain_and_rfq_reference' as const };
 }
 
 export { extractEmailAddress };

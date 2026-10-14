@@ -61,6 +61,7 @@ class SmtpEmailProvider implements EmailProvider {
     const result = await transport.sendMail({
       from: input.from || process.env.SMTP_FROM || user,
       to: input.to,
+      replyTo: input.replyTo || process.env.SMTP_REPLY_TO || process.env.IMAP_USER || user,
       subject: input.subject,
       html: input.html,
       text: input.text,

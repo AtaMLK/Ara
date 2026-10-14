@@ -1,3 +1,4 @@
+import { oneRelated } from '@/lib/data/relations';
 import Link from 'next/link';
 import { listQuoteRevisionRequests } from '@/lib/data/admin';
 import RevisionRequestActions from './revision-actions';
@@ -18,7 +19,7 @@ export default async function QuoteRevisionRequestsPage() {
             return (
               <div className="row" key={item.id}>
                 <div><Link className="row-link" href={'/quotes/'+item.quote_id}><strong>{quote?.reference || 'Quotation'}</strong></Link><div className="muted">Revision R{quote?.revision_number ?? '—'}</div></div>
-                <div>{quote?.customers?.company_name || quote?.customers?.name || '—'}</div>
+                <div>{oneRelated(quote?.customers)?.company_name || oneRelated(quote?.customers)?.name || '—'}</div>
                 <div><span className="badge">{item.reason.replaceAll('_',' ')}</span></div>
                 <div className="muted">{item.free_text || 'No additional details.'}</div>
                 <RevisionRequestActions requestId={item.id} />

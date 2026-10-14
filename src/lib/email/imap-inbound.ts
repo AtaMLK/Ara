@@ -18,7 +18,8 @@ function required(name: string) {
 
 function toAddressList(value: ParsedMail['to']) {
   if (!value) return [];
-  return value.value.map((item) => item.address || item.name || '').filter(Boolean);
+  const groups = Array.isArray(value) ? value : [value];
+  return groups.flatMap((group) => group.value.map((item) => item.address || item.name || '')).filter(Boolean);
 }
 
 function toSingleAddress(value: ParsedMail['from']) {
@@ -69,7 +70,7 @@ export async function pollImapInbox() {
     try {
       const since = new Date(Date.now() - INBOUND_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
       const matchingUids = await client.search({ since }, { uid: true });
-      const uids = matchingUids.slice(-MAX_MESSAGES_PER_POLL);
+      const uids = Array.isArray(matchingUids) ? matchingUids.slice(-MAX_MESSAGES_PER_POLL) : [];
       const messages = uids.length
         ? await client.fetchAll(uids, { uid: true, source: true, internalDate: true }, { uid: true })
         : [];
@@ -85,7 +86,7 @@ export async function pollImapInbox() {
           const parsed = await simpleParser(message.source);
           const messageId =
             parsed.messageId?.trim() ||
-            `imap:${mailbox}:${message.uid}:${message.internalDate?.toISOString() ?? 'unknown'}`;
+            `imap:${mailbox}:${message.uid}:${message.internalDate ? new Date(message.internalDate).toISOString() : 'unknown'}`;
 
           const attachments: InboundEmailAttachment[] = [];
           let totalAttachmentSize = 0;
@@ -127,7 +128,7 @@ export async function pollImapInbox() {
             references: Array.isArray(parsed.references) ? parsed.references : parsed.references ? [parsed.references] : [],
             text: parsed.text || null,
             html: parsed.html || null,
-            receivedAt: parsed.date?.toISOString() || message.internalDate?.toISOString() || new Date().toISOString(),
+            receivedAt: parsed.date?.toISOString() || (message.internalDate ? new Date(message.internalDate).toISOString() : new Date().toISOString()),
             provider: 'imap',
             attachments,
           });

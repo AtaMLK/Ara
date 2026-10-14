@@ -41,6 +41,7 @@ type Candidate = {
       phone: string | null;
       job_title: string | null;
       department: string | null;
+      professional_profile?: string | null;
       status: string;
       is_primary: boolean;
     }>;
@@ -130,11 +131,11 @@ function buildPreview(requirements: Requirement[], candidate: Candidate, languag
   const index = product.source_ref ? product.source_ref : '';
   const sameItem = requirements.filter((item) => {
     if (item.id === product.id) return true;
-    return item.source_ref === index;
+    return Boolean(index) && item.source_ref === index;
   });
-  const model = sameItem.find((item) => item.type === 'model_part_number')?.value ?? '';
+  const model = sameItem.filter((item) => item.type === 'model_part_number').map((item) => item.value).join(' / ');
   const quantity = sameItem.find((item) => item.type === 'quantity')?.value ?? '';
-  const specs = sameItem.filter((item) => item.type === 'specification').map((item) => item.value);
+  const specs = sameItem.filter((item) => ['specification', 'delivery', 'other'].includes(item.type)).map((item) => item.value);
 
   const subject = language === 'tr' ? `Teklif Talebi – ${product.value}` : `RFQ – ${product.value}`;
   const lines = [
@@ -417,6 +418,27 @@ function isVerified(candidate: Candidate) {
                           {candidate.suppliers?.supplier_addresses.find((item) => item.is_primary)?.address && (
                             <div className="muted">Address: {candidate.suppliers.supplier_addresses.find((item) => item.is_primary)?.address}</div>
                           )}
+                          <details onClick={(event) => event.stopPropagation()}>
+                            <summary>All contact details and evidence</summary>
+                            {candidate.suppliers?.supplier_emails.filter((item) => item.status === 'active').map((item) => <div key={item.email}>Email: {item.email}</div>)}
+                            {candidate.suppliers?.supplier_phones.filter((item) => item.status === 'active').map((item) => <div key={item.id}>Phone: {item.phone}</div>)}
+                            {candidate.suppliers?.supplier_addresses.map((item) => <div key={item.id}>Address: {item.address}</div>)}
+                            {candidate.suppliers?.supplier_contacts.filter((item) => item.status === 'active').map((item) => (
+                              <div key={item.id}>Contact: {[item.name, item.job_title, item.department, item.email, item.phone, item.professional_profile].filter(Boolean).join(' · ')}</div>
+                            ))}
+                            {(() => {
+                              const evidence = (candidate.verification_evidence ?? {}) as Record<string, unknown>;
+                              const assessment = evidence.assessment as { explanation?: string } | undefined;
+                              const missing = Array.isArray(evidence.missing_contact_fields) ? evidence.missing_contact_fields.filter((value) => typeof value === 'string') : [];
+                              const urls = [evidence.source_url, ...(Array.isArray(evidence.contact_sources) ? evidence.contact_sources : [])]
+                                .filter((value): value is string => typeof value === 'string' && /^https?:\/\//i.test(value));
+                              return <>
+                                {assessment?.explanation && <div>Verification: {assessment.explanation}</div>}
+                                {missing.length > 0 && <div className="supplier-match-warning">Not found in public evidence: {missing.join(', ')}</div>}
+                                {[...new Set(urls)].map((url) => <div key={url}><a href={url} target="_blank" rel="noreferrer">Source: {url}</a></div>)}
+                              </>;
+                            })()}
+                          </details>
                         </div>
                         <div className="supplier-candidate-contact">
                           <span>{email || 'No active email'}</span>

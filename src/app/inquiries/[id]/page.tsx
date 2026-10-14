@@ -1,3 +1,4 @@
+import { oneRelated } from '@/lib/data/relations';
 import Link from 'next/link';
 import AdminActivityTimeline from './admin-activity-timeline';
 import AdminFilePreview from './admin-file-preview';
@@ -30,7 +31,7 @@ export default async function InquiryDetailPage({ params }: Props) {
     supabase.from('ai_alerts').select('id,agent_id,alert_type,message,priority,status,created_at').eq('inquiry_id', id).eq('status', 'open').order('created_at', { ascending: false }).limit(10),
     supabase.from('clarifications').select('id,requirement_id,question,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('research_cases').select('id,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(5),
-    supabase.from('supplier_candidates').select('id,requirement_id,proposed_name,proposed_country,proposed_website,status,match_evidence,availability_evidence,verification_evidence,created_at,supplier_id,suppliers(id,legal_name,primary_country,supplier_type,verification_status,primary_address_id,primary_phone_id,primary_website_id,primary_email_id,supplier_contacts!supplier_contacts_supplier_id_fkey(id,name,email,phone,job_title,department,status,is_primary),supplier_emails!supplier_emails_supplier_id_fkey(email,is_primary,status),supplier_addresses!supplier_addresses_supplier_id_fkey(id,address,is_primary),supplier_phones!supplier_phones_supplier_id_fkey(id,phone,is_primary,status),supplier_websites!supplier_websites_supplier_id_fkey(id,url,is_primary))').eq('inquiry_id', id).order('created_at', { ascending: true }),
+    supabase.from('supplier_candidates').select('id,requirement_id,proposed_name,proposed_country,proposed_website,status,match_evidence,availability_evidence,verification_evidence,created_at,supplier_id,suppliers(id,legal_name,primary_country,supplier_type,verification_status,primary_address_id,primary_phone_id,primary_website_id,primary_email_id,supplier_contacts!supplier_contacts_supplier_id_fkey(id,name,email,phone,job_title,department,professional_profile,status,is_primary),supplier_emails!supplier_emails_supplier_id_fkey(email,is_primary,status),supplier_addresses!supplier_addresses_supplier_id_fkey(id,address,is_primary),supplier_phones!supplier_phones_supplier_id_fkey(id,phone,is_primary,status),supplier_websites!supplier_websites_supplier_id_fkey(id,url,is_primary))').eq('inquiry_id', id).order('created_at', { ascending: true }),
     supabase.from('rfqs').select('id,status,subject,recipient_email,sender_email,approval_required,created_at,sent_at,suppliers(legal_name)').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('communications').select('id,direction,channel,subject,body,received_at,sent_at,created_at,supplier_id,customer_id,rfq_id,metadata,suppliers(legal_name)').eq('inquiry_id', id).eq('channel', 'email').order('created_at', { ascending: false }).limit(100),
   ]);
@@ -39,7 +40,7 @@ export default async function InquiryDetailPage({ params }: Props) {
   if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error || candidatesResult.error || rfqsResult.error || communicationsResult.error) throw new Error('Failed to load inquiry details');
 
   const inquiry = inquiryResult.data;
-  const customer = inquiry.customers;
+  const customer = oneRelated(inquiry.customers);
   const customerName = customer?.company_name || customer?.name || 'Customer';
   const displayReference = getInquiryDisplayReference(inquiry.reference, customerName, inquiry.created_at, inquiry.current_version, inquiry.updated_at);
 
@@ -67,7 +68,7 @@ export default async function InquiryDetailPage({ params }: Props) {
   });
   const hasClarification = (clarificationsResult.data ?? []).some((item) => ['sent', 'pending_approval', 'draft'].includes(item.status));
   const hasCompletedResearch = (researchResult.data ?? []).some((item) => item.status === 'completed');
-  const hasVerifiedSupplier = (candidatesResult.data ?? []).some((item) => item.supplier_id && item.suppliers?.verification_status === 'verified');
+  const hasVerifiedSupplier = (candidatesResult.data ?? []).some((item) => item.supplier_id && oneRelated(item.suppliers)?.verification_status === 'verified');
   const hasSentRfq = (rfqsResult.data ?? []).some((item) => item.status === 'sent' || item.sent_at);
   const hasQuote = inquiry.status === 'quoting' || inquiry.status === 'converted';
   const hasCustomerDecision = inquiry.status === 'converted';
@@ -99,7 +100,7 @@ export default async function InquiryDetailPage({ params }: Props) {
 
       <InquiryProcess steps={adminProcessSteps} eyebrow="PROCUREMENT PROCESS" />
 
-      <CandidatePanel inquiryId={inquiry.id} requirements={requirementsResult.data ?? []} candidates={candidatesResult.data ?? []} />
+      <CandidatePanel inquiryId={inquiry.id} requirements={requirementsResult.data ?? []} candidates={(candidatesResult.data ?? []).map((row) => ({ ...row, suppliers: oneRelated(row.suppliers) }))} />
 
       <section className="section">
         <div className="section-head">
@@ -126,7 +127,7 @@ export default async function InquiryDetailPage({ params }: Props) {
                     <div>
                       <span className={`email-status-dot email-status-${tone}`} aria-hidden="true" />
                       <strong>{labelText}</strong>
-                      {email.suppliers?.legal_name && <span className="muted"> · {email.suppliers.legal_name}</span>}
+                      {oneRelated(email.suppliers)?.legal_name && <span className="muted"> · {oneRelated(email.suppliers)?.legal_name}</span>}
                     </div>
                     <span className="muted">{new Date(email.received_at ?? email.sent_at ?? email.created_at).toLocaleString('en-GB')}</span>
                   </div>
@@ -150,7 +151,7 @@ export default async function InquiryDetailPage({ params }: Props) {
                           <span className="badge status-pending_approval">Approval required</span>
                         </div>
                         <div className="supplier-reply-draft">{draft}</div>
-                        <form action={approveSupplierClarificationReplyAction}>
+                        <form action={async (formData) => { 'use server'; await approveSupplierClarificationReplyAction(formData); }}>
                           <input type="hidden" name="communicationId" value={email.id} />
                           <button className="primary-button" type="submit">Approve &amp; Send to Supplier</button>
                         </form>
@@ -180,7 +181,7 @@ export default async function InquiryDetailPage({ params }: Props) {
             <div className="row header"><div>Supplier</div><div>Recipient</div><div>Status</div><div>Created</div></div>
             {(rfqsResult.data ?? []).filter((rfq) => rfq.status !== 'cancelled').map((rfq) => (
               <div className="row" key={rfq.id}>
-                <div><strong>{rfq.suppliers?.legal_name ?? '—'}</strong><div className="muted">{rfq.subject}</div></div>
+                <div><strong>{oneRelated(rfq.suppliers)?.legal_name ?? '—'}</strong><div className="muted">{rfq.subject}</div></div>
                 <div>{rfq.recipient_email || 'No recipient email'}</div>
                 <div><span className={`badge status-badge status-${rfq.status}`}>{label(rfq.status)}</span></div>
                 <div>{new Date(rfq.created_at).toLocaleString('en-GB')}</div>

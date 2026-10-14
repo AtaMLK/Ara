@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { approveClarificationAction, sendClarificationAction, continueInquiryWorkflowAction, startInquiryWorkflowAction } from '@/app/actions';
 
 function label(value: string) {
-  return value.replaceAll('_', ' ').replace(/\\b\\w/g, (c) => c.toUpperCase());
+  return value.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifications, researchCases }: {

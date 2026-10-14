@@ -159,19 +159,19 @@ export async function listRfqs(search?: string, status?: string) {
       : Promise.resolve({ data: [] as Array<{ id: string; legal_name: string }> }),
     rows.length
       ? supabase.from('notifications').select('id,record_id,title,message,priority,read_at,created_at').eq('user_id', user.id).eq('record_type', 'rfq').in('record_id', rows.map((row) => row.id)).order('created_at', { ascending: false })
-      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+      : Promise.resolve({ data: [] as Array<{ id: string; record_id: string; title: string; message: string; priority: string; read_at: string | null; created_at: string }> }),
     rows.length
       ? supabase.from('communications').select('id,rfq_id,subject,body,received_at,created_at,metadata').eq('direction', 'incoming').eq('channel', 'email').in('rfq_id', rows.map((row) => row.id)).order('created_at', { ascending: false })
-      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+      : Promise.resolve({ data: [] as Array<{ id: string; rfq_id: string | null; subject: string | null; body: string | null; received_at: string | null; created_at: string; metadata: unknown }> }),
   ]);
 
   const inquiryMap = new Map((inquiries ?? []).map((item) => [item.id, item]));
   const supplierMap = new Map((suppliers ?? []).map((item) => [item.id, item]));
-  const notificationMap = new Map<string, (typeof notifications)[number]>();
+  const notificationMap = new Map<string, NonNullable<typeof notifications>[number]>();
   for (const notification of notifications ?? []) {
     if (!notificationMap.has(notification.record_id)) notificationMap.set(notification.record_id, notification);
   }
-  const replyMap = new Map<string, (typeof replies)[number]>();
+  const replyMap = new Map<string, NonNullable<typeof replies>[number]>();
   for (const reply of replies ?? []) {
     if (!replyMap.has(reply.rfq_id)) replyMap.set(reply.rfq_id, reply);
   }
@@ -182,9 +182,9 @@ export async function listRfqs(search?: string, status?: string) {
         .eq('channel', 'email')
         .in('rfq_id', rows.map((row) => row.id))
         .order('created_at', { ascending: true })
-    : { data: [] as Array<Record<string, unknown>> };
+    : { data: [] as Array<{ id: string; rfq_id: string | null; supplier_id: string | null; direction: 'incoming'|'outgoing'; subject: string | null; body: string | null; received_at: string | null; sent_at: string | null; created_at: string; metadata: unknown }> };
 
-  const conversationMap = new Map<string, Array<Record<string, unknown>>>();
+  const conversationMap = new Map<string, NonNullable<typeof conversationRows>>();
   for (const message of conversationRows ?? []) {
     if (!message.rfq_id) continue;
     const list = conversationMap.get(message.rfq_id) ?? [];

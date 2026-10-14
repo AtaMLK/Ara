@@ -1,3 +1,4 @@
+import { oneRelated } from '@/lib/data/relations';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
@@ -59,7 +60,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
         <div>
           <Link className="back-icon-button" href="/customer" aria-label="Back to My Requests" title="Back to My Requests"><span aria-hidden="true">←</span></Link>
           <div className="eyebrow">CUSTOMER PORTAL</div>
-          <h1 className="title inquiry-display-reference" title={inquiryResult.data.reference}>{getInquiryDisplayReference(inquiryResult.data.reference, inquiryResult.data.customers?.company_name || inquiryResult.data.customers?.name, undefined, 1, inquiryResult.data.updated_at)}</h1><div className="muted inquiry-reference-full">{inquiryResult.data.reference}</div>
+          <h1 className="title inquiry-display-reference" title={inquiryResult.data.reference}>{getInquiryDisplayReference(inquiryResult.data.reference, oneRelated(inquiryResult.data.customers)?.company_name || oneRelated(inquiryResult.data.customers)?.name, undefined, 1, inquiryResult.data.updated_at)}</h1><div className="muted inquiry-reference-full">{inquiryResult.data.reference}</div>
           <div className="muted">{inquiryResult.data.title}</div>
         </div>
         <span className={`badge status-badge status-${inquiryResult.data.status}`}>{inquiryResult.data.status.replaceAll('_',' ')}</span>

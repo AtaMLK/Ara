@@ -11,6 +11,7 @@ import {
 } from '@/lib/ai/clarification-replies';
 import { findSupplierRFQForEmail } from '@/lib/ai/supplier-email-matching';
 import { continueInquiryWorkflow } from '@/lib/ai/workflow';
+import { enqueueSupplierQuoteExtraction } from '@/lib/ai/orchestrator';
 import { parseInquiryFile } from '@/lib/ai/document-processor';
 import { runAgent } from '@/lib/ai/agent-runner';
 import { supplierEmailAnalysisOutputSchema } from '@/lib/ai/agent-schemas';
@@ -170,6 +171,8 @@ async function analyzeSupplierEmailAndNotify(input: {
     supplierIntent: 'quote' | 'clarification' | 'unavailable' | 'general_update' | 'unknown';
     customerActionRequired: boolean;
     customerQuestion?: string;
+    adminReviewRequired: boolean;
+    supplierReplyDraft?: string;
     confidence: number;
   } | null = null;
 
@@ -396,7 +399,7 @@ async function analyzeSupplierEmailAndNotify(input: {
       to: [input.customerEmail],
       subject: customerSubject,
       html: customerHtml,
-      text: customerHtml.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim(),
+      text: customerHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
       idempotencyKey: `supplier-clarification:${input.communicationId}`,
     });
@@ -459,13 +462,23 @@ async function analyzeSupplierEmailAndNotify(input: {
 export async function processInboundEmail(email: InboundEmail) {
   const supabase = createSupabaseAdminClient();
 
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from('communications')
-    .select('id')
+    .select('id,inquiry_id,supplier_id,rfq_id,metadata')
     .eq('provider_message_id', email.providerMessageId)
     .maybeSingle();
 
-  if (existing) return { ok: true, duplicate: true };
+  if (existingError) throw new ToolError('TRANSIENT',existingError.message);
+  const existingType = existing?.metadata?.type;
+  if (existing && existingType === 'supplier_rfq_reply') {
+    const { data: savedResponse, error: responseLookupError } = await supabase.from('supplier_responses')
+      .select('id,status').eq('communication_id',existing.id).maybeSingle();
+    if (responseLookupError) throw new ToolError('TRANSIENT',responseLookupError.message);
+    if (savedResponse) {
+      if (savedResponse.status !== 'processed' && existing.inquiry_id) await enqueueSupplierQuoteExtraction(existing.inquiry_id);
+      return { ok: true, duplicate: true };
+    }
+  } else if (existing && existingType !== 'unmatched_incoming_email') return { ok: true, duplicate: true };
 
   const subject = email.subject.trim();
   const body = email.text ?? cleanEmailReply(undefined, email.html);
@@ -529,6 +542,7 @@ export async function processInboundEmail(email: InboundEmail) {
     references: email.references,
   });
   if (!supplierMatch.matched) {
+    if (existing) return { ok: true, duplicate: true, matched: false, reason: supplierMatch.reason };
     const { data: communication, error } = await supabase.from('communications').insert({
       direction: 'incoming',
       channel: 'email',
@@ -542,6 +556,10 @@ export async function processInboundEmail(email: InboundEmail) {
         message_id: email.messageId ?? null,
         from: extractCustomerEmail(email.from),
         type: 'unmatched_incoming_email',
+        to: email.to,
+        cc: email.cc ?? [],
+        in_reply_to: email.inReplyTo ?? null,
+        references: email.references ?? [],
       },
     }).select('id').single();
 
@@ -562,7 +580,7 @@ export async function processInboundEmail(email: InboundEmail) {
     return { ok: true, matched: false, reason: supplierMatch.reason };
   }
 
-  const { data: communication, error: communicationError } = await supabase.from('communications').insert({
+  const supplierCommunication = {
     inquiry_id: supplierMatch.inquiryId,
     supplier_id: supplierMatch.supplierId,
     rfq_id: supplierMatch.rfq.id,
@@ -578,9 +596,18 @@ export async function processInboundEmail(email: InboundEmail) {
       message_id: email.messageId ?? null,
       from: extractCustomerEmail(email.from),
       type: 'supplier_rfq_reply',
+      to: email.to,
+      cc: email.cc ?? [],
+      in_reply_to: email.inReplyTo ?? null,
+      references: email.references ?? [],
+      match_method: 'matchMethod' in supplierMatch ? supplierMatch.matchMethod : 'known_supplier_rfq',
       attachment_count: email.attachments?.length ?? 0,
     },
-  }).select('id').single();
+  };
+  const communicationWrite = existing
+    ? supabase.from('communications').update(supplierCommunication).eq('id',existing.id)
+    : supabase.from('communications').insert(supplierCommunication);
+  const { data: communication, error: communicationError } = await communicationWrite.select('id').single();
 
   if (communicationError || !communication) {
     if (communicationError?.code === '23505') return { ok: true, duplicate: true };
@@ -645,6 +672,15 @@ export async function processInboundEmail(email: InboundEmail) {
   }).select('id').single();
 
   if (responseError || !response) throw new ToolError('CONFLICT', responseError?.message ?? 'Could not store supplier response');
+
+  // Receiving a reply must queue extraction even while the inquiry is in RFQ state.
+  await enqueueSupplierQuoteExtraction(supplierMatch.inquiryId);
+  if (existingType === 'unmatched_incoming_email') {
+    const { error: reviewError } = await supabase.from('unmatched_emails')
+      .update({ reviewed_at: new Date().toISOString(), reason: 'Automatically resolved to supplier RFQ ' + supplierMatch.rfq.rfq_code })
+      .eq('communication_id',communication.id);
+    if (reviewError) throw new ToolError('TRANSIENT',reviewError.message);
+  }
 
   await supabase.from('timeline_events').insert({
     inquiry_id: supplierMatch.inquiryId,

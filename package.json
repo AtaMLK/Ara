@@ -7,24 +7,27 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:supplier-workflow": "node --test tests/supplier-workflow.test.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "latest",
     "@supabase/supabase-js": "latest",
     "imapflow": "latest",
+    "lucide-react": "latest",
     "mailparser": "latest",
     "next": "latest",
     "nodemailer": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "xlsx": "latest",
-    "zod": "latest",
+    "sonner": "latest",
     "unpdf": "1.8.1",
-    "lucide-react": "latest",
-    "sonner": "latest"
+    "xlsx": "latest",
+    "zod": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/mailparser": "^3.9.0",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",

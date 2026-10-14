@@ -425,7 +425,7 @@ export async function applyCustomerClarificationAnswer(input: {
         }
       } else {
         const { data: admins } = await supabase.from('profiles').select('user_id').eq('role','admin').eq('status','active');
-        if (admins?.length) await supabase.from('notifications').insert(admins.map((admin) => ({ user_id: admin.user_id, category: 'approval', priority: 'urgent', title: 'Supplier clarification answer needs review', message: `ARAT Agent received the customer answer for ${rfq.rfq_code}. Admin review is required before sending it to the supplier. ${resolution.reason}`, record_type: 'rfq', record_id: rfq.id, action_url: `/inquiries/${input.inquiryId}#email-center` })));
+        if (admins?.length) await supabase.from('notifications').insert(admins.map((admin) => ({ user_id: admin.user_id, category: 'approval', priority: 'urgent', title: 'Supplier clarification answer needs review', message: `ARAT Agent received the customer answer for ${rfq.rfq_code}. Admin review is required before sending it to the supplier. ${resolution!.reason}`, record_type: 'rfq', record_id: rfq.id, action_url: `/inquiries/${input.inquiryId}#email-center` })));
       }
     }
   } else if (rfqId) {

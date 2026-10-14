@@ -1797,7 +1797,7 @@ export async function updateCustomerQuoteDetailsAction(input: {
       quoteId:idSchema,
       subject:z.string().trim().max(200).optional(),
       body:z.string().trim().max(10000).optional(),
-      validUntil:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/).optional(),
+      validUntil:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     }).parse(input);
     const { supabase } = await requireAdmin();
     const { data: quote } = await supabase.from('customer_quotes').select('id,status').eq('id',parsed.quoteId).single();
