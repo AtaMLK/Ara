@@ -24,14 +24,48 @@ function inferCountryFromHostname(hostname: string): string | null {
   return tldMap[tld] ?? null;
 }
 
+function extractPublicEmails(value: string): string[] {
+  const normalized = value
+    .replace(/&#64;|&commat;/gi, '@')
+    .replace(/&#46;|&period;/gi, '.')
+    .replace(/\s*(?:\[at\]|\(at\)|\{at\})\s*/gi, '@')
+    .replace(/\s*(?:\[dot\]|\(dot\)|\{dot\})\s*/gi, '.');
+  const matches = normalized.match(/[A-Z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+/gi) ?? [];
+  return [...new Set(matches.map((email) => email.replace(/[),.;:]+$/, '').toLowerCase()))]
+    .filter((email) => email.length <= 254 && !/\.(?:png|jpe?g|gif|webp|svg)$/i.test(email));
+}
+
 async function fetchSupplierPage(url: string): Promise<string> {
   try {
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol)) return '';
     const html = await readSupplierHtml(parsed.toString());
     const jsonLd = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]).join('\n');
-    const mailto = [...html.matchAll(/href=["']mailto:([^"'?]+)/gi)].map((match) => match[1]).join(' ');
-    return (jsonLd + '\n' + mailto + '\n' + html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, ' ').trim().slice(0, 24000);
+    // Preserve addresses in mailto links and visible/obfuscated email text before
+    // stripping HTML tags (the old implementation discarded href="mailto:...").
+    const mailtoEmails = [...html.matchAll(/href=["']mailto:([^"'?]+)/gi)].map((match) => decodeURIComponent(match[1]).replace(/\?.*$/, ''));
+    const cloudflareEmails = [...html.matchAll(/data-cfemail=["']([0-9a-f]{6,})["']/gi)].map((match) => {
+      const encoded = match[1];
+      const key = Number.parseInt(encoded.slice(0, 2), 16);
+      let decoded = '';
+      for (let index = 2; index < encoded.length; index += 2) {
+        decoded += String.fromCharCode(Number.parseInt(encoded.slice(index, index + 2), 16) ^ key);
+      }
+      return decoded;
+    });
+    const visibleText = (jsonLd + '\n' + html)
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+    const emails = extractPublicEmails([visibleText, ...mailtoEmails, ...cloudflareEmails].join('\n'));
+    return [visibleText.slice(0, 24000), emails.length ? 'PUBLIC_EMAIL_ADDRESSES: ' + emails.join(', ') : ''].filter(Boolean).join('\n');
   } catch { return ''; }
 }
 function normalizeEvidence(value: unknown): string[] {
@@ -2481,7 +2515,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         // result for the same product. That previous fallback caused valid
         // candidates to disappear in the persistence loop because the candidate
         // no longer matched the selected result URL.
-        const selectedByRequirement = new Map<string, { result: NonNullable<typeof results>[number]; score: number }[]>();
+        const supplierRegionPriority = (country?: string | null) => {
+          const normalized = (country ?? '').trim().toLowerCase();
+          if (/^(turkey|türkiye|turkiye)$/.test(normalized)) return 0;
+          if (/germany|france|italy|spain|portugal|netherlands|belgium|luxembourg|ireland|united kingdom|uk|england|scotland|wales|poland|czechia|czech republic|austria|switzerland|sweden|norway|denmark|finland|iceland|greece|romania|bulgaria|croatia|slovenia|slovakia|hungary|estonia|latvia|lithuania|serbia|ukraine/.test(normalized)) return 1;
+          if (/united states|usa|u\.s\.?a?\.?|america|canada|mexico/.test(normalized)) return 2;
+          if (/china|japan|south korea|korea|taiwan|india|singapore|malaysia|thailand|indonesia|vietnam|philippines|pakistan|bangladesh|sri lanka|hong kong|asia|uae|united arab emirates/.test(normalized)) return 3;
+          return 4;
+        };
+
+        const selectedByRequirement = new Map<string, { result: NonNullable<typeof results>[number]; score: number; regionPriority: number }[]>();
         for (const [candidateKey, candidate] of discoveryCandidates.entries()) {
           if (!candidate.requirementId || !candidate.name) continue;
 
@@ -2520,13 +2563,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           list.push({
             result: candidateSource,
             score: candidate.matchScore ?? ((candidateSource.relevance ?? 0) * 100),
+            regionPriority: supplierRegionPriority(
+              candidate.country ?? String(candidateSource.structured_data?.country ?? ''),
+            ),
           });
           selectedByRequirement.set(candidate.requirementId, list);
         }
 
         selectedResults = [...selectedByRequirement.values()].flatMap((items) =>
           items
-            .sort((a, b) => b.score - a.score)
+            // Geographic preference is intentional: Turkey first, then Europe,
+            // Americas, Asia. Within a region, stronger product/brand evidence wins.
+            .sort((a, b) => a.regionPriority - b.regionPriority || b.score - a.score)
             .filter((item, index, arr) =>
               index === arr.findIndex((x) => x.result.source_url === item.result.source_url)
             )
@@ -2687,6 +2735,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               `site:${hostname} "sales" "email"`,
               `site:${hostname} "request a quote" email`,
               `site:${hostname} address headquarters phone contact`,
+              // Local suppliers often publish contact details only on Turkish pages.
+              `site:${hostname} iletişim e-posta`,
+              `site:${hostname} satış mail telefon`,
+              `site:${hostname} iletişim adres telefon`,
             ];
             const contactRuns = await Promise.all(
               contactQueries.map(async (query) => {
@@ -2724,14 +2776,22 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }
         }
 
+          // Always try standard contact pages before search-result URLs. Previously,
+          // a long list of search hits could consume the page limit and prevent /contact
+          // and /iletisim from ever being fetched.
+          const contactPaths = [
+            '/contact', '/contact-us', '/contactus', '/iletisim', '/iletisim.html',
+            '/about', '/about-us', '/about-us/contact', '/company/contact',
+            '/sales', '/support', '/impressum', '/kontakt',
+          ];
           const pageUrls = [
+            ...contactPaths.map((path) => 'https://' + hostname + path),
             website,
             ...contactResults.map((item) => item.sourceUrl),
-            ...['/contact', '/contact-us', '/about', '/about-us', '/impressum', '/iletisim', '/kontakt'].map((path) => 'https://' + hostname + path),
           ];
           const uniquePageUrls = [...new Set(pageUrls)].filter((url) => {
             return sameWebsiteHost(url, hostname);
-          }).slice(0, 10);
+          }).slice(0, 20);
           fetchedPages = (await Promise.all(uniquePageUrls.map(async (url) => ({ url, text: await fetchSupplierPage(url) })))).filter((item) => item.text.length > 0);
 
           if (contactResults.length > 0 || fetchedPages.length > 0) {
@@ -2967,6 +3027,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             match_note: aiCandidate.matchNote ?? null,
             coverage_count: 1,
             coverage_total: 1,
+            // Keep email provenance with the candidate so the UI can show where
+            // the contact detail was found, even though supplier_emails stores
+            // normalized addresses separately.
+            contact_email_evidence: explicitEmails.map((item) => ({
+              email: item.email.trim().toLowerCase(),
+              source_url: typeof item.evidence === 'string' && /^https?:\/\//i.test(item.evidence)
+                ? item.evidence
+                : website,
+              evidence: item.evidence,
+            })),
           },
           availability_evidence: {},
           verification_evidence: {
@@ -3143,11 +3213,38 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .limit(1)
         .maybeSingle();
 
-      // Research is an expensive external operation. Once a completed research
-      // case exists, retries/recovery runs MUST reuse its persisted results
-      // instead of calling SerpAPI again and consuming another search quota.
-      // A new research case is created only when no completed case exists yet.
+      // Reuse a completed case only when it actually contains persisted evidence.
+      // Earlier provider-quota failures could incorrectly mark an empty case
+      // completed; after the provider is fixed, a retry must run a fresh search.
       let researchCase = existing?.status === 'completed' && existing.scope?.requirements_key === requirementsKey ? existing : null;
+      let runReason = 'initial_product_research';
+
+      if (researchCase) {
+        const { count, error: countError } = await supabase
+          .from('research_results')
+          .select('id', { count: 'exact', head: true })
+          .eq('research_case_id', researchCase.id);
+
+        if (countError) {
+          throw new ToolError('TRANSIENT', countError.message);
+        }
+
+        if ((count ?? 0) === 0) {
+          console.warn('[ARAT][research] COMPLETED CASE HAS NO EVIDENCE; STARTING FRESH SEARCH', {
+            research_case_id: researchCase.id,
+            reason: 'completed_case_without_persisted_results',
+          });
+          researchCase = null;
+          runReason = 'retry_after_empty_research';
+        } else {
+          console.log('[ARAT][research] REUSING COMPLETED RESEARCH CASE', {
+            research_case_id: researchCase.id,
+            created_at: researchCase.created_at,
+            persisted_result_count: count,
+            reason: 'completed_case_has_persisted_evidence',
+          });
+        }
+      }
 
       if (!researchCase) {
         const created = await supabase
@@ -3157,7 +3254,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             status: 'pending',
             scope: {
               source_types: ['web', 'public_specialized_sources'],
-              run_reason: 'initial_product_research',
+              run_reason: runReason,
               requirements_key: requirementsKey,
             },
           })
@@ -3167,12 +3264,6 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           throw new ToolError('TRANSIENT', created.error?.message ?? 'Failed to create research case');
         }
         researchCase = created.data;
-      } else {
-        console.log('[ARAT][research] REUSING COMPLETED RESEARCH CASE', {
-          research_case_id: researchCase.id,
-          created_at: researchCase.created_at,
-          reason: 'workflow_retry_without_new_external_search',
-        });
       }
 
       if (researchCase.status === 'completed') {
@@ -3231,27 +3322,27 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             ...item.specifications,
           ].filter(Boolean).join(' ');
 
+          // Search by commercial supply route, not only exact model wording.
+          // Many authorized distributors can order the product from the brand even
+          // when the requested model is not listed on their public website.
+          // Keep this list focused to avoid wasting provider quota on near-duplicate queries.
+          const brand = item.brand?.trim() ?? '';
+          const model = item.model?.trim() ?? '';
+          const product = item.product.trim();
           const commercial = [
-            [item.model, item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
-            [item.model, item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
-            [item.model, item.brand, item.product, 'official distributor'].filter(Boolean).join(' '),
-            [item.model, item.brand, item.product, 'manufacturer'].filter(Boolean).join(' '),
-            [item.model, item.brand, 'supplier'].filter(Boolean).join(' '),
-            [item.model, item.brand, 'distributor'].filter(Boolean).join(' '),
-            [item.model, item.brand, 'official'].filter(Boolean).join(' '),
-            identity,
-            [item.brand, item.model, 'exact product'].filter(Boolean).join(' '),
-            [item.brand, item.model, 'official website'].filter(Boolean).join(' '),
-            [item.brand, item.model, 'Turkey'].filter(Boolean).join(' '),
-            item.model ? `"${item.model}"` : '',
-            item.brand && item.model ? `"${item.brand}" "${item.model}"` : '',
-            item.brand && item.model ? `"${item.brand}" "${item.model}" supplier` : '',
-            [item.brand, item.product, 'supplier Turkey'].filter(Boolean).join(' '),
-            [item.brand, item.product, 'distributor Turkey'].filter(Boolean).join(' '),
-            [item.product, 'manufacturer Turkey'].filter(Boolean).join(' '),
-            [item.product, 'supplier Turkey'].filter(Boolean).join(' '),
-            [item.brand, item.product, 'manufacturer distributor'].filter(Boolean).join(' '),
-          ];
+            [brand, model, 'official product'].filter(Boolean).join(' '),
+            [brand, model, 'authorized distributor Turkey'].filter(Boolean).join(' '),
+            [brand, 'official distributor Turkey'].filter(Boolean).join(' '),
+            [brand, 'representative distributor Turkey'].filter(Boolean).join(' '),
+            [brand, 'authorized distributor Europe'].filter(Boolean).join(' '),
+            [brand, 'official distributor Europe'].filter(Boolean).join(' '),
+            [brand, 'authorized distributor United States'].filter(Boolean).join(' '),
+            [brand, 'authorized distributor Asia'].filter(Boolean).join(' '),
+            [brand, 'worldwide distributor locator official'].filter(Boolean).join(' '),
+            [model, brand, product, 'supplier'].filter(Boolean).join(' '),
+            [product, 'supplier Turkey'].filter(Boolean).join(' '),
+            [product, 'distributor Turkey'].filter(Boolean).join(' '),
+          ].filter((query) => query.trim().length > 0);
 
           return {
             requirementId: item.requirementId,
@@ -3326,6 +3417,16 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           if (model && haystack.includes(model)) return { accepted: true, reason: 'exact_model' };
           if (brand && product && haystack.includes(brand) && haystack.includes(product)) {
             return { accepted: true, reason: 'brand_and_product' };
+          }
+
+          // A legitimate official distributor/representative may not list every
+          // orderable model on its public site. Accept brand-specific commercial
+          // relationship evidence as a candidate, but classify it as a brand route,
+          // not as confirmation that the exact model is stocked.
+          const commercialRelationship = /authorized distributor|official distributor|distributor|representative|dealer|sales partner|where to buy|find a distributor|distribution partner|official partner/i.test(haystack);
+          const officialOrBrandEvidence = brand && haystack.includes(brand);
+          if (officialOrBrandEvidence && commercialRelationship) {
+            return { accepted: true, reason: 'same_brand_commercial_route' };
           }
 
           const matchedSpec = specs.find((spec) => spec.length >= 4 && haystack.includes(spec));

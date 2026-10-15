@@ -12,6 +12,40 @@ function isDomestic(country: string | null | undefined) {
   return value === 'turkey' || value === 'türkiye' || value === 'tr' || value.includes('turkey');
 }
 
+
+function candidateEvidenceEmail(...roots: unknown[]): string | null {
+  const seen = new Set<object>();
+  const emailPattern = /^[A-Z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i;
+
+  function walk(value: unknown, depth = 0): string | null {
+    if (!value || typeof value !== 'object' || depth > 8 || seen.has(value as object)) return null;
+    seen.add(value as object);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = walk(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+    const record = value as Record<string, unknown>;
+    for (const key of ['email', 'contact_email', 'sales_email', 'email_address', 'public_email']) {
+      const candidate = record[key];
+      if (typeof candidate === 'string' && emailPattern.test(candidate.trim())) return candidate.trim().toLowerCase();
+    }
+    for (const child of Object.values(record)) {
+      const found = walk(child, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  for (const root of roots) {
+    const found = walk(root);
+    if (found) return found;
+  }
+  return null;
+}
+
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (char) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
@@ -25,23 +59,24 @@ function buildEmail(
 ) {
   const rows = productLines.map((line, index) => {
     const details = [
-      line.model ? `Model / Part Number: ${escapeHtml(line.model)}` : '',
-      line.quantity ? `Quantity: ${escapeHtml(line.quantity)}` : '',
-      ...line.specifications.map((item) => escapeHtml(item)),
+      line.model ? `<strong>Model:</strong> ${escapeHtml(line.model)}` : '',
+      line.quantity ? `<strong>${language === 'tr' ? 'Miktar' : 'Quantity'}:</strong> ${escapeHtml(line.quantity)}` : '',
+      ...line.specifications.map((item) => {
+        const normalized = /^brand:\s*handsfor$/i.test(item.trim()) ? 'Brand: Hansford Sensors' : item;
+        return escapeHtml(normalized);
+      }),
     ].filter(Boolean);
 
-    return language === 'tr'
-      ? `<p><strong>${index + 1}. ${escapeHtml(line.product)}</strong><br/>${details.join('<br/>')}</p>`
-      : `<p><strong>${index + 1}. ${escapeHtml(line.product)}</strong><br/>${details.join('<br/>')}</p>`;
+    return `<p><strong>${index + 1}. ${escapeHtml(line.product)}</strong><br/>${details.join('<br/>')}</p>`;
   }).join('');
 
   const subject = language === 'tr'
-    ? `Teklif Talebi – ${inquiryReference}`
-    : `RFQ – ${inquiryReference}`;
+    ? `Fiyat Teklifi Talebi | ${inquiryReference}`
+    : `Request for Quotation | ${inquiryReference}`;
 
   const html = language === 'tr'
-    ? `<p>Merhaba,</p><p>Aşağıdaki ürün(ler) için fiyat teklifinizi ve teslim süresini paylaşmanızı rica ederiz.</p>${rows}<p>Lütfen birim fiyat, stok/uygunluk, teslim süresi, ödeme şartları ve teklif geçerlilik süresini belirtiniz.</p><p>İyi çalışmalar,<br/>Arya Automation</p>`
-    : `<p>Dear Sir/Madam,</p><p>We would like to request your quotation for the following item(s).</p>${rows}<p>Please provide unit price, availability, delivery time, payment terms and quotation validity.</p><p>Best regards,<br/>Arya Automation</p>`;
+    ? `<p>Merhaba,</p><p>Aşağıdaki ürün için fiyat teklifinizi rica ederiz.</p>${rows}<p>Teklifinizde birim fiyatı, mevcut stok/tedarik durumunu ve tahmini teslim süresini belirtmenizi rica ederiz.</p><p>Teşekkür eder, iyi çalışmalar dileriz.<br/>Arya Automation</p>`
+    : `<p>Dear Sales Team,</p><p>Please provide your quotation for the following item:</p>${rows}<p>Kindly include your unit price, current availability and estimated lead time.</p><p>Thank you for your support.<br/>Best regards,<br/>Arya Automation</p>`;
 
   return { subject, html };
 }
@@ -145,7 +180,7 @@ export async function getSupplierRfqRecipientsAction(input: { inquiryId: string;
 
   const { data: candidates, error: candidateError } = await admin
     .from('supplier_candidates')
-    .select('id,supplier_id')
+    .select('id,supplier_id,match_evidence,verification_evidence')
     .eq('inquiry_id', input.inquiryId)
     .in('id', input.candidateIds);
 
@@ -165,7 +200,8 @@ export async function getSupplierRfqRecipientsAction(input: { inquiryId: string;
       ?? (contacts ?? []).find((item) => item.supplier_id === candidate.supplier_id && item.is_primary && item.email);
     const email = contact?.email
       ?? (emails ?? []).find((item) => item.supplier_id === candidate.supplier_id && item.is_primary)?.email
-      ?? (emails ?? []).find((item) => item.supplier_id === candidate.supplier_id)?.email;
+      ?? (emails ?? []).find((item) => item.supplier_id === candidate.supplier_id)?.email
+      ?? candidateEvidenceEmail(candidate.match_evidence, candidate.verification_evidence);
     return email ? [{ candidateId: candidate.id, email }] : [];
   });
 
@@ -193,7 +229,7 @@ export async function sendSupplierRfqAction(input: {
 
   const { data: candidates, error: candidateError } = await admin
     .from('supplier_candidates')
-    .select('id,requirement_id,status,supplier_id,proposed_name,proposed_country,verification_evidence,suppliers(id,legal_name,primary_country,supplier_type,verification_status)')
+    .select('id,requirement_id,status,supplier_id,proposed_name,proposed_country,match_evidence,verification_evidence,suppliers(id,legal_name,primary_country,supplier_type,verification_status)')
     .eq('inquiry_id', input.inquiryId)
     .in('id', input.candidateIds);
 
@@ -237,9 +273,30 @@ export async function sendSupplierRfqAction(input: {
       (contacts ?? []).find((item) => item.supplier_id === supplierId && item.is_primary);
     const recipient = contact?.email ??
       (emails ?? []).find((item) => item.supplier_id === supplierId && item.is_primary)?.email ??
-      (emails ?? []).find((item) => item.supplier_id === supplierId)?.email;
+      (emails ?? []).find((item) => item.supplier_id === supplierId)?.email ??
+      candidateEvidenceEmail(candidate.match_evidence, candidate.verification_evidence);
 
-    if (!recipient) throw new Error(`No verified supplier email found for ${candidate.proposed_name}.`);
+    if (!recipient) throw new Error(`No public email was found for ${candidate.proposed_name}. Open the supplier website/contact page and add a verified email before sending the RFQ.`);
+
+    // If discovery captured a public email in candidate evidence but failed to
+    // normalize it into supplier_emails, repair that data gap before proceeding.
+    const knownEmail = (emails ?? []).some((item) => item.supplier_id === supplierId && item.email?.toLowerCase() === recipient.toLowerCase());
+    if (!knownEmail) {
+      const { data: existingPrimary } = await admin.from('supplier_emails')
+        .select('id').eq('supplier_id', supplierId).eq('is_primary', true).maybeSingle();
+      const { data: savedEmail, error: saveEmailError } = await admin.from('supplier_emails').insert({
+        supplier_id: supplierId,
+        email: recipient.toLowerCase(),
+        is_primary: !existingPrimary,
+        status: 'active',
+      }).select('id').single();
+      if (saveEmailError || !savedEmail) {
+        throw new ToolError('TRANSIENT', saveEmailError?.message ?? 'Could not save discovered supplier email');
+      }
+      if (!existingPrimary) {
+        await admin.from('suppliers').update({ primary_email_id: savedEmail.id }).eq('id', supplierId);
+      }
+    }
 
     const productRequirementId = candidate.requirement_id;
     const productRequirement = (requirements ?? []).find((item) => item.id === productRequirementId && item.type === 'product');

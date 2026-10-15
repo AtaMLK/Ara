@@ -1980,3 +1980,7 @@ html[data-theme="dark"] .form-error{border-color:#6b3d3d;background:#2b1c1c;colo
 .supplier-reply-approval-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
 .supplier-reply-draft{padding:10px 12px;border:1px solid var(--arat-border);border-radius:9px;background:var(--arat-surface);white-space:pre-wrap;line-height:1.5;font-size:13px}
 .supplier-reply-approval form{margin:0}
+
+
+/* Compact inquiry requirements table */
+.requirements-compact-section{margin-top:12px;margin-bottom:12px}.requirements-compact-section .section-head{margin-bottom:8px}.requirements-compact-section .section-head h2{font-size:16px;margin:0}.requirements-compact-table .row{min-height:0;padding-top:7px;padding-bottom:7px;gap:10px;font-size:12px;line-height:1.3}.requirements-compact-table .row.header{padding-top:6px;padding-bottom:6px;font-size:10px}.requirements-compact-table .badge{font-size:10px;padding:3px 7px}.requirements-compact-table button,.requirements-compact-table a{font-size:11px}.requirements-compact-table .muted{font-size:11px}

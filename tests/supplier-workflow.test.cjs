@@ -17,7 +17,7 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
   let sends = 0;
   class Query {
     constructor(table) { this.table = table; this.filters = []; this.op = 'read'; }
-    select() { return this; }
+    select(columns, options) { this.selectOptions = options; return this; }
     eq(key, value) { this.filters.push(row => row[key] === value); return this; }
     ilike(key, value) { const literal = value.replace(/\\([%_\\])/g, '$1').toLowerCase(); this.filters.push(row => String(row[key] ?? '').toLowerCase() === literal); return this; }
     in(key, values) { this.filters.push(row => values.includes(row[key])); return this; }
@@ -49,7 +49,7 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
         if (this.table === 'supplier_candidates') copy.suppliers = tables.suppliers?.find(supplier => supplier.id === copy.supplier_id) ?? null;
         return copy;
       });
-      return { data: this.one ? result[0] ?? null : result, error: null };
+      return { data: this.selectOptions?.head ? null : this.one ? result[0] ?? null : result, count: this.selectOptions?.count ? matches.length : undefined, error: null };
     }
   }
   const database = { from: table => new Query(table) };

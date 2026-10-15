@@ -105,7 +105,10 @@ function matchMeta(candidate: Candidate) {
   const evidence = (candidate.match_evidence ?? {}) as Record<string, unknown>;
   const type = typeof evidence.match_type === 'string' ? evidence.match_type : 'same_brand_distributor';
   const score = typeof evidence.match_score === 'number' ? evidence.match_score : null;
-  const note = typeof evidence.match_note === 'string' ? evidence.match_note : '';
+  const rawNote = typeof evidence.match_note === 'string' ? evidence.match_note : '';
+  const note = /supplemental web research added manually|supplier relationship and exact model\/quantity availability require confirmation/i.test(rawNote)
+    ? ''
+    : rawNote;
   const coverageCount = typeof evidence.coverage_count === 'number' ? evidence.coverage_count : 1;
   const coverageTotal = typeof evidence.coverage_total === 'number' ? evidence.coverage_total : 1;
   const labels: Record<string, string> = {
@@ -117,11 +120,73 @@ function matchMeta(candidate: Candidate) {
   return { type, label: labels[type] ?? 'Supplier match', score, note, coverageCount, coverageTotal };
 }
 
+type ResearchContact = { email: string; sourceUrl: string | null };
+
+function researchContact(candidate: Candidate): ResearchContact | null {
+  // Some research providers return contact details inside evidence JSON before
+  // they have been normalized into supplier_emails/supplier_contacts.
+  // Read only explicit email fields and keep the source URL when supplied.
+  const roots = [candidate.match_evidence, candidate.verification_evidence];
+  const visited = new Set<object>();
+  const emailPattern = /^[A-Z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i;
+
+  function walk(value: unknown, sourceUrl: string | null = null, depth = 0): ResearchContact | null {
+    if (!value || typeof value !== 'object' || depth > 7 || visited.has(value as object)) return null;
+    visited.add(value as object);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = walk(item, sourceUrl, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    const record = value as Record<string, unknown>;
+    const nextSource = [record.source_url, record.sourceUrl, record.url, record.page_url, record.evidence_url]
+      .find((item): item is string => typeof item === 'string' && /^https?:\/\//i.test(item)) ?? sourceUrl;
+
+    for (const key of ['email', 'contact_email', 'sales_email', 'email_address', 'public_email']) {
+      const candidateEmail = record[key];
+      if (typeof candidateEmail === 'string' && emailPattern.test(candidateEmail.trim())) {
+        return { email: candidateEmail.trim(), sourceUrl: nextSource };
+      }
+    }
+
+    for (const child of Object.values(record)) {
+      const found = walk(child, nextSource, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  for (const root of roots) {
+    const found = walk(root);
+    if (found) return found;
+  }
+  return null;
+}
+
 function emailFor(candidate: Candidate) {
   return candidate.suppliers?.supplier_contacts.find((contact) => contact.email && contact.status === 'active')?.email
     ?? candidate.suppliers?.supplier_emails.find((email) => email.status === 'active' && email.is_primary)?.email
     ?? candidate.suppliers?.supplier_emails.find((email) => email.status === 'active')?.email
+    ?? researchContact(candidate)?.email
     ?? null;
+}
+
+function representationStatus(candidate: Candidate): { label: string; kind: 'official' | 'not_official' | 'unknown' } {
+  const evidence = candidate.match_evidence as Record<string, unknown> | null;
+  const verification = candidate.verification_evidence as Record<string, unknown> | null;
+  const values = [evidence?.representation_status, evidence?.distributor_status, evidence?.official_distributor, verification?.representation_status]
+    .filter((value) => value !== undefined && value !== null)
+    .map((value) => String(value).toLowerCase());
+  if (values.some((value) => ['official', 'authorized', 'authorised', 'official_distributor', 'true'].includes(value))) {
+    return { label: 'Official representative claim', kind: 'official' };
+  }
+  if (values.some((value) => ['not_official', 'not authorized', 'not authorised', 'reseller', 'false', 'unofficial'].includes(value))) {
+    return { label: 'Not an official representative', kind: 'not_official' };
+  }
+  return { label: 'Representation not confirmed', kind: 'unknown' };
 }
 
 function buildPreview(requirements: Requirement[], candidate: Candidate, language: 'tr' | 'en') {
@@ -206,7 +271,10 @@ function isVerified(candidate: Candidate) {
     // Verification controls supplier selection. Email availability is validated
     // when the admin sends the RFQ, so a verified supplier is not hidden/disabled
     // merely because its contact email has not been added yet.
-    return candidate.status === 'finalized'
+    // The server action persists status='finalized'. Reflect that successful
+    // verification immediately in this client view instead of waiting for a
+    // server-component refresh to replace the candidate props.
+    return (candidate.status === 'finalized' || verifiedIds.includes(candidate.id))
       && Boolean(candidate.supplier_id)
       && verified;
   }
@@ -393,6 +461,14 @@ function isVerified(candidate: Candidate) {
                             })()}
                           </div>
                           {(() => {
+                            const representation = representationStatus(candidate);
+                            return (
+                              <div className={representation.kind === 'official' ? 'supplier-match-line' : representation.kind === 'not_official' ? 'supplier-match-warning' : 'muted'}>
+                                {representation.kind === 'official' ? '✓ ' : representation.kind === 'not_official' ? 'ⓘ ' : '○ '}{representation.label}
+                              </div>
+                            );
+                          })()}
+                          {(() => {
                             const meta = matchMeta(candidate);
                             return (
                               <>
@@ -400,10 +476,10 @@ function isVerified(candidate: Candidate) {
                                 {meta.type !== 'exact_product' && (
                                   <div className="supplier-match-warning">
                                     ⚠ {meta.type === 'same_brand_distributor'
-                                      ? 'Exact requested product is not confirmed, but this supplier/distributor is supported as a supplier for the requested brand.'
+                                      ? 'Exact model not confirmed'
                                       : meta.type === 'same_brand_similar'
-                                        ? 'Exact requested model is not confirmed, but a similar product from the requested brand is supported by the evidence.'
-                                        : 'This is not an exact product match; the supplier is shown as a related alternative based on the research evidence.'}
+                                        ? 'Similar product; exact model not confirmed'
+                                        : 'Related alternative'}
                                   </div>
                                 )}
                                 {meta.note && <div className="muted">{meta.note}</div>}
@@ -441,7 +517,12 @@ function isVerified(candidate: Candidate) {
                           </details>
                         </div>
                         <div className="supplier-candidate-contact">
-                          <span>{email || 'No active email'}</span>
+                          <span>{email || 'No email found yet'}</span>
+                          {researchContact(candidate)?.sourceUrl && (
+                            <a className="muted" href={researchContact(candidate)!.sourceUrl!} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                              Email source
+                            </a>
+                          )}
                           {rfqSent ? (
                             <span className="badge status-approved">✓ Email Sent</span>
                           ) : verified ? (
