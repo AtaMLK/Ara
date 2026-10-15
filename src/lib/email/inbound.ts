@@ -16,6 +16,7 @@ import { parseInquiryFile } from '@/lib/ai/document-processor';
 import { runAgent } from '@/lib/ai/agent-runner';
 import { supplierEmailAnalysisOutputSchema } from '@/lib/ai/agent-schemas';
 import { getEmailProvider } from './provider';
+import {ingestCustomerInquiryEmail} from './customer-inquiry';
 
 export type InboundEmailAttachment = {
   fileName: string;
@@ -470,18 +471,19 @@ export async function processInboundEmail(email: InboundEmail) {
 
   if (existingError) throw new ToolError('TRANSIENT',existingError.message);
   const existingType = existing?.metadata?.type;
+  if(existingType==='customer_inquiry_email')return await ingestCustomerInquiryEmail({...email,text:email.text?.trim()?email.text:cleanEmailReply(undefined,email.html)})??{ok:true,duplicate:true};
   if (existing && existingType === 'supplier_rfq_reply') {
     const { data: savedResponse, error: responseLookupError } = await supabase.from('supplier_responses')
       .select('id,status').eq('communication_id',existing.id).maybeSingle();
     if (responseLookupError) throw new ToolError('TRANSIENT',responseLookupError.message);
     if (savedResponse) {
-      if (savedResponse.status !== 'processed' && existing.inquiry_id) await enqueueSupplierQuoteExtraction(existing.inquiry_id);
+      if (savedResponse.status !== 'processed' && existing.inquiry_id) await enqueueSupplierQuoteExtraction(existing.inquiry_id, { retryFailed: false });
       return { ok: true, duplicate: true };
     }
   } else if (existing && existingType !== 'unmatched_incoming_email') return { ok: true, duplicate: true };
 
   const subject = email.subject.trim();
-  const body = email.text ?? cleanEmailReply(undefined, email.html);
+  const body = email.text?.trim()?email.text:cleanEmailReply(undefined, email.html);
 
   const customerMatch = await findCustomerClarificationForEmail({
     sender: email.from,
@@ -542,6 +544,8 @@ export async function processInboundEmail(email: InboundEmail) {
     references: email.references,
   });
   if (!supplierMatch.matched) {
+    const customerInquiry=await ingestCustomerInquiryEmail({...email,text:body});
+    if(customerInquiry)return customerInquiry;
     if (existing) return { ok: true, duplicate: true, matched: false, reason: supplierMatch.reason };
     const { data: communication, error } = await supabase.from('communications').insert({
       direction: 'incoming',

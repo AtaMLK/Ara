@@ -56,7 +56,7 @@ export async function createQuoteRevision(ctx:AIContext,quoteId:string){
   }
 
   const revisionNumber=(parent.revision_number ?? 0)+1;
-  const reference=revisionReference(parent.reference.replace(/-R\d+$/,''),revisionNumber);
+  const reference=revisionReference((parent.display_reference||parent.reference).replace(/-R\d+$/,''),revisionNumber);
 
   const {data:revision,error}=await supabase
     .from('customer_quotes')
@@ -79,7 +79,7 @@ export async function createQuoteRevision(ctx:AIContext,quoteId:string){
 
   const {data:items,error:itemError}=await supabase
     .from('customer_quote_items')
-    .select('supplier_quote_id,product_id,quantity,unit_price,exchange_rate_id,supplier_cost,supplier_currency')
+    .select('description,model,brand,delivery_text,price_calculation,supplier_quote_id,product_id,quantity,unit_price,exchange_rate_id,supplier_cost,supplier_currency')
     .eq('customer_quote_id',parent.id);
 
   if(itemError) throw new ToolError('TRANSIENT',itemError.message);

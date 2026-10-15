@@ -1,3 +1,8 @@
+import {readableRequest} from '@/lib/ui/inquiry-items';
+import AutomationIssues from './automation-issues';
+import AutomationRefresh from '@/components/automation-refresh';
+import RequestItems from '@/components/request-items';
+import {loadInquiryProgress} from '@/lib/data/inquiry-progress';
 import { oneRelated } from '@/lib/data/relations';
 import Link from 'next/link';
 import AdminActivityTimeline from './admin-activity-timeline';
@@ -22,7 +27,7 @@ export default async function InquiryDetailPage({ params }: Props) {
   const { supabase } = await requireAdminPage();
 
   const [inquiryResult, requirementsResult, filesResult, timelineResult, executionsResult, alertsResult, clarificationsResult, researchResult, candidatesResult, rfqsResult, communicationsResult] = await Promise.all([
-    supabase.from('inquiries').select('id,reference,title,description,status,priority,original_customer_text,current_version,created_at,updated_at,customers(name,company_name,email,country)').eq('id', id).single(),
+    supabase.from('inquiries').select('id,reference,title,description,status,priority,original_customer_text,normalized_information,current_version,created_at,updated_at,customers(name,company_name,email,country)').eq('id', id).single(),
     supabase.from('requirements').select('id,type,value,status,source,source_ref,admin_edited,updated_at').eq('inquiry_id', id).order('created_at', { ascending: true }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,version,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at', { ascending: false }),
     supabase.from('timeline_events').select('id,event_type,visibility,actor_type,agent_id,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(30),
@@ -69,35 +74,25 @@ export default async function InquiryDetailPage({ params }: Props) {
   const hasCompletedResearch = (researchResult.data ?? []).some((item) => item.status === 'completed');
   const hasVerifiedSupplier = (candidatesResult.data ?? []).some((item) => item.supplier_id && oneRelated(item.suppliers)?.verification_status === 'verified');
   const hasSentRfq = (rfqsResult.data ?? []).some((item) => item.status === 'sent' || item.sent_at);
-  const hasQuote = inquiry.status === 'quoting' || inquiry.status === 'converted';
-  const hasCustomerDecision = inquiry.status === 'converted';
-  const adminProcessSteps: InquiryProcessStep[] = [
-    { key: 'request', title: 'Request Received', description: 'Customer request has been submitted.', state: 'completed' },
-    { key: 'ai', title: 'AI Understanding', description: 'Requirements are extracted and normalized.', state: executionsResult.data?.length || hasSentRfq ? 'completed' : 'current' },
-    { key: 'research', title: 'Supplier Research', description: 'Potential suppliers are researched and enriched.', state: hasCompletedResearch || hasSentRfq ? 'completed' : inquiry.status === 'researching' ? 'current' : 'upcoming' },
-    { key: 'verification', title: 'Supplier Verification', description: 'Supplier identity and contact details are verified.', state: hasVerifiedSupplier || hasSentRfq ? 'completed' : hasCompletedResearch ? 'current' : 'upcoming' },
-    { key: 'rfq', title: 'RFQ Sent', description: 'Approved quotation requests are sent to suppliers.', state: hasSentRfq ? 'completed' : inquiry.status === 'rfq' ? 'current' : 'upcoming', detail: hasSentRfq ? 'The quotation request was sent to the supplier.' : 'The RFQ has not been sent yet.' },
-    { key: 'response', title: 'Supplier Response', description: supplierAskedForInfo ? 'Supplier requested additional information.' : 'Supplier email responses are received and processed.', state: supplierAskedForInfo ? 'warning' : supplierReplyCount > 0 ? 'completed' : hasSentRfq ? 'current' : 'upcoming', detail: supplierAskedForInfo ? 'Additional information is needed. Hover this stage for context and open the RFQ conversation to review the supplier message.' : supplierReplyCount > 0 ? supplierReplyCount + ' supplier email response(s) received. Review the full email in Email Center.' : 'Waiting for a supplier response.' },
-    { key: 'clarification', title: 'Additional Information', description: clarificationSentToCustomer || hasClarification ? 'Customer information is required before continuing.' : customerClarificationReply ? 'Customer clarification was received.' : 'Extra information may be requested from the customer.', state: clarificationSentToCustomer && !customerClarificationReply ? 'warning' : customerClarificationReply ? 'completed' : hasQuote ? 'completed' : supplierAskedForInfo ? 'current' : 'upcoming', detail: clarificationSentToCustomer && !customerClarificationReply ? 'The customer has been asked for the additional information requested by the supplier.' : customerClarificationReply ? 'The customer answered the clarification and the workflow can continue.' : 'No customer clarification is currently pending.' },
-    { key: 'quote', title: 'Quote Preparation', description: 'Supplier responses are analyzed and the customer quote is prepared.', state: hasQuote ? (inquiry.status === 'converted' ? 'completed' : 'current') : 'upcoming' },
-    { key: 'quotation', title: 'Quotation Sent', description: 'The prepared quotation is sent to the customer.', state: inquiry.status === 'converted' ? 'completed' : 'upcoming' },
-    { key: 'decision', title: 'Customer Decision', description: 'Customer accepts, rejects, or requests a revision.', state: hasCustomerDecision ? 'completed' : 'upcoming' },
-    { key: 'completed', title: 'Completed', description: 'The procurement request has reached its final state.', state: inquiry.status === 'converted' ? 'completed' : 'upcoming' },
-  ];
+  const progress=await loadInquiryProgress(id);
+
 
   return (
     <>
+      <AutomationRefresh enabled={!['converted','closed','no_suitable_supplier'].includes(inquiry.status)}/>
       <header className="topbar">
         <div>
           <Link className="back-icon-button" href="/inquiries" aria-label="Back to Inquiries" title="Back to Inquiries"><span aria-hidden="true">←</span></Link>
           <div className="eyebrow">INQUIRY</div>
-          <h1 className="title inquiry-display-reference" title={inquiry.reference}>{displayReference}</h1><div className="muted inquiry-reference-full">{inquiry.reference}</div>
+          <h1 className="title inquiry-display-reference">{displayReference}</h1>
           <div className="muted">{inquiry.title}</div>
         </div>
-        <div className="topbar-actions"><span className={`badge status-badge status-${inquiry.status}`}>{label(inquiry.status)}</span><InquiryEditForm inquiryId={inquiry.id} title={inquiry.title} description={inquiry.description ?? ""} version={inquiry.current_version} /></div>
+        <div className="topbar-actions"><span className={`badge status-badge status-${inquiry.status}`}>{progress.label}</span><InquiryEditForm inquiryId={inquiry.id} title={inquiry.title} description={inquiry.description ?? ""} version={inquiry.current_version} /></div>
       </header>
 
-      <InquiryProcess steps={adminProcessSteps} eyebrow="PROCUREMENT PROCESS" />
+      <InquiryProcess steps={progress.steps} eyebrow="PROCUREMENT PROCESS" />
+      {!['converted','closed','no_suitable_supplier'].includes(inquiry.status)&&<AutomationIssues inquiryId={id} failures={(executionsResult.data??[]).filter(execution=>execution.status==='failed')}
+        warnings={(alertsResult.data??[]).filter(alert=>['ATTACHMENT_REQUIRES_OCR','DOCUMENT_PROCESSING_FAILED','WORKFLOW_START_FAILED'].includes(alert.alert_type))}/>}
 
       <CandidatePanel inquiryId={inquiry.id} requirements={requirementsResult.data ?? []} candidates={(candidatesResult.data ?? []).map((row) => ({ ...row, suppliers: oneRelated(row.suppliers) }))} />
 
@@ -132,7 +127,7 @@ export default async function InquiryDetailPage({ params }: Props) {
                   </div>
                   <div className="email-center-subject">{email.subject || '(No subject)'}</div>
                   <div className="email-center-meta">{incoming ? 'Received' : 'Sent'} · {email.channel}</div>
-                  <div className="email-center-body">{email.body || 'No message body recorded.'}</div>
+                  <div className="email-center-body">{readableRequest(email.body)||'No message body recorded.'}</div>
                   {(() => {
                     const aiAnalysis = metadata.ai_analysis && typeof metadata.ai_analysis === 'object' && !Array.isArray(metadata.ai_analysis)
                       ? metadata.ai_analysis as Record<string, unknown>
@@ -194,7 +189,7 @@ export default async function InquiryDetailPage({ params }: Props) {
       <section className="detail-grid">
         <div className="detail-card">
           <div className="section-head"><h2>Customer request</h2></div>
-          <div className="original-request">{inquiry.original_customer_text || inquiry.description || 'No original customer request recorded.'}</div>
+          <RequestItems normalized={inquiry.normalized_information} requirements={requirementsResult.data??[]} original={inquiry.original_customer_text??inquiry.description}/>
         </div>
 
         <div className="detail-card">

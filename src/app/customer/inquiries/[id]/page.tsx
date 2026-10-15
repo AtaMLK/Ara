@@ -1,7 +1,10 @@
+import RequestItems from '@/components/request-items';
+import AutomationRefresh from '@/components/automation-refresh';
+import {loadInquiryProgress} from '@/lib/data/inquiry-progress';
 import { oneRelated } from '@/lib/data/relations';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
+import { requireCustomerInquiryPageAccess } from '@/lib/ai/guards';
 import AnswerClarificationForm from './answer-form';
 import CustomerFileLink from './file-link';
 import RetryProcessingButton from './retry-processing-button';
@@ -13,10 +16,10 @@ type Props = { params: Promise<{ id: string }> };
 
 export default async function CustomerInquiryPage({ params }: Props) {
   const { id } = await params;
-  const { supabase } = await requireCustomerInquiryAccess(id);
+  const { supabase } = await requireCustomerInquiryPageAccess(id);
 
   const [inquiryResult, requirementsResult, clarificationsResult, filesResult, timelineResult] = await Promise.all([
-    supabase.from('inquiries').select('id,reference,title,description,original_customer_text,status,updated_at,customers(name,company_name)').eq('id', id).single(),
+    supabase.from('inquiries').select('id,reference,title,description,original_customer_text,normalized_information,status,created_at,current_version,updated_at,customers(name,company_name)').eq('id', id).single(),
     supabase.from('requirements').select('id,type,value,status,source,source_ref').eq('inquiry_id', id).order('created_at'),
     supabase.from('clarifications').select('id,requirement_id,question,answer,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at'),
@@ -32,7 +35,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
   });
   const { data: latestQuote } = await supabase
     .from('customer_quotes')
-    .select('id,reference,status,revision_number')
+    .select('id,display_reference,reference,status,revision_number')
     .eq('inquiry_id', id)
     .in('status', ['sent','accepted','rejected','revision_requested'])
     .order('revision_number', { ascending: false })
@@ -41,23 +44,25 @@ export default async function CustomerInquiryPage({ params }: Props) {
   const timelineEvents = timelineResult.data ?? [];
   const hasCustomerClarification = clarifications.length > 0;
   const hasClarificationSentEvent = timelineEvents.some((event) => event.event_type === 'supplier_clarification_sent_to_customer' || event.event_type === 'clarification_sent');
-  const status = inquiryResult.data.status;
+  const progress=await loadInquiryProgress(id);
   return (
     <main className="portal-shell inquiry-detail-page">
+      <AutomationRefresh enabled={!['converted','closed','no_suitable_supplier'].includes(inquiryResult.data.status)}/>
       <header className="topbar">
         <div>
           <Link className="back-icon-button" href="/customer" aria-label="Back to My Requests" title="Back to My Requests"><span aria-hidden="true">←</span></Link>
           <div className="eyebrow">CUSTOMER PORTAL</div>
-          <h1 className="title inquiry-display-reference" title={inquiryResult.data.reference}>{getInquiryDisplayReference(inquiryResult.data.reference, oneRelated(inquiryResult.data.customers)?.company_name || oneRelated(inquiryResult.data.customers)?.name, undefined, 1, inquiryResult.data.updated_at)}</h1><div className="muted inquiry-reference-full">{inquiryResult.data.reference}</div>
+          <h1 className="title inquiry-display-reference">{getInquiryDisplayReference(inquiryResult.data.reference, oneRelated(inquiryResult.data.customers)?.company_name || oneRelated(inquiryResult.data.customers)?.name, inquiryResult.data.created_at, inquiryResult.data.current_version, inquiryResult.data.updated_at)}</h1>
           <div className="muted">{inquiryResult.data.title}</div>
         </div>
-        <span className={`badge status-badge status-${inquiryResult.data.status}`}>{inquiryResult.data.status.replaceAll('_',' ')}</span>
+        <span className={`badge status-badge status-${inquiryResult.data.status}`}>{progress.label}</span>
       </header>
+
 
       <section className="detail-grid">
         <div className="detail-card">
           <div className="section-head"><h2>Your request</h2></div>
-          <p className="detail-text">{inquiryResult.data.original_customer_text || inquiryResult.data.description || 'No request text available.'}</p>
+          <RequestItems normalized={inquiryResult.data.normalized_information} requirements={visibleRequirements} original={inquiryResult.data.original_customer_text??inquiryResult.data.description}/>
         </div>
         <div className="detail-card">
           <div className="section-head"><h2>Attachments</h2></div>
@@ -122,7 +127,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
           <div className="detail-card">
             <div>
               <div className="eyebrow">CUSTOMER QUOTE</div>
-              <h3>{latestQuote.reference}</h3>
+              <h3>{latestQuote.display_reference||latestQuote.reference}</h3>
               <p className="muted">Revision R{latestQuote.revision_number} · {latestQuote.status.replaceAll('_', ' ')}</p>
             </div>
             <Link className="secondary-button" href={`/customer/quotes/${id}`}>View quotation</Link>

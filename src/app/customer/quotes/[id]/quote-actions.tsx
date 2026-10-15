@@ -1,9 +1,11 @@
 'use client';
+import {useRouter} from 'next/navigation';
 
 import { useState, useTransition } from 'react';
 import { acceptCustomerQuoteAction, rejectCustomerQuoteAction, requestCustomerQuoteRevisionAction } from '@/app/actions';
 
 export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
+  const router=useRouter();
   const [mode, setMode] = useState<'idle' | 'revision' | 'reject'>('idle');
   const [reason, setReason] = useState<Parameters<typeof requestCustomerQuoteRevisionAction>[0]['reason']>('price');
   const [text, setText] = useState('');
@@ -13,7 +15,7 @@ export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
   const run = (fn: () => Promise<unknown>) => {
     setError('');
     startTransition(async () => {
-      try { await fn(); window.location.reload(); }
+      try { await fn(); router.refresh(); }
       catch (e) { setError(e instanceof Error ? e.message : 'Action failed'); }
     });
   };

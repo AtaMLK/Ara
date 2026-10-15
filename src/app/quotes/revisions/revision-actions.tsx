@@ -1,15 +1,17 @@
 'use client';
+import {useRouter} from 'next/navigation';
 
 import { useTransition } from 'react';
 import { reviewCustomerQuoteRevisionAction } from '@/app/actions';
 
 export default function RevisionRequestActions({ requestId }: { requestId: string }) {
+  const router=useRouter();
   const [pending, startTransition] = useTransition();
 
   const review = (decision: 'approve' | 'reject') => {
     startTransition(async () => {
       await reviewCustomerQuoteRevisionAction({ requestId, decision });
-      window.location.reload();
+      router.refresh();
     });
   };
 

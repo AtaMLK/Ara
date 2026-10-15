@@ -54,7 +54,10 @@ export default function LoginPage() {
       return;
     }
 
-    window.location.assign(roleResult.destination);
+    const requested=new URLSearchParams(window.location.search).get('next');
+    const safe=requested?.startsWith('/')&&!requested.startsWith('//')&&!requested.includes('\\')&&
+      (roleResult.destination.startsWith('/customer')?requested.startsWith('/customer'):!requested.startsWith('/customer'));
+    window.location.assign(safe?requested!:roleResult.destination);
   }
 
   return (

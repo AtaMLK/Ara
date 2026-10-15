@@ -6,11 +6,336 @@ const { randomUUID } = require('node:crypto');
 const { stripTypeScriptTypes } = require('node:module');
 const root = path.resolve(__dirname, '..');
 
+test('customer revision reasons use an owned quote and server-only mutation',async()=>{
+ for(const reason of ['price','quantity','delivery_time','product_specification','payment_terms','other']) {
+  const f=fixture(),customerId=randomUUID(),quoteId=randomUUID(),userId=randomUUID();
+  f.tables.customer_quotes=[{id:quoteId,inquiry_id:f.inquiryId,customer_id:customerId,status:'sent',reference:'AO-20261015-QA-Q1'}];
+  const db=f.load('@/lib/supabase/admin').createSupabaseAdminClient();
+  const session={from:table=>{const q=db.from(table);q.insert=q.update=()=>{throw Error('Customer table mutations must not be used');};return q;}};
+  const load=require('./helpers/load-ts.cjs')({'@/lib/ai/guards':{requireCustomerAccess:async()=>({supabase:session,user:{id:userId},customer:{id:customerId}})},'@/lib/supabase/admin':{createSupabaseAdminClient:()=>db},'@/lib/ai/workflow':{},'@/lib/ai/clarification-replies':{},'next/cache':{revalidatePath(){}}});
+  await load('@/app/actions').requestCustomerQuoteRevisionAction({quoteId,reason,freeText:'Please revise'});
+  assert.equal(f.tables.customer_quotes[0].status,'revision_requested');
+  assert.equal(f.tables.quote_revision_requests.length,1);assert.equal(f.tables.quote_revision_requests[0].requested_by,userId);
+  assert.equal(f.tables.quote_revision_requests[0].reason,reason);
+  await assert.rejects(load('@/app/actions').requestCustomerQuoteRevisionAction({quoteId,reason}),/Only a sent/);
+  assert.equal(f.tables.quote_revision_requests.length,1);
+ }
+});
+
+test('customer acceptance uses an owned quote and server-only decision update; retries are safe',async()=>{
+  const f=fixture(),customerId=randomUUID(),quoteId=randomUUID();
+  Object.assign(f.tables.inquiries[0],{customer_id:customerId,status:'quoting'});
+  f.tables.customer_quotes=[{id:quoteId,inquiry_id:f.inquiryId,customer_id:customerId,status:'sent',reference:'AO-20261010-73857C-Q1'}];
+  const db=f.load('@/lib/supabase/admin').createSupabaseAdminClient();
+  let sessionWrites=0,denyAuth=false;
+  const session={from:table=>{const q=db.from(table);q.update=()=>{sessionWrites++;throw Error('RLS disallows session updates');};return q;}};
+  const load=require('./helpers/load-ts.cjs')({'@/lib/ai/guards':{requireCustomerAccess:async()=>{if(denyAuth)throw Error('Authentication required');return {supabase:session,user:{id:randomUUID()},customer:{id:customerId}};}},'@/lib/supabase/admin':{createSupabaseAdminClient:()=>db},'@/lib/ai/workflow':{},'@/lib/ai/clarification-replies':{},'next/cache':{revalidatePath(){}}});
+  const actions=load('@/app/actions');
+  await actions.acceptCustomerQuoteAction(quoteId);
+  assert.equal(f.tables.customer_quotes[0].status,'accepted');assert.equal(sessionWrites,0);assert.equal(f.tables.inquiries[0].status,'converted');
+  assert.equal(f.tables.timeline_events.filter(e=>e.event_type==='customer_quote_accepted').length,1);
+  await actions.acceptCustomerQuoteAction(quoteId);
+  assert.equal(f.tables.timeline_events.filter(e=>e.event_type==='customer_quote_accepted').length,1);
+  f.tables.customer_quotes[0].status='sent';f.tables.customer_quotes[0].customer_id=randomUUID();
+  await assert.rejects(actions.acceptCustomerQuoteAction(quoteId),/not found/);assert.equal(f.tables.customer_quotes[0].status,'sent');
+  denyAuth=true;await assert.rejects(actions.acceptCustomerQuoteAction(quoteId),/Authentication required/);
+});
+
+test('Admin-approved quote send attaches a customer-safe PDF and records it without duplicate greetings', async () => {
+  const f=fixture(),quoteId=randomUUID(),customerId=randomUUID(),adminId=randomUUID();
+  Object.assign(f.tables.inquiries[0],{customer_id:customerId,reference:'TEST-REF',created_at:'2026-10-10T10:00:00Z',current_version:1,status:'rfq'});
+  f.tables.customers=[{id:customerId,name:'Test Customer',email:'customer@example.test',user_id:randomUUID()}];
+  f.tables.customer_quotes=[{id:quoteId,inquiry_id:f.inquiryId,customer_id:customerId,reference:'TC-20261010-Q1',revision_number:0,status:'pending_approval',currency:'EUR',created_at:'2026-10-15T10:00:00Z',body:'Dear Test Customer,\n\nPlease find our quotation below.\n\nRegards,\nPurchase Department'}];
+  f.tables.customer_quote_items=[{id:randomUUID(),customer_quote_id:quoteId,description:'Temperature sensor',model:'HS-421T',brand:'Customer brand',delivery_text:'2 weeks',quantity:150,unit_price:225,total:33750,price_status:'admin_confirmed',price_calculation:{commercial:{net:175},markup_percent:20}}];
+  const db=f.load('@/lib/supabase/admin').createSupabaseAdminClient(),uploads=[],sent=[];
+  db.storage={from:()=>({upload:async(...args)=>{uploads.push(args);return {error:null};}})};
+  const load=require('./helpers/load-ts.cjs')({'@/lib/ai/guards':{requireAdmin:async()=>({user:{id:adminId},supabase:db})},'@/lib/supabase/admin':{createSupabaseAdminClient:()=>db},'@/lib/ai/workflow':{},'@/lib/ai/clarification-replies':{},'next/cache':{revalidatePath(){}},'@/lib/email/provider':{getEmailProvider:()=>({send:async value=>{sent.push(value);return {providerMessageId:'test-only-message',sentAt:'2026-10-15T11:00:00Z'};}})}});
+  const oldUrl=process.env.NEXT_PUBLIC_APP_URL,oldFrom=process.env.EMAIL_FROM;
+  process.env.NEXT_PUBLIC_APP_URL='http://localhost:3000';process.env.EMAIL_FROM='purchase@example.test';
+  try{
+    await load('@/app/actions').approveCustomerQuoteAction(quoteId);
+    assert.equal(sent.length,1);assert.equal(uploads.length,1);
+    assert.match(sent[0].subject,/TC-20261010-Q1/);assert.match(sent[0].html,/>Delivery<\/th>/);
+    assert.equal((sent[0].text.match(/Dear Test Customer/g)||[]).length,1);
+    assert.equal((sent[0].text.match(/Purchase Department/g)||[]).length,1);
+    assert.doesNotMatch(sent[0].text,/175|markup|localhost/);
+    assert.equal(sent[0].generatedAttachments[0].mimeType,'application/pdf');
+    assert.ok(sent[0].generatedAttachments[0].content.byteLength>1000);
+    assert.equal(f.tables.customer_quotes[0].status,'sent');assert.equal(f.tables.inquiries[0].status,'quoting');
+    assert.ok(f.tables.communications[0].metadata.quotation_pdf_path.startsWith('customer-quotes/'+quoteId+'/'));
+    await assert.rejects(load('@/app/actions').approveCustomerQuoteAction(quoteId),/not awaiting approval/);
+    assert.equal(sent.length,1);
+  }finally{
+    if(oldUrl==null)delete process.env.NEXT_PUBLIC_APP_URL;else process.env.NEXT_PUBLIC_APP_URL=oldUrl;
+    if(oldFrom==null)delete process.env.EMAIL_FROM;else process.env.EMAIL_FROM=oldFrom;
+  }
+});
+
+test('delivery normalization preserves ranges and word/number units in English and Turkish', () => {
+  const {parseDelivery}=fixture().load('@/lib/quotes/commercial');
+  for(const [text,min,max,unit,business] of [
+    ['two to three weeks after order',2,3,'weeks',false],
+    ['10–15 working days',10,15,'days',true],
+    ['iki ila üç iş günü',2,3,'days',true],
+    ['twenty-one days',21,21,'days',false],
+    ['on beş gün',15,15,'days',false],
+    ['one hundred and five days',105,105,'days',false],
+    ['in stock',0,0,'stock',false],
+  ]) { const actual=parseDelivery(text); assert.deepEqual([actual.min,actual.max,actual.unit,actual.businessDays],[min,max,unit,business],text); assert.equal(actual.original,text); }
+  assert.equal(parseDelivery('Delivery to be confirmed').unit,'unknown');
+  assert.equal(parseDelivery('Not in stock; lead time two weeks').unit,'weeks');
+  assert.equal(parseDelivery('stokta yok; termin 2 hafta').unit,'weeks');
+});
+
+test('tax calculations use explicit KDV/VAT rates and never guess missing tax', () => {
+  const {supplierCommercial,reviewSupplierTax}=fixture().load('@/lib/quotes/commercial');
+  for(const taxText of ['+ %20 KDV','+ 20% VAT','+ KDV %20']) {
+    const c=supplierCommercial({netPrice:100,taxText,leadTimeText:'2 weeks'});
+    assert.equal(c.taxRate,20,taxText); assert.equal(c.gross,120); assert.equal(c.taxAmount,20);
+  }
+  const missing=supplierCommercial({netPrice:100,taxText:'+ KDV'});
+  assert.equal(missing.taxMode,'excluded'); assert.equal(missing.taxRate,null); assert.equal(missing.gross,null);
+  const included=supplierCommercial({grossPrice:120,taxRate:20,taxMode:'included'});
+  assert.equal(included.net,100); assert.equal(included.gross,120);
+  assert.equal(supplierCommercial({netPrice:100,taxMode:'exempt'}).gross,100);
+  assert.ok(supplierCommercial({netPrice:100,grossPrice:150,taxRate:20}).warnings.some(w=>w.includes('conflict')));
+  const source=supplierCommercial({netPrice:100,taxRate:20,taxMode:'excluded'});
+  assert.equal(reviewSupplierTax(source,'included',20).gross,100);
+  assert.equal(reviewSupplierTax(source,'excluded',10).gross,110);
+});
+
+test('markup preview allocates delivery, converts with provided rate and applies rounding', () => {
+  const {pricePreview,supplierCommercial}=fixture().load('@/lib/quotes/commercial');
+  const c=supplierCommercial({netPrice:100,taxRate:20,taxMode:'excluded'});
+  const controls={quantity:2,basis:'gross',markupPercent:10,deliveryCost:20,deliveryAllocation:'per_line',markupOn:'goods',rounding:0,exchangeRate:1};
+  assert.equal(pricePreview(c,controls).unitPrice,142);
+  assert.equal(pricePreview(c,{...controls,markupOn:'landed'}).unitPrice,143);
+  assert.equal(pricePreview(c,{...controls,basis:'net',exchangeRate:2,rounding:5}).unitPrice,230);
+  assert.equal(pricePreview(c,{...controls,markupPercent:null}),null);
+  assert.equal(pricePreview(c,{...controls,exchangeRate:null}),null);
+});
+
+test('Admin confirms formula prices on the server and editable saves remove confirmation', async () => {
+  const f=fixture(),itemId=randomUUID(),quoteId=randomUUID();
+  const {supplierCommercial}=f.load('@/lib/quotes/commercial');
+  f.tables.customer_quotes=[{id:quoteId,status:'draft',currency:'EUR'}];
+  f.tables.customer_quote_items=[{id:itemId,customer_quote_id:quoteId,quantity:2,unit_price:null,price_status:'suggested',supplier_currency:'EUR',supplier_cost:100,price_calculation:{commercial:supplierCommercial({netPrice:100,taxRate:20,taxMode:'excluded',leadTimeText:'two weeks'})}}];
+  const actions=f.load('@/app/quotes/quote-editor-actions');
+  await assert.rejects(f.load('@/lib/ai/tools/customer-quotes').requestQuoteApproval(quoteId),/confirmed by Admin/);
+  const input={itemId,quantity:2,basis:'gross',markupPercent:10,deliveryCost:20,deliveryAllocation:'per_line',markupOn:'goods',rounding:0,exchangeRateId:null,taxMode:'excluded',taxRate:20,deliveryMin:2,deliveryMax:3,deliveryUnit:'weeks',businessDays:false,deliveryNote:'after order confirmation',priceMode:'formula',manualPrice:null,confirm:true};
+  await actions.saveQuoteCommercialAction(input);
+  assert.equal(f.tables.customer_quote_items[0].unit_price,142);
+  assert.equal(f.tables.customer_quote_items[0].price_status,'admin_confirmed');
+  assert.match(f.tables.customer_quote_items[0].price_calculation.customer_delivery,/2–3 weeks/);
+  await actions.saveQuoteCommercialAction({...input,confirm:false,markupPercent:null});
+  assert.equal(f.tables.customer_quote_items[0].unit_price,null);
+  assert.equal(f.tables.customer_quote_items[0].price_status,'suggested');
+  await assert.rejects(actions.saveQuoteCommercialAction({...input,markupPercent:null}),/Enter a customer price/);
+  f.tables.customer_quote_items[0].supplier_currency='USD';
+  await assert.rejects(actions.saveQuoteCommercialAction(input),/approved exchange rate/);
+  f.tables.customer_quote_items[0].supplier_currency='EUR';
+  await actions.setDraftCurrencyAction(quoteId,'TRY');
+  assert.equal(f.tables.customer_quotes[0].currency,'TRY');
+  assert.equal(f.tables.customer_quote_items[0].unit_price,null);
+  assert.equal(f.tables.customer_quote_items[0].price_calculation.admin_controls,undefined);
+  f.tables.customer_quotes[0].status='sent';
+  await assert.rejects(actions.saveQuoteCommercialAction(input),/Only editable/);
+  assert.equal(f.sendCount(),0);
+});
+
+test('duplicate email polling respects terminal failure while explicit recovery reopens extraction', async () => {
+  const f = fixture();
+  const queue = f.load('@/lib/ai/orchestrator');
+  const execution = await queue.enqueueSupplierQuoteExtraction(f.inquiryId);
+  Object.assign(f.tables.ai_executions.find(row => row.id === execution.id), { status: 'failed', attempt_count: 3 });
+  const duplicate = await queue.enqueueSupplierQuoteExtraction(f.inquiryId, { retryFailed: false });
+  assert.equal(duplicate.status, 'failed');
+  assert.equal(duplicate.attempt_count, 3);
+  const recovered = await queue.enqueueSupplierQuoteExtraction(f.inquiryId);
+  assert.equal(recovered.status, 'queued');
+  assert.equal(recovered.attempt_count, 0);
+});
+
+test('AI provider supplies the actual contract and repairs nullable/malformed quote output once', async () => {
+  const f = fixture();
+  const { quoteExtractionOutputSchema } = f.load('@/lib/ai/agent-schemas');
+  const { getAIProvider } = f.load('@/lib/ai/provider');
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    requests.push(request);
+    const output = requests.length === 1
+      ? { quotes: [{ productId: null, matchStatus: 'MATCH', quantity: null, availability: null, discountType: null, conditions: ['Payment on delivery'], originalData: null }] }
+      : { quotes: [{ matchStatus: 'unknown', conditions: [{ type: 'payment', text: 'Payment on delivery' }], uncertainties: ['Product identity and quantity not stated'] }] };
+    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(output) } }] }) };
+  };
+  try {
+    const result = await getAIProvider().generate([{ role: 'user', content: 'Payment on delivery; no product or quantity stated.' }], quoteExtractionOutputSchema);
+    assert.equal(requests.length, 2);
+    const contractMessage = requests[0].messages.find(message => message.content.includes('JSON Schema:'));
+    assert.ok(contractMessage.content.includes('partial_match'));
+    assert.ok(contractMessage.content.includes('hasActionableInformation') === false);
+    assert.ok(contractMessage.content.includes('discountType'));
+    assert.ok(requests[1].messages.at(-1).content.includes('validation_errors'));
+    assert.equal(result.output.quotes[0].productId, undefined);
+    assert.equal(result.output.quotes[0].quantity, undefined);
+    assert.equal(result.output.quotes[0].netPrice, undefined);
+    assert.equal(result.output.quotes[0].conditions[0].text, 'Payment on delivery');
+  } finally { global.fetch = originalFetch; }
+});
+
+test('AI provider rejects persistently invalid output after one repair attempt', async () => {
+  const f = fixture();
+  const { supplierEmailAnalysisOutputSchema } = f.load('@/lib/ai/agent-schemas');
+  const { getAIProvider } = f.load('@/lib/ai/provider');
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => {
+    calls++;
+    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ summary: 'Reply', customerQuestion: null }) } }] }) };
+  };
+  try {
+    await assert.rejects(getAIProvider().generate([{ role: 'user', content: 'Supplier reply' }], supplierEmailAnalysisOutputSchema), /schema validation/);
+    assert.equal(calls, 2);
+  } finally { global.fetch = originalFetch; }
+});
+
+test('received supplier quote advances to an unpriced admin draft without pricing rules', async () => {
+  const f = fixture();
+  const supplierId = randomUUID(), responseId = randomUUID(), communicationId = randomUUID();
+  const customerId = randomUUID(), requirementId = randomUUID();
+  Object.assign(f.tables.inquiries[0], { status: 'rfq', customer_id: customerId, reference: 'TEST-1' });
+  f.tables.customers = [{ id: customerId, name: 'Test Customer', country: 'France' }];
+  f.tables.profiles = [{user_id:randomUUID(),role:'admin',status:'active'}];
+  f.tables.requirements = [{ id: requirementId, inquiry_id: f.inquiryId, type: 'product', value: 'Sensor 2 pcs', status: 'confirmed' }];
+  f.tables.communications = [{ id: communicationId, inquiry_id: f.inquiryId, supplier_id: supplierId, body: 'Sensor 2 pcs EUR 100 each' }];
+  f.tables.supplier_responses = [{ id: responseId, communication_id: communicationId, inquiry_id: f.inquiryId, supplier_id: supplierId, status: 'received' }];
+  f.tables.suppliers = [{ id: supplierId, legal_name: 'Test Supplier' }];
+  f.mock('@/lib/ai/agent-runner', { runAgent: async (ctx, input, schema) => {
+    let output;
+    if (ctx.agentId === 'quote_extraction') output = { quotes: [{ matchStatus: 'match', currency: 'EUR', quantity: 2, netPrice: 100, taxRate:20, taxMode:'excluded', taxText:'+ 20% VAT', leadTimeText:'two to three weeks' }] };
+    else if (ctx.agentId === 'comparison') output = { comparisons: [{ supplierResponseId: responseId, findings: [{ requirementId, supplierQuoteId: f.tables.supplier_quotes[0].id, status: 'match', evidence: 'Sensor 2 pcs' }] }] };
+    else if (ctx.agentId === 'customer_quote') output = { lines: [], warnings:['Offered model identity is unconfirmed; Admin review needed.'] };
+    else throw new Error('Unexpected agent: ' + ctx.agentId);
+    return { output: schema.parse(output), provider: 'test', model: 'test' };
+  } });
+  const queue = f.load('@/lib/ai/orchestrator');
+  const workflow = f.load('@/lib/ai/workflow');
+  await queue.enqueueSupplierQuoteExtraction(f.inquiryId);
+  const result = await workflow.processQueuedWorkflow(5, f.inquiryId);
+  assert.equal(result.results.some(row => row.error), false, JSON.stringify(result.results));
+  assert.deepEqual(result.results.map(row => row.stage), ['quote_extraction', 'comparison', 'customer_quote']);
+  assert.equal(f.tables.supplier_responses[0].status, 'processed');
+  assert.equal(f.tables.customer_quotes[0].status, 'draft');
+  assert.equal(f.tables.customer_quote_items[0].unit_price, null);
+  assert.equal(f.tables.customer_quote_items[0].pricing_rule_id, null);
+  assert.equal(f.tables.customer_quote_items[0].price_calculation.commercial.gross, 120);
+  assert.equal(f.tables.customer_quote_items[0].price_calculation.commercial.delivery.max, 3);
+  assert.equal(f.tables.customer_quote_items[0].price_status, 'suggested');
+  assert.ok(f.tables.ai_alerts.some(row => row.alert_type === 'CUSTOMER_QUOTE_REVIEW_REQUIRED'));
+  assert.equal(f.tables.notifications.length,1);
+  assert.equal(f.tables.notifications[0].action_url,'/quotes/'+f.tables.customer_quotes[0].id);
+  assert.equal(f.sendCount(), 0);
+  await workflow.processQueuedWorkflow(5, f.inquiryId);
+  assert.equal(f.tables.customer_quotes.length, 1);
+  assert.equal(f.tables.notifications.length,1);
+});
+
 // Exercise the real workflow and schemas with an in-memory database and providers.
+test('recovery is restricted to failed stages of an active inquiry',async()=>{
+ const f=fixture(),id=randomUUID(),other=randomUUID();f.tables.ai_executions=[{id,inquiry_id:f.inquiryId,status:'failed',attempt_count:3,error_message:'Provider down'},{id:other,inquiry_id:f.inquiryId,status:'succeeded'}];
+ const action=f.load('@/app/inquiries/[id]/automation-recovery');
+ await assert.rejects(action.retryFailedAutomationAction({inquiryId:f.inquiryId,executionId:other}),/Only a failed/);
+ await action.retryFailedAutomationAction({inquiryId:f.inquiryId,executionId:id});assert.equal(f.tables.ai_executions[0].status,'queued');assert.equal(f.tables.ai_executions[0].attempt_count,0);assert.equal(f.tables.ai_executions[1].status,'succeeded');
+ f.tables.inquiries[0].status='converted';f.tables.ai_executions[0].status='failed';await assert.rejects(action.retryFailedAutomationAction({inquiryId:f.inquiryId,executionId:id}),/not eligible/);
+});
+
+test('readable PDF-only requirements advance without inventing customer-text items or requiring OCR',async()=>{
+ const f=fixture({unreadable:true});f.tables.inquiries[0].original_customer_text='Please see the attached RFQ.';
+ f.mock('@/lib/ai/document-processor',{downloadInquiryFile:async()=>new Uint8Array(),parseInquiryFile:async()=>({extractedText:'Beta BM-200 motor 2 pcs',extractedData:{pages:1},qualityFlags:[]})});
+ const baseline=f.load('@/lib/ai/agent-runner');f.mock('@/lib/ai/agent-runner',{runAgent:async(ctx,input,schema)=>{
+  if(ctx.agentId==='document')return {output:schema.parse({requirements:[{type:'product',value:'Motor',sourceRef:'item:0'},{type:'model_part_number',value:'BM-200',sourceRef:'item:0'},{type:'quantity',value:'2 pcs',sourceRef:'item:0'}]}),provider:'test',model:'test'};
+  if(ctx.agentId==='intake')return {output:schema.parse({items:[]}),provider:'test',model:'test'};
+  return baseline.runAgent(ctx,input,schema);
+ }});
+ await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId,'document');const result=await f.load('@/lib/ai/workflow').processQueuedWorkflow(12,f.inquiryId);
+ assert.equal(result.results.some(row=>row.error),false,JSON.stringify(result.results));assert.ok(f.tables.supplier_candidates.length>0,JSON.stringify({stages:result.results,requirements:f.tables.requirements,research:f.tables.research_cases,executions:f.tables.ai_executions.map(x=>({stage:x.task_key,output:x.output_ref}))}));assert.ok(f.tables.requirements.every(row=>row.source==='pdf'));assert.equal(f.sendCount(),0);
+});
+
+test('customer email classification accepts forwarded RFQs and leaves acknowledgements/unknown senders unmatched',async()=>{
+ const f=fixture(),module=f.load('@/lib/email/customer-inquiry');
+ assert.equal(module.looksLikeNewInquiry('Fwd: RFQ sensor','Please quote attached requirements',true),true);
+ assert.equal(module.looksLikeNewInquiry('Re: RFQ sensor','Thanks, received',false),false);
+ assert.equal(module.looksLikeNewInquiry('Thank you','Received with thanks',false),false);
+ const before=f.tables.inquiries.length;assert.equal(await module.ingestCustomerInquiryEmail({provider:'test',providerMessageId:'unknown-customer',from:'unknown@example.test',subject:'RFQ sensor',text:'Please quote HS-421T 150 pcs'}),null);assert.equal(f.tables.inquiries.length,before);
+});
+
+test('OCR remains deferred for a scanned PDF even when an AI key is configured',async()=>{
+ const {PDFDocument}=require('pdf-lib'),pdf=await PDFDocument.create();pdf.addPage();const bytes=await pdf.save();
+ const parsed=await require('./helpers/load-ts.cjs')()('@/lib/ai/document-processor').parseInquiryFile(bytes,'application/pdf','scanned.pdf');
+ assert.equal(parsed.extractedText,'');assert.ok(parsed.qualityFlags.includes('OCR_PENDING'));
+});
+
+test('semi-automatic text + PDF email flow reaches suppliers, reviewed RFQ send, supplier PDF extraction and unpriced quote',async()=>{
+ const f=fixture();f.tables.inquiries=[];
+ const userId=randomUUID(),customerId=randomUUID();f.tables.customers=[{id:customerId,user_id:userId,email:'buyer@example.test',status:'active'}];f.tables.profiles=[{user_id:userId,role:'customer',status:'active'}];
+ const {PDFDocument,StandardFonts}=require('pdf-lib'),pdf=await PDFDocument.create(),font=await pdf.embedFont(StandardFonts.Helvetica);
+ pdf.addPage().drawText('Beta BM-200 motor - 2 pcs',{font});const bytes=await pdf.save();
+ const actual=require('./helpers/load-ts.cjs')()('@/lib/ai/document-processor');
+ const parsed=await actual.parseInquiryFile(new Uint8Array(bytes),'application/pdf','requirements.pdf');assert.match(parsed.extractedText,/BM-200/);
+ f.mock('@/lib/ai/document-processor',{downloadInquiryFile:async()=>new Uint8Array(bytes),parseInquiryFile:actual.parseInquiryFile});
+ const baseline=f.load('@/lib/ai/agent-runner');let mergedInput,lateAgent;
+ f.mock('@/lib/ai/agent-runner',{runAgent:async(ctx,input,schema)=>{if(lateAgent)return lateAgent(ctx,input,schema);if(ctx.agentId==='document')return {output:schema.parse({requirements:[{type:'product',value:'Motor',sourceRef:'item:0'},{type:'model_part_number',value:'BM-200',sourceRef:'item:0'},{type:'quantity',value:'2 pcs',sourceRef:'item:0'}]}),provider:'test',model:'test'};if(ctx.agentId==='intake'){mergedInput=input;return {output:schema.parse({title:'Text and PDF inquiry',items:[{requestedText:'Alpha TS-100 sensor 2 pcs',product:'Temperature sensor',brand:'Alpha',model:'TS-100',quantity:2,unit:'pcs',confidence:1,evidence:'Alpha TS-100 sensor 2 pcs'}]}),provider:'test',model:'test'};}return baseline.runAgent(ctx,input,schema);}});
+ const db=f.load('@/lib/supabase/admin').createSupabaseAdminClient();let uploads=0;db.storage={from:()=>({upload:async()=>{uploads++;return {error:null};}})};
+ const email={providerMessageId:'customer-text-pdf',messageId:'<customer-text-pdf@example.test>',provider:'test',from:'buyer@example.test',to:['purchase@example.test'],subject:'RFQ temperature sensor',text:'Alpha TS-100 sensor 2 pcs. Additional motor requirements are attached.',attachments:[{fileName:'requirements.pdf',mimeType:'application/pdf',size:bytes.length,content:Buffer.from(bytes)}]};
+ const result=await f.load('@/lib/email/inbound').processInboundEmail(email);
+ assert.equal(result.type,'customer_inquiry');assert.match(f.tables.inquiries[0].reference,/^AO-\d{8}-[A-F0-9]{6}$/);assert.equal(uploads,1);
+ const workflow=await f.load('@/lib/ai/workflow').processQueuedWorkflow(12,result.inquiryId);
+ assert.equal(workflow.results.some(row=>row.error),false,JSON.stringify(workflow.results));
+ assert.match(mergedInput.document_text,/BM-200/);assert.match(mergedInput.original_customer_text,/TS-100/);
+ assert.ok(f.tables.requirements.some(row=>row.source==='pdf'&&row.value==='BM-200'));assert.ok(f.tables.requirements.some(row=>row.source==='customer_text'&&row.value==='TS-100'));
+ assert.ok(f.tables.supplier_candidates.length>0);assert.ok(f.tables.suppliers.every(row=>row.verification_status==='verified'));assert.equal(f.sendCount(),0);
+
+ const sent=[];f.mock('@/lib/email/provider',{getEmailProvider:()=>({send:async message=>{sent.push(message);return {providerMessageId:'<mock-rfq@example.test>',threadId:'<mock-rfq@example.test>',sentAt:new Date().toISOString()};}})});
+ const actions=f.load('@/app/inquiries/[id]/supplier-rfq-actions'),candidate=f.tables.supplier_candidates[0],candidateIds=[candidate.id];
+ const {previews}=await actions.getSupplierRfqPreviewAction({inquiryId:result.inquiryId,candidateIds});assert.equal(sent.length,0);
+ await actions.sendSupplierRfqAction({inquiryId:result.inquiryId,candidateIds,previews});assert.equal(sent.length,1);assert.equal(sent[0].html,previews[0].html);
+ let extractedInput;
+ lateAgent=async(ctx,input,schema)=>{let output;
+  if(ctx.agentId==='quote_extraction'){extractedInput=input;output={quotes:[{matchStatus:'match',currency:'EUR',quantity:2,netPrice:100,taxRate:20,taxMode:'excluded',taxText:'+20% VAT',leadTimeText:'two weeks'}]};}
+  else if(ctx.agentId==='comparison')output={comparisons:[{supplierResponseId:f.tables.supplier_responses[0].id,findings:[{requirementId:candidate.requirement_id,supplierQuoteId:f.tables.supplier_quotes[0].id,status:'match',evidence:'Explicit supplier quotation'}]}]};
+  else if(ctx.agentId==='customer_quote')output={lines:[],warnings:[]};
+  else return baseline.runAgent(ctx,input,schema);
+  return {output:schema.parse(output),provider:'test',model:'test'};
+ };
+ const reply=await f.load('@/lib/email/inbound').processInboundEmail({providerMessageId:'supplier-with-pdf',messageId:'<supplier-pdf@example.test>',provider:'test',from:sent[0].to[0],to:['purchase@example.test'],subject:'Re: '+sent[0].subject,inReplyTo:'<mock-rfq@example.test>',text:'Please find our offer attached. Delivery two weeks, EUR 100 +20% VAT.',attachments:[{fileName:'supplier-offer.pdf',mimeType:'application/pdf',size:bytes.length,content:Buffer.from(bytes)}]});
+ assert.equal(reply.matched,true);const completed=await f.load('@/lib/ai/workflow').processQueuedWorkflow(12,result.inquiryId);assert.equal(completed.results.some(row=>row.error),false,JSON.stringify(completed.results));
+ assert.match(extractedInput.attachment_text[0].extractedText,/BM-200/);assert.equal(f.tables.customer_quotes[0].status,'draft');assert.equal(f.tables.customer_quote_items[0].unit_price,null);
+ assert.equal(f.tables.customer_quote_items[0].price_calculation.commercial.gross,120);assert.equal(sent.length,1,'Customer quote must wait for Admin; no automatic email send');
+ await f.load('@/lib/email/inbound').processInboundEmail({...email,receivedAt:'2026-10-16T12:00:00Z'});assert.equal(f.tables.inquiries.length,1);assert.equal(uploads,2);
+});
+
+test('supplier messages preview every recipient and send exactly the reviewed subject and HTML',async()=>{
+ const f=fixture();await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId,'document');await f.load('@/lib/ai/workflow').processQueuedWorkflow(12,f.inquiryId);
+ const sent=[];f.mock('@/lib/email/provider',{getEmailProvider:()=>({send:async message=>{sent.push(message);return {providerMessageId:'mock-'+sent.length,sentAt:new Date().toISOString()};}})});
+ const actions=f.load('@/app/inquiries/[id]/supplier-rfq-actions'),candidateIds=f.tables.supplier_candidates.map(row=>row.id);
+ const {previews}=await actions.getSupplierRfqPreviewAction({inquiryId:f.inquiryId,candidateIds});assert.equal(previews.length,candidateIds.length);assert.equal(sent.length,0);assert.equal((f.tables.rfqs??[]).length,0);
+ await actions.sendSupplierRfqAction({inquiryId:f.inquiryId,candidateIds,previews});assert.equal(sent.length,previews.length);
+ previews.forEach((preview,index)=>{assert.equal(sent[index].subject,preview.subject);assert.equal(sent[index].html,preview.html);assert.deepEqual(sent[index].to,[preview.recipient]);});
+});
+
+test('a changed supplier request cannot be sent using an old preview',async()=>{
+ const f=fixture();await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId,'document');await f.load('@/lib/ai/workflow').processQueuedWorkflow(12,f.inquiryId);
+ const actions=f.load('@/app/inquiries/[id]/supplier-rfq-actions'),candidateIds=[f.tables.supplier_candidates[0].id];const {previews}=await actions.getSupplierRfqPreviewAction({inquiryId:f.inquiryId,candidateIds});
+ f.tables.requirements.find(row=>row.id===f.tables.supplier_candidates[0].requirement_id).value='Changed sensor';
+ await assert.rejects(actions.sendSupplierRfqAction({inquiryId:f.inquiryId,candidateIds,previews}),/preview again/);assert.equal(f.sendCount(),0);
+});
+
 // No search credits, database writes, email sends, or production credentials are used.
 function fixture({ unreadable = false, protectedQuantity = false, noContacts = false, researchFailure = false } = {}) {
   const inquiryId = randomUUID();
-  const tables = { inquiries: [{ id: inquiryId, status: 'processing', current_version: 1, original_customer_text: 'Alpha TS-100 sensor 2 pcs; Beta BM-200 motor 2 pcs' }] };
+  const tables = { inquiries: [{ id: inquiryId, status: 'processing', reference:'AO-20261015-ABCDEF',created_at:'2026-10-15T10:00:00Z',current_version: 1, original_customer_text: 'Alpha TS-100 sensor 2 pcs; Beta BM-200 motor 2 pcs' }] };
   if (unreadable) tables.inquiry_files = [{ id: randomUUID(), inquiry_id: inquiryId, status: 'uploaded', mime_type: 'application/pdf', original_name: 'request.pdf', storage_path: 'test.pdf' }];
   if (protectedQuantity) tables.requirements = [{ id: randomUUID(), inquiry_id: inquiryId, type: 'quantity', value: '9 pcs', source: 'customer_text', source_ref: 'intake:item:0', status: 'confirmed', admin_edited: true }];
   let searches = 0;
@@ -154,14 +479,21 @@ test('two-product workflow preserves equal quantities and delivers evidence-back
   assert.equal(f.tables.ai_executions.find(row => row.task_key.endsWith(':supplier_discovery')).status, 'queued');
 });
 
-test('unreadable attachment blocks intake and supplier research', async () => {
-  const f = fixture({ unreadable: true });
-  await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId, 'document');
-  const result = await f.load('@/lib/ai/workflow').processQueuedWorkflow(6, f.inquiryId);
-  assert.ok(result.results[0].error.includes('could not be fully processed'));
-  assert.equal(f.searchCount(), 0);
-  assert.equal(f.tables.ai_executions.length, 1);
-  assert.equal(f.tables.inquiry_files[0].status, 'processing_failed');
+test('OCR-deferred attachment preserves the original and does not block readable customer text', async () => {
+  const f=fixture({unreadable:true});
+  await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId,'document');
+  const result=await f.load('@/lib/ai/workflow').processQueuedWorkflow(6,f.inquiryId);
+  assert.equal(result.results.some(row=>row.error),false,JSON.stringify(result.results));
+  assert.ok(f.searchCount()>0);assert.equal(f.tables.inquiry_files[0].status,'processed');
+  assert.ok(f.tables.ai_alerts.some(row=>row.alert_type==='ATTACHMENT_REQUIRES_OCR'));
+  assert.equal(f.tables.inquiry_files[0].storage_path,'test.pdf');
+});
+
+test('an unreadable attachment with no customer text stops as a genuine source issue',async()=>{
+ const f=fixture({unreadable:true});f.tables.inquiries[0].original_customer_text='';
+ await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId,'document');
+ const result=await f.load('@/lib/ai/workflow').processQueuedWorkflow(1,f.inquiryId);
+ assert.match(result.results[0].error,/no readable source/);assert.equal(f.searchCount(),0);
 });
 
 test('intake retry preserves admin quantity edits within the item group', async () => {

@@ -261,7 +261,7 @@ export async function listCustomerQuotes(search?: string, status?: string) {
   const { supabase } = await requireAdminPage();
   let query = supabase
     .from('customer_quotes')
-    .select('id,reference,status,currency,valid_until,created_at,updated_at,customers(name,company_name)')
+    .select('id,display_reference,reference,status,currency,valid_until,created_at,updated_at,customers(name,company_name)')
     .order('updated_at', { ascending: false })
     .limit(100);
 
@@ -270,14 +270,14 @@ export async function listCustomerQuotes(search?: string, status?: string) {
 
   const { data, error } = await query;
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []).map(quote=>({...quote,reference:quote.display_reference||quote.reference}));
 }
 
 export async function getCustomerQuote(id: string) {
   const { supabase } = await requireAdminPage();
   const { data: quote, error } = await supabase
     .from('customer_quotes')
-    .select('id,inquiry_id,reference,revision_number,status,currency,valid_until,subject,body,created_at,updated_at,customers(name,company_name),parent_quote_id')
+    .select('id,inquiry_id,display_reference,reference,revision_number,status,currency,valid_until,subject,body,created_at,updated_at,customers(name,company_name),parent_quote_id')
     .eq('id', id)
     .single();
 
@@ -285,13 +285,18 @@ export async function getCustomerQuote(id: string) {
 
   const { data: items, error: itemError } = await supabase
     .from('customer_quote_items')
-    .select('id,product_id,supplier_quote_id,quantity,unit_price,total,supplier_cost,supplier_currency,price_status,pricing_rule_id,exchange_rate_id,price_calculation,supplier_products(product_name,model_part_number)')
+    .select('id,description,model,brand,delivery_text,product_id,supplier_quote_id,quantity,unit_price,total,supplier_cost,supplier_currency,price_status,pricing_rule_id,exchange_rate_id,price_calculation,supplier_products(product_name,model_part_number)')
     .eq('customer_quote_id', id)
     .order('created_at', { ascending: true });
 
   if (itemError) throw itemError;
 
   const rows = items ?? [];
+  const today = new Date().toISOString().slice(0,10);
+  const { data: rates, error: ratesError } = await supabase.from('exchange_rates')
+    .select('id,from_currency,to_currency,rate,valid_from,valid_until').eq('status','approved')
+    .lte('valid_from',today).or('valid_until.is.null,valid_until.gte.'+today);
+  if (ratesError) throw ratesError;
   const { data: revisionRequest } = await supabase
     .from('quote_revision_requests')
     .select('id,quote_id,reason,free_text,status,requested_by,created_at')
@@ -302,7 +307,10 @@ export async function getCustomerQuote(id: string) {
 
   return {
     ...quote,
+    reference:quote.display_reference||quote.reference,
+    subject:quote.subject&&/^Quotation\s*[\u2014-]/i.test(quote.subject)?'Quotation '+(quote.display_reference||quote.reference)+(rows[0]?.model?' | '+rows[0].model:''):quote.subject,
     items: rows,
+    rates: (rates ?? []).map(rate => ({ ...rate, rate: Number(rate.rate) })),
     confirmedItemCount: rows.filter((item) => item.price_status === 'admin_confirmed').length,
     revisionRequest,
   };

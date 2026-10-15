@@ -1,5 +1,7 @@
 'use server';
 
+import {createHash} from 'node:crypto';
+import {getInquiryDisplayReference} from '@/lib/ui/inquiry-reference';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/ai/guards';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
@@ -62,8 +64,7 @@ function buildEmail(
       line.model ? `<strong>Model:</strong> ${escapeHtml(line.model)}` : '',
       line.quantity ? `<strong>${language === 'tr' ? 'Miktar' : 'Quantity'}:</strong> ${escapeHtml(line.quantity)}` : '',
       ...line.specifications.map((item) => {
-        const normalized = /^brand:\s*handsfor$/i.test(item.trim()) ? 'Brand: Hansford Sensors' : item;
-        return escapeHtml(normalized);
+        return escapeHtml(item);
       }),
     ].filter(Boolean);
 
@@ -208,11 +209,14 @@ export async function getSupplierRfqRecipientsAction(input: { inquiryId: string;
   return { recipients };
 }
 
-export async function sendSupplierRfqAction(input: {
+type RfqPreview={candidateId:string;recipient:string;subject:string;html:string;language:'tr'|'en';rfqCode:string;fingerprint:string};
+export async function getSupplierRfqPreviewAction(input:{inquiryId:string;candidateIds:string[]}) {return executeSupplierRfq(input,true);}
+export async function sendSupplierRfqAction(input:{inquiryId:string;candidateIds:string[];previews?:RfqPreview[]}) {return executeSupplierRfq(input,false);}
+async function executeSupplierRfq(input: {
   inquiryId: string;
   candidateIds: string[];
-}) {
-  const { user } = await requireAdmin();
+  previews?:RfqPreview[];
+},previewOnly:boolean) {  const { user } = await requireAdmin();
   const admin = createSupabaseAdminClient();
 
   if (!input.candidateIds?.length) {
@@ -221,11 +225,12 @@ export async function sendSupplierRfqAction(input: {
 
   const { data: inquiry, error: inquiryError } = await admin
     .from('inquiries')
-    .select('id,reference,title')
+    .select('id,reference,title,status,created_at,current_version,updated_at')
     .eq('id', input.inquiryId)
     .single();
 
   if (inquiryError || !inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
+  if(['converted','closed','no_suitable_supplier'].includes(inquiry.status))throw new ToolError('CONFLICT','This inquiry is complete and cannot send new RFQs.');
 
   const { data: candidates, error: candidateError } = await admin
     .from('supplier_candidates')
@@ -263,7 +268,13 @@ export async function sendSupplierRfqAction(input: {
     admin.from('requirements').select('id,type,value,status,source_ref').eq('inquiry_id', input.inquiryId).eq('status','confirmed').order('created_at',{ascending:true}),
   ]);
 
-  const provider = getEmailProvider();
+  if(!previewOnly){
+    if(input.previews?.length!==selected.length)throw new ToolError('APPROVAL_REQUIRED','Review every selected supplier message before sending.');
+    const current=await executeSupplierRfq(input,true);
+    if(current.previews.some(message=>input.previews?.find(reviewed=>reviewed.candidateId===message.candidateId)?.fingerprint!==message.fingerprint))throw new ToolError('CONFLICT','Supplier details or request requirements changed. Open the message preview again before sending.');
+  }
+  const provider = previewOnly?null:getEmailProvider();
+  const previews:RfqPreview[]=[];
   const results: Array<{ candidateId: string; supplierId: string; email: string; rfqId: string; providerMessageId?: string }> = [];
 
   for (const candidate of selected) {
@@ -281,7 +292,7 @@ export async function sendSupplierRfqAction(input: {
     // If discovery captured a public email in candidate evidence but failed to
     // normalize it into supplier_emails, repair that data gap before proceeding.
     const knownEmail = (emails ?? []).some((item) => item.supplier_id === supplierId && item.email?.toLowerCase() === recipient.toLowerCase());
-    if (!knownEmail) {
+    if (!knownEmail&&!previewOnly) {
       const { data: existingPrimary } = await admin.from('supplier_emails')
         .select('id').eq('supplier_id', supplierId).eq('is_primary', true).maybeSingle();
       const { data: savedEmail, error: saveEmailError } = await admin.from('supplier_emails').insert({
@@ -316,17 +327,24 @@ export async function sendSupplierRfqAction(input: {
 
     const domestic = isDomestic(supplier.primary_country || candidate.proposed_country);
     const language = domestic ? 'tr' : 'en';
-    const email = buildEmail(language, inquiry.reference, [{
+    const email = buildEmail(language, getInquiryDisplayReference(inquiry.reference,null,inquiry.created_at), [{
       product,
       model,
       quantity: quantityRow,
       specifications,
     }]);
 
-    const rfqCode = `RFQ-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()}`;
+    const reviewed=input.previews?.find(preview=>preview.candidateId===candidate.id);
+    const rfqCode = reviewed?.rfqCode??`RFQ-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()}`;
     const subject = language === 'tr'
-      ? `Teklif Talebi | ${inquiry.reference} | ${rfqCode}`
-      : `RFQ | ${inquiry.reference} | ${rfqCode}`;
+      ? `Teklif Talebi | ${getInquiryDisplayReference(inquiry.reference,null,inquiry.created_at)} | ${rfqCode}`
+      : `RFQ | ${getInquiryDisplayReference(inquiry.reference,null,inquiry.created_at)} | ${rfqCode}`;
+
+    if(!/^RFQ-\d{8}-[A-Z0-9]{6}$/.test(rfqCode))throw new ToolError('VALIDATION','Invalid RFQ preview reference.');
+    const fingerprint=createHash('sha256').update(JSON.stringify([candidate.id,recipient,subject,email.html])).digest('hex');
+    previews.push({candidateId:candidate.id,recipient,subject,html:email.html,language,rfqCode,fingerprint});
+    if(previewOnly)continue;
+    if(!reviewed||reviewed.fingerprint!==fingerprint)throw new ToolError('CONFLICT','Supplier details or request requirements changed. Open the message preview again before sending.');
 
     const { data: rfq, error: rfqError } = await admin.from('rfqs').insert({
       inquiry_id: inquiry.id,
@@ -378,7 +396,7 @@ export async function sendSupplierRfqAction(input: {
     // Explicit admin action has already happened in the UI. The RFQ is now sent.
     let sent;
     try {
-      sent = await provider.send({
+      sent = await provider!.send({
         to: [recipient],
         subject,
         html: email.html,
@@ -448,6 +466,8 @@ export async function sendSupplierRfqAction(input: {
       },
     });
 
+    await admin.from('inquiries').update({status:'rfq'}).eq('id',inquiry.id).in('status',['processing','open','clarification_required','researching','rfq']);
+
     results.push({
       candidateId: candidate.id,
       supplierId,
@@ -461,5 +481,5 @@ export async function sendSupplierRfqAction(input: {
   revalidatePath('/rfqs');
   revalidatePath('/suppliers');
 
-  return { ok: true, results };
+  return { ok: true, results,previews };
 }

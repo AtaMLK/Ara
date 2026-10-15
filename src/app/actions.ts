@@ -1,5 +1,8 @@
 'use server';
 
+import {loadQuoteDocument} from '@/lib/quotes/load-document';
+import {getQuoteCompany} from '@/lib/quotes/company';
+import {createQuotePdf,renderQuoteEmail} from '@/lib/quotes/document';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requireAdmin, requireCustomerAccess, requireCustomerInquiryAccess } from '@/lib/ai/guards';
@@ -53,8 +56,8 @@ export async function createCustomerInquiryAction(input: {
       item.partNumber ? `Part Number / Model: ${item.partNumber}` : null,
       item.serialNumber ? `Serial Number: ${item.serialNumber}` : null,
       item.details ? `Additional details: ${item.details}` : null,
-    ].filter(Boolean).join('\\n')).join('\\n\\n');
-    const combinedCustomerText = [structuredItemsText, parsed.originalCustomerText.trim() ? `Additional product list / customer text:\\n${parsed.originalCustomerText.trim()}` : ''].filter(Boolean).join('\\n\\n').slice(0, 20000);
+    ].filter(Boolean).join('\n')).join('\n\n');
+    const combinedCustomerText = [structuredItemsText, parsed.originalCustomerText.trim() ? `Additional product list / customer text:\n${parsed.originalCustomerText.trim()}` : ''].filter(Boolean).join('\n\n').slice(0, 20000);
 
     const { supabase, user, customer } = await requireCustomerAccess();
     const date = new Date().toISOString().slice(0, 10).replaceAll('-', '');
@@ -62,7 +65,7 @@ export async function createCustomerInquiryAction(input: {
 
     let inquiry: { id: string; reference: string } | null = null;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const reference = `${customer.customer_code}-${date}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+      const reference = `AO-${date}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
       const { data, error } = await supabase.from('inquiries').insert({
         customer_id: customer.id,
         reference,
@@ -71,6 +74,7 @@ export async function createCustomerInquiryAction(input: {
         status: 'processing',
         priority: parsed.priority,
         original_customer_text: combinedCustomerText,
+        normalized_information: { submitted_items: items },
       }).select('id,reference').single();
       if (data) { inquiry = data; break; }
       if (attempt === 2) throw new ToolError('CONFLICT', error?.message ?? 'Inquiry creation failed');
@@ -92,26 +96,10 @@ export async function createCustomerInquiryAction(input: {
     }
 
     try {
-      await startInquiryWorkflow(inquiry.id, 'inquiry_submission');
-
-      // In local development there may be no scheduled worker running.
-      // Process this inquiry immediately so the customer submission can advance
-      // through intake/research/supplier discovery without requiring Admin to
-      // press Continue manually. The Customer submission is the workflow trigger;
-      // Admin Start Workflow is only a manual recovery/retry control. The same queue remains idempotent in production.
-      const worker = await processQueuedWorkflow(20, inquiry.id);
-
-      await createSupabaseAdminClient().from('timeline_events').insert({
-        inquiry_id: inquiry.id,
-        event_type: 'workflow_auto_processed',
-        visibility: 'admin',
-        actor_type: 'system',
-        metadata: {
-          processed: worker.results.length,
-          last_stage: worker.results.at(-1)?.stage ?? null,
-          last_outcome: worker.results.at(-1)?.outcome ?? null,
-        },
-      });
+      const started=await startInquiryWorkflow(inquiry.id,'inquiry_submission');
+      // The background worker owns all expensive stages; submission returns once queued.
+      await createSupabaseAdminClient().from('timeline_events').insert({inquiry_id:inquiry.id,event_type:'workflow_auto_queued',
+        visibility:'admin',actor_type:'system',metadata:{execution_id:started.execution?.id??null}});
     } catch (workflowError) {
       const message = workflowError instanceof Error ? workflowError.message : 'Workflow start failed';
 
@@ -733,10 +721,9 @@ export async function sendClarificationAction(input: { inquiryId: string; clarif
     if (!customer?.email) throw new ToolError('VALIDATION', 'Customer email is not configured');
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-    const from = process.env.EMAIL_FROM;
-    if (!appUrl || !from) {
-      throw new ToolError('VALIDATION', 'NEXT_PUBLIC_APP_URL and EMAIL_FROM must be configured');
-    }
+    const from = process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.PURCHASE_DEP_EMAIL || process.env.SMTP_USER;
+    if (!appUrl) throw new ToolError('VALIDATION', 'NEXT_PUBLIC_APP_URL must be configured');
+    if (!from) throw new ToolError('VALIDATION', 'An email sender must be configured (EMAIL_FROM or SMTP_FROM).');
 
     const customerName = customer.company_name || customer.name;
     const safeCustomerName = customerName
@@ -1488,6 +1475,13 @@ export async function updateCustomerPricingRuleAction(input: {
 }
 
 
+async function completeAcceptedInquiry(inquiryId:string,customerId:string) {
+  const {error}=await createSupabaseAdminClient().from('inquiries').update({status:'converted'})
+    .eq('id',inquiryId).eq('customer_id',customerId)
+    .in('status',['processing','open','clarification_required','researching','rfq','quoting']);
+  if(error)throw new ToolError('TRANSIENT','Quotation accepted, but request completion could not be saved. Please retry.');
+}
+
 export async function acceptCustomerQuoteAction(quoteId: string) {
   try {
     const parsed = idSchema.parse(quoteId);
@@ -1501,9 +1495,11 @@ export async function acceptCustomerQuoteAction(quoteId: string) {
       .single();
 
     if (error || !quote) throw new ToolError('NOT_FOUND', 'Quotation not found');
+    if (quote.status === 'accepted') {await completeAcceptedInquiry(quote.inquiry_id,customer.id);return { ok: true };}
     if (quote.status !== 'sent') throw new ToolError('CONFLICT', 'Only a sent quotation can be accepted');
 
-    const { data, error: updateError } = await supabase
+    // Customer ownership has been verified above; only fixed decision fields are writable.
+    const { data, error: updateError } = await createSupabaseAdminClient()
       .from('customer_quotes')
       .update({
         status: 'accepted',
@@ -1515,10 +1511,12 @@ export async function acceptCustomerQuoteAction(quoteId: string) {
       .eq('customer_id', customer.id)
       .eq('status', 'sent')
       .select('id')
-      .single();
+      .maybeSingle();
 
-    if (updateError || !data) throw new ToolError('CONFLICT', 'Quotation changed. Refresh and try again.');
+    if (updateError) throw new ToolError('CONFLICT', 'Could not save your quotation decision. Please try again.');
+    if (!data) throw new ToolError('CONFLICT', 'This quotation has already received a decision. Refresh to see its status.');
 
+    await completeAcceptedInquiry(quote.inquiry_id,customer.id);
     await createSupabaseAdminClient().from('timeline_events').insert({
       inquiry_id: quote.inquiry_id,
       event_type: 'customer_quote_accepted',
@@ -1531,6 +1529,8 @@ export async function acceptCustomerQuoteAction(quoteId: string) {
     revalidatePath(`/customer/inquiries/${quote.inquiry_id}`);
     revalidatePath(`/customer/quotes/${quote.inquiry_id}`);
     revalidatePath('/customer');
+    revalidatePath(`/inquiries/${quote.inquiry_id}`);
+    revalidatePath(`/quotes/${quote.id}`);
     return { ok: true };
   } catch (error) {
     fail(error);
@@ -1557,7 +1557,8 @@ export async function rejectCustomerQuoteAction(input: { quoteId: string; reason
     if (error || !quote) throw new ToolError('NOT_FOUND', 'Quotation not found');
     if (quote.status !== 'sent') throw new ToolError('CONFLICT', 'Only a sent quotation can be rejected');
 
-    const { data, error: updateError } = await supabase
+    // Customer ownership has been verified above; only fixed decision fields are writable.
+    const { data, error: updateError } = await createSupabaseAdminClient()
       .from('customer_quotes')
       .update({
         status: 'rejected',
@@ -1569,9 +1570,10 @@ export async function rejectCustomerQuoteAction(input: { quoteId: string; reason
       .eq('customer_id', customer.id)
       .eq('status', 'sent')
       .select('id')
-      .single();
+      .maybeSingle();
 
-    if (updateError || !data) throw new ToolError('CONFLICT', 'Quotation changed. Refresh and try again.');
+    if (updateError) throw new ToolError('CONFLICT', 'Could not save your quotation decision. Please try again.');
+    if (!data) throw new ToolError('CONFLICT', 'This quotation has already received a decision. Refresh to see its status.');
 
     await createSupabaseAdminClient().from('timeline_events').insert({
       inquiry_id: quote.inquiry_id,
@@ -1585,6 +1587,8 @@ export async function rejectCustomerQuoteAction(input: { quoteId: string; reason
     revalidatePath(`/customer/inquiries/${quote.inquiry_id}`);
     revalidatePath(`/customer/quotes/${quote.inquiry_id}`);
     revalidatePath('/customer');
+    revalidatePath(`/inquiries/${quote.inquiry_id}`);
+    revalidatePath(`/quotes/${quote.id}`);
     return { ok: true };
   } catch (error) {
     fail(error);
@@ -1615,7 +1619,9 @@ export async function requestCustomerQuoteRevisionAction(input: {
     if (error || !quote) throw new ToolError('NOT_FOUND', 'Quotation not found');
     if (quote.status !== 'sent') throw new ToolError('CONFLICT', 'Only a sent quotation can be revised');
 
-    const { data: request, error: requestError } = await supabase
+    // Read authorization above uses the customer session. Mutations are scoped to that owned quote.
+    const decisionDb=createSupabaseAdminClient();
+    const { data: request, error: requestError } = await decisionDb
       .from('quote_revision_requests')
       .insert({
         quote_id: quote.id,
@@ -1629,7 +1635,7 @@ export async function requestCustomerQuoteRevisionAction(input: {
 
     if (requestError || !request) throw new ToolError('CONFLICT', 'Could not submit revision request');
 
-    const { data: updated, error: updateError } = await supabase
+    const { data: updated, error: updateError } = await decisionDb
       .from('customer_quotes')
       .update({
         status: 'revision_requested',
@@ -1646,9 +1652,12 @@ export async function requestCustomerQuoteRevisionAction(input: {
       .eq('customer_id', customer.id)
       .eq('status', 'sent')
       .select('id')
-      .single();
+      .maybeSingle();
 
-    if (updateError || !updated) throw new ToolError('CONFLICT', 'Quotation changed. Refresh and try again.');
+    if (updateError || !updated) {
+      await decisionDb.from('quote_revision_requests').delete().eq('id',request.id).eq('requested_by',user.id).eq('status','pending_approval');
+      throw new ToolError('CONFLICT',updateError?'Could not save your revision request. Please try again.':'This quotation has already received a decision. Refresh to see its status.');
+    }
 
     await createSupabaseAdminClient().from('timeline_events').insert({
       inquiry_id: quote.inquiry_id,
@@ -1679,7 +1688,7 @@ export async function reviewCustomerQuoteRevisionAction(input: {
 
     const { data: request, error: requestError } = await supabase
       .from('quote_revision_requests')
-      .select('id,quote_id,reason,free_text,status,quote:customer_quotes(id,inquiry_id,customer_id,reference,revision_number,status,currency,valid_until,subject,body)')
+      .select('id,quote_id,reason,free_text,status,quote:customer_quotes(id,inquiry_id,customer_id,display_reference,reference,revision_number,status,currency,valid_until,subject,body)')
       .eq('id', parsed.requestId).single();
     if (requestError || !request) throw new ToolError('NOT_FOUND', 'Revision request not found');
     if (request.status !== 'pending_approval') throw new ToolError('CONFLICT', 'Revision request has already been reviewed');
@@ -1714,12 +1723,12 @@ export async function reviewCustomerQuoteRevisionAction(input: {
     if (quote.status !== 'revision_requested') throw new ToolError('CONFLICT','Quotation is not awaiting revision');
 
     const { data: oldItems, error: itemError } = await supabase.from('customer_quote_items')
-      .select('product_id,supplier_quote_id,quantity,unit_price,supplier_cost,supplier_currency,exchange_rate_id,price_status,pricing_rule_id,price_calculation')
+      .select('description,model,brand,delivery_text,product_id,supplier_quote_id,quantity,unit_price,supplier_cost,supplier_currency,exchange_rate_id,price_status,pricing_rule_id,price_calculation')
       .eq('customer_quote_id',quote.id).order('created_at',{ascending:true});
     if (itemError) throw itemError;
 
     const nextRevision = quote.revision_number + 1;
-    const baseReference = quote.reference.replace(/-R\d+$/i,'');
+    const baseReference = (quote.display_reference||quote.reference).replace(/-R\d+$/i,'');
     const reference = baseReference+'-R'+nextRevision;
 
     const { data:newQuote,error:quoteInsertError } = await supabase.from('customer_quotes').insert({
@@ -1887,6 +1896,7 @@ export async function requestQuoteApprovalAction(quoteId: string) {
 
     if (error || !data) throw new ToolError('CONFLICT', 'Quote is not in Draft state');
     revalidatePath('/quotes');
+    revalidatePath(`/quotes/${parsed}`);
     revalidatePath(`/inquiries/${data.inquiry_id}`);
     return { ok: true };
   } catch (error) {
@@ -1920,7 +1930,7 @@ export async function approveCustomerQuoteAction(quoteId: string) {
 
     const { data: pendingItems, error: itemError } = await supabase
       .from('customer_quote_items')
-      .select('id,product_id,quantity,unit_price,total,price_status,supplier_products(product_name,model_part_number)')
+      .select('id,product_id,quantity,unit_price,total,price_status,price_calculation,supplier_products(product_name,model_part_number)')
       .eq('customer_quote_id', parsed)
       .order('created_at', { ascending: true });
 
@@ -1940,10 +1950,9 @@ export async function approveCustomerQuoteAction(quoteId: string) {
     }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-    const from = process.env.EMAIL_FROM;
-    if (!appUrl || !from) {
-      throw new ToolError('VALIDATION', 'NEXT_PUBLIC_APP_URL and EMAIL_FROM must be configured');
-    }
+    const from = process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.PURCHASE_DEP_EMAIL || process.env.SMTP_USER;
+    if (!appUrl) throw new ToolError('VALIDATION', 'NEXT_PUBLIC_APP_URL must be configured');
+    if (!from) throw new ToolError('VALIDATION', 'An email sender must be configured (EMAIL_FROM or SMTP_FROM).');
 
     const adminSupabase = createSupabaseAdminClient();
     const idempotencyKey = `customer-quote-${quote.id}-r${quote.revision_number}`;
@@ -1963,82 +1972,16 @@ export async function approveCustomerQuoteAction(quoteId: string) {
       throw new ToolError('CONFLICT', 'This customer quote has already been sent');
     }
 
-    const customerName = customer.company_name || customer.name || 'Customer';
-    const quoteUrl = `${appUrl.replace(/\/$/, '')}/customer/inquiries/${quote.inquiry_id}`;
-    const subject = quote.subject?.trim() || `ARAT quotation — ${quote.reference}`;
-
-    const rows = pendingItems.map((item) => {
-      const product = Array.isArray(item.supplier_products) ? item.supplier_products[0] : item.supplier_products;
-      const productName = product?.product_name || product?.model_part_number || 'Quoted item';
-      const model = product?.model_part_number && product?.product_name ? `<div style="color:#6b7280;font-size:12px">${escapeHtml(product.model_part_number)}</div>` : '';
-      return `<tr>
-        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb">${escapeHtml(productName)}${model}</td>
-        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${escapeHtml(item.quantity)}</td>
-        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${escapeHtml(item.unit_price.toFixed ? item.unit_price.toFixed(2) : item.unit_price)} ${escapeHtml(quote.currency)}</td>
-        <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${escapeHtml(item.total.toFixed ? item.total.toFixed(2) : item.total)} ${escapeHtml(quote.currency)}</td>
-      </tr>`;
-    }).join('');
-
-    const grandTotal = pendingItems.reduce((sum, item) => sum + Number(item.total || 0), 0);
-    const safeName = escapeHtml(customerName);
-    const safeBody = escapeHtml(quote.body || '').replaceAll('\n', '<br />');
-    const validUntil = quote.valid_until
-      ? `<p><strong>Valid until:</strong> ${escapeHtml(quote.valid_until)}</p>`
-      : '';
-
-    const html = `<!doctype html>
-<html>
-  <body style="margin:0;background:#f7f8fa;font-family:Arial,sans-serif;color:#17202a;line-height:1.6">
-    <div style="max-width:720px;margin:0 auto;padding:32px 20px">
-      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:28px">
-        <h2 style="margin-top:0">Quotation ${escapeHtml(quote.reference)}</h2>
-        <p>Hello ${safeName},</p>
-        <p>Please find our quotation below.</p>
-        ${safeBody ? `<p>${safeBody}</p>` : ''}
-        <table style="width:100%;border-collapse:collapse;margin:24px 0;font-size:14px">
-          <thead>
-            <tr>
-              <th style="text-align:left;padding:10px 8px;border-bottom:2px solid #d1d5db">Item</th>
-              <th style="text-align:right;padding:10px 8px;border-bottom:2px solid #d1d5db">Qty</th>
-              <th style="text-align:right;padding:10px 8px;border-bottom:2px solid #d1d5db">Unit price</th>
-              <th style="text-align:right;padding:10px 8px;border-bottom:2px solid #d1d5db">Total</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-          <tfoot>
-            <tr>
-              <td colspan="3" style="padding:14px 8px;text-align:right;font-weight:700">Total</td>
-              <td style="padding:14px 8px;text-align:right;font-weight:700">${grandTotal.toFixed(2)} ${escapeHtml(quote.currency)}</td>
-            </tr>
-          </tfoot>
-        </table>
-        ${validUntil}
-        <p><a href="${quoteUrl}" style="display:inline-block;padding:10px 16px;background:#17202a;color:#fff;text-decoration:none;border-radius:7px">Open request in ARAT</a></p>
-        <p style="color:#6b7280;font-size:12px">Quotation reference: ${escapeHtml(quote.reference)}</p>
-      </div>
-    </div>
-  </body>
-</html>`;
-
-    const textLines = pendingItems.map((item) => {
-      const product = Array.isArray(item.supplier_products) ? item.supplier_products[0] : item.supplier_products;
-      const productName = product?.product_name || product?.model_part_number || 'Quoted item';
-      return `- ${productName} | Qty: ${item.quantity} | Unit: ${Number(item.unit_price).toFixed(2)} ${quote.currency} | Total: ${Number(item.total).toFixed(2)} ${quote.currency}`;
-    }).join('\n');
-
-    const text = `Hello ${customerName},
-
-Please find our quotation ${quote.reference} below.
-
-${quote.body || ''}
-
-${textLines}
-
-Total: ${grandTotal.toFixed(2)} ${quote.currency}
-${quote.valid_until ? `Valid until: ${quote.valid_until}\n` : ''}
-Open your request in ARAT:
-${quoteUrl}`;
-
+    const loaded=await loadQuoteDocument(quote.id);
+    const quoteUrl='/customer/quotes/'+quote.inquiry_id+'?revision='+quote.id;
+    if(loaded.unconfirmed)throw new ToolError('APPROVAL_REQUIRED','Confirm every customer price before sending.');
+    const company=await getQuoteCompany();
+    const {html,text}=renderQuoteEmail(loaded.document,company);
+    const subject=loaded.subject;
+    const pdf=await createQuotePdf(loaded.document,company);
+    const pdfPath='customer-quotes/'+quote.id+'/'+crypto.randomUUID()+'.pdf';
+    const {error:pdfUploadError}=await adminSupabase.storage.from('supplier-email-attachments').upload(pdfPath,pdf,{contentType:'application/pdf'});
+    if(pdfUploadError)throw new ToolError('TRANSIENT','Quotation PDF could not be saved. No email was sent.');
     const provider = getEmailProvider();
     const result = await provider.send({
       from,
@@ -2047,6 +1990,8 @@ ${quoteUrl}`;
       html,
       text,
       idempotencyKey,
+      generatedAttachments:[{fileName:'Quotation-'+loaded.document.reference+'.pdf',mimeType:'application/pdf',content:pdf},
+        ...(company.logo?[{fileName:'company-logo'+(company.logoType==='image/jpeg'?'.jpg':'.png'),mimeType:company.logoType||'image/png',content:company.logo,cid:'quote-company-logo'}]:[])],
     });
 
     const { error: communicationError } = await adminSupabase.from('communications').insert({
@@ -2067,6 +2012,9 @@ ${quoteUrl}`;
         revision_number: quote.revision_number,
         currency: quote.currency,
         item_count: pendingItems.length,
+        document_reference:loaded.document.reference,
+        quotation_pdf_path:pdfPath,
+        quotation_pdf_filename:'Quotation-'+loaded.document.reference+'.pdf',
       },
     });
 
@@ -2115,6 +2063,8 @@ ${quoteUrl}`;
       after_data: { status: 'sent', sent_at: result.sentAt },
       metadata: { provider_message_id: result.providerMessageId, recipient: customer.email },
     });
+
+    await adminSupabase.from('inquiries').update({status:'quoting'}).eq('id',quote.inquiry_id).in('status',['processing','researching','rfq']);
 
     await adminSupabase.from('timeline_events').insert({
       inquiry_id: quote.inquiry_id,

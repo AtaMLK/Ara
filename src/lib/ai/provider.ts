@@ -39,42 +39,62 @@ class OpenAICompatibleProvider implements AIModelProvider {
 
     if (!apiKey) throw new ToolError('TRANSIENT', 'OPENAI_API_KEY is not configured');
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        messages,
-        response_format: { type: 'json_object' },
-      }),
-      cache: 'no-store',
-    });
+    // JSON mode guarantees JSON syntax, not our agent contract. Supply the actual
+    // input contract, including enum values and nested condition/tier shapes.
+    const contract = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' });
+    const requestMessages: AIMessage[] = [
+      ...messages,
+      { role: 'system', content: 'Return JSON conforming to this JSON Schema: ' + JSON.stringify(contract) +
+        '\nOmit optional fields when unknown. Do not use null unless the schema permits it. Never invent facts to fill missing fields. Use unknown for an unresolved matchStatus. Preserve commercial conditions in the specified object structure.' },
+    ];
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new ToolError(response.status >= 500 ? 'TRANSIENT' : 'AI_PROCESSING', `AI provider error: ${text.slice(0, 500)}`);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          messages: requestMessages,
+          response_format: { type: 'json_object' },
+        }),
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new ToolError(response.status >= 500 ? 'TRANSIENT' : 'AI_PROCESSING', `AI provider error: ${text.slice(0, 500)}`);
+      }
+
+      const json = await response.json();
+      const parsed = providerResponseSchema.safeParse({
+        output_text: json.choices?.[0]?.message?.content,
+      });
+
+      if (!parsed.success) throw new ToolError('AI_PROCESSING', 'AI provider returned no JSON output');
+
+      let output: unknown;
+      try {
+        output = JSON.parse(parsed.data.output_text);
+      } catch {
+        throw new ToolError('AI_PROCESSING', 'AI provider returned invalid JSON');
+      }
+
+      const validated = schema.safeParse(output);
+      if (!validated.success) {
+        if (attempt === 0) {
+          requestMessages.push({ role: 'user', content: JSON.stringify({
+            task: 'Correct the previous JSON to match the supplied schema using only the original evidence. Omit unknown optional fields; do not guess procurement facts.',
+            previous_output: output,
+            validation_errors: validated.error.issues,
+          }) });
+          continue;
+        }
+        throw new ToolError('AI_PROCESSING', `AI output failed schema validation: ${validated.error.message.slice(0, 800)}`);
+      }
+
+      return { output: validated.data, provider: 'openai-compatible', model };
     }
-
-    const json = await response.json();
-    const parsed = providerResponseSchema.safeParse({
-      output_text: json.choices?.[0]?.message?.content,
-    });
-
-    if (!parsed.success) throw new ToolError('AI_PROCESSING', 'AI provider returned no JSON output');
-
-    let output: unknown;
-    try {
-      output = JSON.parse(parsed.data.output_text);
-    } catch {
-      throw new ToolError('AI_PROCESSING', 'AI provider returned invalid JSON');
-    }
-
-    const validated = schema.safeParse(output);
-    if (!validated.success) {
-      throw new ToolError('AI_PROCESSING', `AI output failed schema validation: ${validated.error.message.slice(0, 800)}`);
-    }
-
-    return { output: validated.data, provider: 'openai-compatible', model };
+    throw new ToolError('AI_PROCESSING', 'AI output could not be validated');
   }
 }
 

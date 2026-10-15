@@ -65,7 +65,7 @@ class SmtpEmailProvider implements EmailProvider {
       subject: input.subject,
       html: input.html,
       text: input.text,
-      attachments,
+      attachments: [...attachments,...(input.generatedAttachments??[]).map(attachment=>({filename:attachment.fileName,content:Buffer.from(attachment.content),contentType:attachment.mimeType,cid:attachment.cid}))],
       headers: input.idempotencyKey
         ? { 'X-ARAT-Idempotency-Key': input.idempotencyKey }
         : undefined,

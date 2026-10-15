@@ -12,3 +12,9 @@ node_modules/
 
 # TypeScript incremental build cache
 /tsconfig.tsbuildinfo
+
+# Generated quotation previews may contain customer information.
+/output/
+
+# Supabase CLI local metadata
+/supabase/.temp/

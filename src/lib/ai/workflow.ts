@@ -6,6 +6,9 @@ import { getResearchProvider, type ResearchResult } from './research/provider';
 import { runAgent } from './agent-runner';
 import { isPublishedContact, extractPublishedEmails, sameWebsiteHost } from './supplier-evidence';
 import { readSupplierHtml } from './supplier-page';
+import { supplierCommercial } from '@/lib/quotes/commercial';
+import {inquiryItems} from '@/lib/ui/inquiry-items';
+import {getInquiryDisplayReference,getQuoteReference} from '@/lib/ui/inquiry-reference';
 import { documentOutputSchema, intakeOutputSchema, intakeRepairOutputSchema, clarificationOutputSchema, clarificationRepairOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema, supplierDiscoveryOutputSchema, supplierVerificationOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {
@@ -87,9 +90,6 @@ function normalizeProductRequirementValue(value: string) {
   let text = value.trim().replace(/\s+/g, ' ');
   text = text.replace(/^\s*(?:hi|hello)[,;:\-\s]+/i, '');
   text = text.replace(/^(?:needed\s+item\s+is|requested\s+item\s+is|item\s+is)\s*[:\-]\s*/i, '');
-  const technicalMarker = /\s+(?:temperature\s+output|temperature\s+range|operating\s+temperature|operating\s+range|how\s+to\s+order|table\s+for|max\s+sealing|pressure\s+range|material|specifications?)\b/i;
-  const match = text.match(technicalMarker);
-  if (match?.index && match.index >= 8) text = text.slice(0, match.index).trim();
   return text || value.trim();
 }
 
@@ -135,6 +135,22 @@ async function timeline(
     agent_id: agentId,
     metadata,
   });
+}
+
+async function notifyDraftReview(quoteId: string, reference: string) {
+  const supabase=createSupabaseAdminClient();
+  const {data:admins,error}=await supabase.from('profiles').select('user_id').eq('role','admin').eq('status','active');
+  if(error) throw new ToolError('TRANSIENT',error.message);
+  for(const admin of admins??[]) {
+    const {data:existing,error:readError}=await supabase.from('notifications').select('id')
+      .eq('user_id',admin.user_id).eq('record_type','customer_quote').eq('record_id',quoteId).eq('category','approval').limit(1);
+    if(readError) throw new ToolError('TRANSIENT',readError.message);
+    if(existing?.length) continue;
+    const {error:notifyError}=await supabase.from('notifications').insert({user_id:admin.user_id,category:'approval',priority:'normal',
+      title:'Pre-quote ready for your review',message:reference+': review supplier costs, tax and delivery, enter your markup or customer price, then confirm each line.',
+      record_type:'customer_quote',record_id:quoteId,action_url:'/quotes/'+quoteId});
+    if(notifyError) throw new ToolError('TRANSIENT',notifyError.message);
+  }
 }
 
 async function setInquiryStatus(inquiryId: string, status: string) {
@@ -312,7 +328,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           const bytes = await downloadInquiryFile(file.storage_path);
           const parsed = await parseInquiryFile(bytes, file.mime_type, file.original_name);
           if (!parsed.extractedText.trim()) {
-            throw new ToolError('AI_PROCESSING', 'Document has no readable text. OCR or a readable replacement is required before sourcing.');
+            ocrPending++;
+            await supabase.from('document_processing').update({status:'processed',extracted_text:'',extracted_data:parsed.extractedData,
+              quality_flags:[...parsed.qualityFlags,'UNREADABLE_ATTACHMENT_REVIEW_REQUIRED'],completed_at:new Date().toISOString()}).eq('file_id',file.id);
+            await supabase.from('inquiry_files').update({status:'processed',processed_at:new Date().toISOString()}).eq('id',file.id);
+            await createAlert(inquiryId,'document','ATTACHMENT_REQUIRES_OCR',`${file.original_name} has no readable text. The original is retained; sourcing can continue from readable request text, but this attachment has not been interpreted.`);
+            continue;
           }
 
           let extraction = {
@@ -436,7 +457,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
       }
 
-      if (failed > 0) throw new ToolError('AI_PROCESSING', `${failed} inquiry file(s) could not be fully processed. Resolve these files before supplier research.`);
+      const {data:requestSource}=await supabase.from('inquiries').select('original_customer_text').eq('id',inquiryId).single();
+      const {data:readableFiles}=await supabase.from('document_processing').select('extracted_text').in('file_id',(files??[]).map(file=>file.id));
+      const hasReadableSource=Boolean(requestSource?.original_customer_text?.trim()||(readableFiles??[]).some(file=>file.extracted_text?.trim()));
+      if ((failed>0||ocrPending>0)&&!hasReadableSource) throw new ToolError('AI_PROCESSING','The inquiry has no readable source. A readable PDF or text requirements are needed; OCR is deferred.');
       const aiReady = Boolean(process.env.OPENAI_API_KEY);
 
       await markExecutionSuccess(running.id, {
@@ -511,7 +535,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           }))
           .join('\n\n');
 
-        if (originalText || documentText) {
+        if (originalText || (!(requirements??[]).length && documentText)) {
           const ai = await runAgent(
             { agentId: 'intake', executionId: running.id, inquiryId },
             {
@@ -1272,20 +1296,21 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
     if (stage === 'customer_quote') {
       const { data: inquiry, error: inquiryError } = await supabase
-        .from('inquiries').select('id,customer_id,reference,title,description').eq('id', inquiryId).single();
+        .from('inquiries').select('id,customer_id,reference,title,description,normalized_information,created_at,current_version,updated_at').eq('id', inquiryId).single();
       if (inquiryError || !inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
 
-      const { data: customer } = await supabase.from('customers').select('id,default_currency,name,company_name').eq('id', inquiry.customer_id).single();
+      const { data: customer, error: customerError } = await supabase.from('customers').select('id,name,company_name,country').eq('id', inquiry.customer_id).single();
+      if (customerError) throw new ToolError('TRANSIENT', customerError.message);
       if (!customer) throw new ToolError('NOT_FOUND', 'Customer not found');
-      const customerCurrency = customer.default_currency ?? 'EUR';
 
-      const { data: existing } = await supabase.from('customer_quotes').select('id,status,revision_number').eq('inquiry_id', inquiryId).in('status', ['draft','pending_approval','sent']).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const { data: existing } = await supabase.from('customer_quotes').select('id,status,revision_number,reference').eq('inquiry_id', inquiryId).in('status', ['draft','pending_approval','sent']).order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (existing) {
+        if (existing.status==='draft') await notifyDraftReview(existing.id,existing.reference);
         await markExecutionSuccess(running.id, { customer_quote_id: existing.id, status: existing.status, reused_existing_quote: true });
         return { execution: running, outcome: 'existing_quote' };
       }
 
-      const { data: requirements, error: requirementsError } = await supabase.from('requirements').select('id,type,value,status,source,admin_edited').eq('inquiry_id', inquiryId).eq('status', 'confirmed').order('created_at', { ascending: true });
+      const { data: requirements, error: requirementsError } = await supabase.from('requirements').select('id,type,value,status,source,source_ref,admin_edited').eq('inquiry_id', inquiryId).eq('status', 'confirmed').order('created_at', { ascending: true });
       if (requirementsError) throw new ToolError('TRANSIENT', requirementsError.message);
       const { data: findings } = await supabase.from('supplier_comparison_findings').select('id,supplier_response_id,supplier_quote_id,requirement_id,status,evidence').eq('inquiry_id', inquiryId).order('created_at', { ascending: true });
       const quoteIds = [...new Set((findings ?? []).map((item) => item.supplier_quote_id).filter((id): id is string => Boolean(id)))];
@@ -1295,8 +1320,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         return { execution: running, outcome: 'blocked' };
       }
 
-      const { data: supplierQuotes, error: quotesError } = await supabase.from('supplier_quotes').select('id,supplier_response_id,product_id,match_status,currency,quantity,moq,net_price,valid_until,availability,lead_time_text,payment_terms,incoterm,delivery_method,additional_conditions').in('id', quoteIds);
+      const { data: supplierQuotes, error: quotesError } = await supabase.from('supplier_quotes').select('id,supplier_response_id,product_id,match_status,currency,quantity,moq,net_price,gross_price,vat,valid_until,availability,lead_time_text,payment_terms,incoterm,delivery_method,additional_conditions,original_data').in('id', quoteIds);
       if (quotesError) throw new ToolError('TRANSIENT', quotesError.message);
+      // A draft preserves supplier currencies. Admin can choose the customer
+      // currency and an approved conversion later; preparation requires no rate.
+      const customerCurrency = supplierQuotes?.find(item => item.currency)?.currency ?? 'EUR';
 
       const { data: priceTiers, error: priceTiersError } = await supabase
         .from('supplier_quote_price_tiers')
@@ -1304,13 +1332,6 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .in('supplier_quote_id', quoteIds)
         .order('min_quantity', { ascending: true, nullsFirst: true });
       if (priceTiersError) throw new ToolError('TRANSIENT', priceTiersError.message);
-
-      const { data: pricingRule } = await supabase.from('customer_pricing_rules').select('id,name,markup_percent,rounding_increment,status').eq('status', 'approved').maybeSingle();
-      if (!pricingRule) {
-        await markExecutionSuccess(running.id, { blocked: true, reason: 'approved_pricing_rule_required' });
-        await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_PRICING_RULE_REQUIRED', 'Customer quote is waiting for an Admin-approved pricing rule.', 'normal');
-        return { execution: running, outcome: 'blocked' };
-      }
 
       const ai = await runAgent(
         { agentId: 'customer_quote', executionId: running.id, inquiryId, customerId: inquiry.customer_id },
@@ -1320,10 +1341,28 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           'Use supplier quote quantity only when explicitly present; otherwise use an explicitly confirmed requirement quantity when available.',
           'Never produce unitPrice, customerPrice, margin, markup, exchange rate, or currency conversion.',
           'Do not invent product identity or technical data.',
-          'If quantity or product identity is unresolved, omit that quote and explain the warning.',
+          'This is an internal unpriced pre-quote for Admin review. Missing productId or unconfirmed technical details must be reported as warnings; do not omit a traceable supplier response merely because its offered model or specifications need Admin review.',
+          'If no explicit supplier or confirmed customer quantity is available, omit that quote and explain the warning. Never invent a quantity.',
         ] },
         customerQuoteOutputSchema,
       );
+
+      // Keep traceable offers visible to Admin even when the model withholds a
+      // proposal due to incomplete specifications. This does not resolve or
+      // change their technical match status, and assigns no customer price.
+      for (const supplierQuote of supplierQuotes ?? []) {
+        if (supplierQuote.match_status === 'mismatch' || ai.output.lines.some(line=>line.supplierQuoteId===supplierQuote.id)) continue;
+        const linkedIds = new Set((findings ?? []).filter(finding=>finding.supplier_quote_id===supplierQuote.id).map(finding=>finding.requirement_id));
+        const related = (requirements ?? []).filter(requirement=>linkedIds.has(requirement.id));
+        const refs = new Set(related.map(requirement=>requirement.source_ref).filter(Boolean));
+        const singleProduct = (requirements ?? []).filter(requirement=>requirement.type==='product').length===1;
+        const quantities = (requirements ?? []).filter(requirement=>requirement.type==='quantity' && (linkedIds.has(requirement.id) || refs.has(requirement.source_ref) || singleProduct))
+          .flatMap(requirement=>{const match=requirement.value.trim().match(/^(\d+(?:\.\d+)?)\s*[^\d]*$/);return match&&Number(match[1])>0?[Number(match[1])]:[];});
+        const quantity = supplierQuote.quantity != null && Number(supplierQuote.quantity)>0 ? Number(supplierQuote.quantity) : new Set(quantities).size===1 ? quantities[0] : undefined;
+        if (quantity == null || !linkedIds.size) continue;
+        ai.output.lines.push({supplierQuoteId:supplierQuote.id,quantity,requirementIds:[...linkedIds],reason:'Traceable supplier offer; product identity and technical differences require Admin review.'});
+        ai.output.warnings.push('Supplier quote '+supplierQuote.id+' is included for Admin review; verify unresolved product identity and specifications before approval.');
+      }
 
       if (!ai.output.lines.length) {
         await markExecutionSuccess(running.id, { blocked: true, reason: 'no_quote_lines_proposed', warnings: ai.output.warnings });
@@ -1331,14 +1370,17 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         return { execution: running, outcome: 'blocked' };
       }
 
-      const reference = 'DRAFT-' + (inquiry.reference ?? inquiryId) + '-' + crypto.randomUUID().slice(0, 8);
+      const displayInquiry=getInquiryDisplayReference(inquiry.reference,customer.company_name||customer.name,inquiry.created_at,inquiry.current_version,inquiry.updated_at);
+      const {count:quoteCount,error:countError}=await supabase.from('customer_quotes').select('id',{head:true,count:'exact'}).eq('inquiry_id',inquiryId);
+      if(countError)throw new ToolError('TRANSIENT',countError.message);
+      const reference=getQuoteReference(displayInquiry,(quoteCount??0)+1);
+      const requestItems=inquiryItems(inquiry.normalized_information,requirements??[]);
       const validUntilValues = ai.output.lines.map((line) => supplierQuotes?.find((quote) => quote.id === line.supplierQuoteId)?.valid_until).filter((value): value is string => Boolean(value)).sort();
-      const { data: quote, error: quoteError } = await supabase.from('customer_quotes').insert({ inquiry_id: inquiryId, customer_id: inquiry.customer_id, reference, revision_number: 0, status: 'draft', currency: customerCurrency, valid_until: validUntilValues[0] ?? null, subject: 'Quotation — ' + (inquiry.reference ?? inquiryId), body: 'Dear ' + (customer.name || 'Customer') + ',\n\nPlease find our quotation regarding inquiry ' + (inquiry.reference ?? inquiryId) + '.\n\nThis quotation is a draft and requires Admin price confirmation and approval before it can be sent.\n\nRegards,\nPurchase Department' }).select('id').single();
+      const { data: quote, error: quoteError } = await supabase.from('customer_quotes').insert({ inquiry_id: inquiryId, customer_id: inquiry.customer_id, reference, revision_number: 0, status: 'draft', currency: customerCurrency, valid_until: validUntilValues[0] ?? null, subject: 'Quotation '+reference+' | '+(requestItems[0]?.model||inquiry.title||'Procurement request'), body: 'Please find our quotation below. Delivery and pricing are listed separately for each item.' }).select('id').single();
       if (quoteError || !quote) throw new ToolError('CONFLICT', quoteError?.message ?? 'Customer quote creation failed');
 
       let createdItems = 0;
       let blockedItems = 0;
-      const today = new Date().toISOString() .slice(0, 50);
       for (const line of ai.output.lines) {
         const supplierQuote = supplierQuotes?.find((item) => item.id === line.supplierQuoteId);
         if (!supplierQuote || supplierQuote.match_status === 'mismatch') {
@@ -1380,54 +1422,37 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         const selectedTier = applicableTiers[0] ?? null;
         const supplierCost = selectedTier ? Number(selectedTier.unit_price) : supplierQuote.net_price;
         const supplierCurrency = selectedTier?.currency ?? supplierQuote.currency;
-
-        if (supplierCost == null || !supplierCurrency) {
-          blockedItems++;
-          await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_LINE_BLOCKED', 'Supplier quote ' + line.supplierQuoteId + ' lacks a usable explicit price/currency.', 'normal');
-          continue;
-        }
-
-        let exchangeRateId: string | null = null;
-        let exchangeRate = 1;
-        if (supplierCurrency !== customerCurrency) {
-          const { data: rate } = await supabase.from('exchange_rates').select('id,rate').eq('from_currency', supplierCurrency).eq('to_currency', customerCurrency).eq('status', 'approved').lte('valid_from', today).or('valid_until.is.null,valid_until.gte.' + today).order('valid_from', { ascending: false }).limit(1).maybeSingle();
-          if (!rate) {
-            blockedItems++;
-            await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_EXCHANGE_RATE_REQUIRED', 'Approved exchange rate required: ' + supplierCurrency + ' → ' + customerCurrency + ' for supplier quote ' + supplierQuote.id + '.', 'normal');
-            continue;
-          }
-          exchangeRateId = rate.id;
-          exchangeRate = Number(rate.rate);
-        }
-
-        const rawPrice = supplierCost * exchangeRate * (1 + Number(pricingRule.markup_percent) / 100);
-        const increment = pricingRule.rounding_increment ? Number(pricingRule.rounding_increment) : 0;
-        const suggestedPrice = increment > 0 ? Math.ceil(rawPrice / increment) * increment : rawPrice;
+        const original = (supplierQuote.original_data ?? {}) as Record<string, unknown>;
+        const extracted = (original.commercial ?? {}) as Record<string, unknown>;
+        const commercial = supplierCommercial({
+          netPrice: supplierCost == null ? undefined : Number(supplierCost),
+          grossPrice: selectedTier ? undefined : supplierQuote.gross_price == null ? undefined : Number(supplierQuote.gross_price),
+          taxRate: typeof extracted.taxRate === 'number' ? extracted.taxRate : undefined,
+          taxMode: ['excluded','included','exempt'].includes(String(extracted.taxMode)) ? extracted.taxMode as 'excluded'|'included'|'exempt' : 'unknown',
+          taxText: typeof extracted.taxText === 'string' ? extracted.taxText : [original.unitPrice,original.tax,original.taxText].filter(value=>typeof value==='string').join(' · '),
+          leadTimeText: supplierQuote.lead_time_text,
+        });
+        const relatedRefs=new Set((requirements??[]).filter(r=>line.requirementIds.includes(r.id)).map(r=>r.source_ref));
+        const requestItem=requestItems.find(item=>relatedRefs.has(item.sourceRef))??(requestItems.length===1?requestItems[0]:undefined);
         const { error: itemError } = await supabase.from('customer_quote_items').insert({
-          customer_quote_id: quote.id,
-          supplier_quote_id: supplierQuote.id,
-          product_id: supplierQuote.product_id,
-          quantity: line.quantity,
-          unit_price: suggestedPrice,
-          supplier_cost: supplierCost,
-          supplier_currency: supplierCurrency,
-          exchange_rate_id: exchangeRateId,
-          price_status: 'suggested',
-          pricing_rule_id: pricingRule.id,
+          customer_quote_id: quote.id, supplier_quote_id: supplierQuote.id,
+          product_id: supplierQuote.product_id, quantity: line.quantity,
+          unit_price: null, supplier_cost: commercial.net ?? commercial.gross,
+          supplier_currency: supplierCurrency, exchange_rate_id: null,
+          price_status: 'suggested', pricing_rule_id: null,
+          description:requestItem?.fullDescription??null,model:requestItem?.model??null,brand:requestItem?.brand??null,
+          delivery_text:null,
           price_calculation: {
-            source: selectedTier ? 'supplier_price_tier_and_approved_pricing_rule' : 'approved_pricing_rule',
-            pricing_rule_id: pricingRule.id,
-            markup_percent: pricingRule.markup_percent,
-            rounding_increment: pricingRule.rounding_increment,
-            exchange_rate_id: exchangeRateId,
-            exchange_rate: exchangeRate,
+            source: 'supplier_evidence_admin_pricing_required', commercial,
+            requirement_ids:line.requirementIds,source_ref:requestItem?.sourceRef??null,
+            product_label: [original.requestedProduct,original.requestedModelPartNumber].filter(value=>typeof value==='string').join(' · ') || line.reason,
             source_supplier_quote_id: supplierQuote.id,
             selected_price_tier_id: selectedTier?.id ?? null,
-            selected_price_tier_condition: selectedTier?.condition_text ?? null,
-            source_supplier_unit_price: supplierCost,
             source_supplier_currency: supplierCurrency,
-            ai_provider: ai.provider,
-            ai_model: ai.model,
+            availability: supplierQuote.availability, payment_terms: supplierQuote.payment_terms,
+            incoterm: supplierQuote.incoterm, delivery_method: supplierQuote.delivery_method,
+            conditions: supplierQuote.additional_conditions,
+            warnings: ai.output.warnings, ai_provider: ai.provider, ai_model: ai.model,
           },
         });
         if (itemError) throw new ToolError('CONFLICT', itemError.message);
@@ -1437,12 +1462,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       if (createdItems === 0) {
         await supabase.from('customer_quotes').delete().eq('id', quote.id).eq('status', 'draft');
         await markExecutionSuccess(running.id, { blocked: true, reason: 'all_quote_lines_blocked' });
-        await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_BLOCKED', 'No customer quote line could be safely priced. Admin review is required.', 'normal');
+        await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_BLOCKED', 'No customer quote line could be prepared. Admin review is required.', 'normal');
         return { execution: running, outcome: 'blocked' };
       }
-      await markExecutionSuccess(running.id, { customer_quote_id: quote.id, line_count: createdItems, blocked_line_count: blockedItems, pricing_rule_id: pricingRule.id, customer_currency: customerCurrency, customer_price_policy: 'SUGGESTED_BY_APPROVED_RULE_ADMIN_CONFIRMATION_REQUIRED', ai_provider: ai.provider, ai_model: ai.model });
-      await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_REVIEW_REQUIRED', 'Customer quote draft created with ' + createdItems + ' suggested line(s). Admin must confirm each customer price and approve before sending.', 'normal');
-      await timeline(inquiryId, 'customer_quote_draft_created', { customer_quote_id: quote.id, line_count: createdItems, blocked_line_count: blockedItems, currency: customerCurrency, pricing_rule_id: pricingRule.id }, 'customer_quote');
+      await notifyDraftReview(quote.id,reference);
+      await markExecutionSuccess(running.id, { customer_quote_id: quote.id, line_count: createdItems, blocked_line_count: blockedItems, customer_currency: customerCurrency, customer_price_policy: 'UNPRICED_ADMIN_INPUT_REQUIRED', ai_provider: ai.provider, ai_model: ai.model });
+      await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_REVIEW_REQUIRED', 'Customer quote draft created with ' + createdItems + ' unpriced line(s). Review supplier tax and delivery, enter markup or a customer price, then confirm before approval.', 'normal');
+      await timeline(inquiryId, 'customer_quote_draft_created', { customer_quote_id: quote.id, line_count: createdItems, blocked_line_count: blockedItems, currency: customerCurrency }, 'customer_quote');
       return { execution: running, outcome: 'draft_created' };
     }
     if (stage === 'quote_extraction') {
@@ -1552,6 +1578,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               'If a product cannot be reliably matched, leave productId empty and use partial_match, mismatch, or unknown.',
               'Multiple prices for the same product must be represented as separate quotes or priceTiers exactly as stated; never choose one.',
               'Preserve the supplier wording in originalData and conditions where useful.',
+              'Preserve tax wording in taxText. Extract taxRate only when an explicit numeric percentage is stated; never assume a VAT/KDV rate from country. Set taxMode to excluded for + tax / + KDV, included for tax included / KDV dahil, exempt only when explicitly exempt, otherwise unknown.',
+              'netPrice is the pre-tax unit price; grossPrice is the tax-inclusive unit price. If only a tax-inclusive price is stated, return grossPrice without inventing netPrice. Preserve delivery text verbatim in leadTimeText, including number words, ranges and business-day qualifications.',
               'Unknown, missing, conflicting, or ambiguous values must remain blank and be listed in uncertainties.',
               'Never create customer pricing, margin, or exchange-rate data.',
             ],
@@ -1615,6 +1643,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               original_data: {
                 ...quote.originalData,
                 discount_type: quote.discountType ?? null,
+                commercial: { taxRate: quote.taxRate ?? null, taxMode: quote.taxMode, taxText: quote.taxText ?? null },
                 extraction: {
                   provider: ai.provider,
                   model: ai.model,
@@ -1881,7 +1910,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         alert_count: alertCount,
       }, 'comparison');
 
-      return { execution: running, outcome: 'completed' };
+      // The background worker executes queued stages only; completing comparison
+      // must explicitly hand off to draft preparation without an Admin click.
+      if (findingCount > 0) {
+        await enqueueWorkflow(inquiryId, 'customer_quote');
+      }
+      return { execution: running, outcome: findingCount > 0 ? 'customer_quote_queued' : 'completed' };
     }
 
     if (stage === 'email_response') {

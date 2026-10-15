@@ -1,6 +1,7 @@
 import {createSupabaseServerClient} from '@/lib/supabase/server';
 import {ToolError} from '@/lib/errors';
 import type {AIContext} from './context';
+import {redirect,notFound} from 'next/navigation';
 
 export async function requireAdmin(){
   const supabase=await createSupabaseServerClient();
@@ -65,4 +66,14 @@ export async function requireCustomerInquiryAccess(inquiryId: string) {
 
   if (error || !inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
   return { supabase, user, inquiry };
+}
+
+export async function requireCustomerInquiryPageAccess(inquiryId:string,returnPath='/customer/inquiries/'+inquiryId) {
+  const db=await createSupabaseServerClient();
+  const {data:{user}}=await db.auth.getUser();
+  if(!user) redirect('/login?next='+encodeURIComponent(returnPath));
+  const {data:profile}=await db.from('profiles').select('role,status').eq('user_id',user.id).single();
+  if(profile?.role==='admin'&&profile.status==='active') redirect('/inquiries/'+inquiryId);
+  try{return await requireCustomerInquiryAccess(inquiryId);}
+  catch(error){if(error instanceof ToolError&&(error.code==='AUTHORIZATION'||error.code==='NOT_FOUND'))notFound();throw error;}
 }

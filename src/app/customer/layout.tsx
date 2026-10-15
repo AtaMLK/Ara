@@ -1,3 +1,4 @@
+import {loadCustomerQuoteItems} from '@/lib/data/customer-quote-items';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import ThemeToggle from '@/components/ThemeToggle';
@@ -31,13 +32,12 @@ export default async function CustomerLayout({ children }: { children: ReactNode
         ? supabase.from('clarifications').select('id,question,status').in('id', clarificationIds)
         : Promise.resolve({ data: [] as Array<{ id: string; question: string; status: string }> }),
       quoteIds.length
-        ? supabase.from('customer_quotes').select('id,reference,revision_number,status,currency,valid_until,subject,body').in('id', quoteIds)
+        ? supabase.from('customer_quotes').select('id,display_reference,reference,revision_number,status,currency,valid_until,subject,body').in('id', quoteIds)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
     ]);
 
-    const { data: quoteItems } = quoteIds.length
-      ? await supabase.from('customer_quote_items').select('id,customer_quote_id,quantity,unit_price,total,supplier_products(product_name,model_part_number)').in('customer_quote_id', quoteIds).order('created_at', { ascending: true })
-      : { data: [] as Array<Record<string, unknown>> };
+    const {data:profile}=await supabase.from('profiles').select('role,status').eq('user_id',user.id).single();
+    const quoteItems=profile?.role==='customer'&&profile.status==='active'?await loadCustomerQuoteItems(quoteIds):[];
 
     for (const item of notificationItems) {
       if (item.record_type === 'clarification' && item.record_id) {
@@ -51,7 +51,7 @@ export default async function CustomerLayout({ children }: { children: ReactNode
         notificationDetails[item.id] = {
           quote: {
             id: quote.id as string,
-            reference: quote.reference as string,
+            reference: (quote.display_reference||quote.reference) as string,
             revision_number: Number(quote.revision_number),
             status: quote.status as string,
             currency: quote.currency as string,
@@ -65,8 +65,8 @@ export default async function CustomerLayout({ children }: { children: ReactNode
                 quantity: Number(row.quantity),
                 unit_price: Number(row.unit_price),
                 total: Number(row.total),
-                product_name: product?.product_name ?? null,
-                model_part_number: product?.model_part_number ?? null,
+                product_name: row.description || product?.product_name || null,
+                model_part_number: row.model || product?.model_part_number || null,
               };
             }),
           },

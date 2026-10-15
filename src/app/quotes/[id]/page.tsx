@@ -1,7 +1,7 @@
 import { oneRelated } from '@/lib/data/relations';
 import Link from 'next/link';
 import { getCustomerQuote } from '@/lib/data/admin';
-import { QuoteItemEditor } from './quote-item-editor';
+import { QuoteWorkbench } from './quote-workbench';
 import { QuoteActions } from '../quote-actions';
 import QuoteDetailsEditor from './quote-details-editor';
 
@@ -25,6 +25,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         <div className="topbar-actions">
           <span className="badge">{label(quote.status)}</span>
           <QuoteActions id={quote.id} status={quote.status} />
+          {quote.items.length>0&&quote.confirmedItemCount===quote.items.length&&<a className="secondary-button" href={'/api/quotes/'+quote.id+'/pdf'} target="_blank" rel="noreferrer">Preview / Download PDF</a>}
         </div>
       </header>
 
@@ -41,7 +42,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         </div>
         <div className="detail-card">
           <div className="section-head"><h2>Commercial control</h2></div>
-          <p className="muted">Suggested prices come from an approved pricing rule. Every customer price must be explicitly confirmed by Admin before approval.</p>
+          <p className="muted">ARAT prepares supplier costs, tax and delivery. Enter markup or a manual customer price in the pre-quote review, then confirm every line before approval.</p>
           <div className="quote-control-note">
             <strong>{quote.confirmedItemCount}/{quote.items.length}</strong> prices confirmed
           </div>
@@ -63,9 +64,10 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
       <section className="section">
         <div className="section-head"><h2>Quote items</h2><span className="muted">{quote.items.length} line{quote.items.length === 1 ? '' : 's'}</span></div>
         <div className="quote-items">
-          {quote.items.length === 0 ? <div className="empty">No quote items.</div> : quote.items.map((item) => (
-            <QuoteItemEditor key={item.id} item={{ ...item, supplier_products: oneRelated(item.supplier_products) }} currency={quote.currency} editable={quote.status === 'draft' || quote.status === 'pending_approval'} />
-          ))}
+          {quote.items.length === 0 ? <div className="empty">No quote items.</div> : <QuoteWorkbench
+            items={quote.items.map(item=>({...item,supplier_products:oneRelated(item.supplier_products)}))}
+            currency={quote.currency} editable={quote.status === 'draft' || quote.status === 'pending_approval'}
+            quoteId={quote.id} reference={quote.reference} rates={quote.rates} />}
         </div>
       </section>
 

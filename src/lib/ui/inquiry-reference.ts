@@ -5,15 +5,10 @@ export function getInquiryDisplayReference(
   currentVersion?: number | null,
   updatedAt?: string | null,
 ) {
-  const source = (customerName ?? '').trim();
-  const initials = source
-    ? (() => { const parts = source.split(/\s+/).filter(Boolean); return (parts.length > 1 ? parts.map((part) => part[0]).join('') : parts[0].slice(0, 2)).toUpperCase(); })()
-    : reference.split('-')[0] || 'REQ';
-
   const dateSource = createdAt ? new Date(createdAt) : null;
   const date = dateSource && !Number.isNaN(dateSource.getTime())
     ? String(dateSource.getUTCFullYear()) + String(dateSource.getUTCMonth() + 1).padStart(2, '0') + String(dateSource.getUTCDate()).padStart(2, '0')
-    : '';
+    : reference.match(/(?:^|-)(\d{8})(?:-|$)/)?.[1] || '';
 
   const version = Math.max(1, currentVersion ?? 1);
   const revision = version > 1 ? 'R' + (version - 1) : '';
@@ -27,5 +22,11 @@ export function getInquiryDisplayReference(
     }
   }
 
-  return [initials, date].filter(Boolean).join('-') + (revision ? ' · ' + revision + (changedDays ? ' · ' + changedDays : '') : '');
+  const suffix=reference.match(/-([A-Za-z0-9]{6})$/)?.[1]?.toUpperCase();
+  return ['AO', date, suffix].filter(Boolean).join('-') + (revision ? ' · ' + revision + (changedDays ? ' · ' + changedDays : '') : '');
+}
+
+export function getQuoteReference(inquiryReference:string,ordinal=1,revision=0) {
+  const base=inquiryReference.split(' · ')[0].replace(/[^A-Za-z0-9-]/g,'');
+  return `${base}-Q${Math.max(1,ordinal)}${revision>0?'-R'+revision:''}`;
 }

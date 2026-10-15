@@ -51,7 +51,15 @@ export async function markExecutionRunning(executionId:string){
  }
  return data;
 }
-export async function enqueueSupplierQuoteExtraction(inquiryId:string){
+export async function enqueueSupplierQuoteExtraction(inquiryId:string,options:{retryFailed?:boolean}={}){
+ // Polling the same saved email must not reset a terminal failure every minute.
+ // A genuinely new reply or explicit recovery may request another attempt.
+ if(options.retryFailed === false){
+   const {data:existing,error}=await createSupabaseAdminClient().from('ai_executions')
+     .select('*').eq('task_key',`inquiry:${inquiryId}:stage:quote_extraction`).maybeSingle();
+   if(error) throw new ToolError('TRANSIENT',error.message);
+   if(existing?.status === 'failed') return existing;
+ }
  const execution=await enqueueWorkflow(inquiryId,'quote_extraction');
  if(execution.status !== 'succeeded') return execution;
  const supabase=createSupabaseAdminClient();

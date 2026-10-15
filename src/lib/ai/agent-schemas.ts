@@ -23,6 +23,7 @@ const documentRequirementSchema = z.object({
       part: 'product',
       part_name: 'product',
       model: 'model_part_number',
+      model_part_number: 'model_part_number',
       model_number: 'model_part_number',
       part_number: 'model_part_number',
       part_no: 'model_part_number',
@@ -135,7 +136,7 @@ export const intakeRepairOutputSchema = z.object({
 export const intakeOutputSchema = z.object({
   title: z.coerce.string().min(1).default('Customer inquiry'),
   description: z.coerce.string().min(1).default('Customer inquiry details extracted from the supplied request.'),
-  items: z.array(intakeItemSchema).min(1),
+  items: z.array(intakeItemSchema).default([]),
   ambiguities: z.array(z.union([
     z.coerce.string().min(1).transform((reason) => ({ requirementType: 'other', reason })),
     z.object({
@@ -455,6 +456,9 @@ export const quoteExtractionOutputSchema = z.object({
     netPrice: z.number().nonnegative().optional(),
     vat: z.number().nonnegative().optional(),
     grossPrice: z.number().nonnegative().optional(),
+    taxRate: z.number().min(0).max(100).optional().describe('Explicit supplier VAT/KDV/tax percentage only; omit when unstated. Never assume a country tax rate.'),
+    taxMode: z.enum(['unknown','excluded','included','exempt']).default('unknown'),
+    taxText: z.string().optional().describe('Exact supplier tax wording, including + KDV / + tax and any explicit rate.'),
     validityFrom: z.string().optional(),
     validUntil: z.string().optional(),
     availability: z.string().optional(),

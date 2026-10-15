@@ -121,7 +121,7 @@ export async function parseInquiryFile(
       };
     }
 
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.OPENAI_API_KEY || process.env.OCR_ENABLED !== 'true') {
       return {
         extractedText: '',
         extractedData: { pages: totalPages, ocr: false },
@@ -149,7 +149,7 @@ export async function parseInquiryFile(
   if (mimeType.startsWith('image/')) {
     // Images require vision OCR. Without an AI provider, keep the attachment
     // in a completed-but-pending state instead of marking the workflow failed.
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.OPENAI_API_KEY || process.env.OCR_ENABLED !== 'true') {
       return {
         extractedText: '',
         extractedData: { ocr: false },

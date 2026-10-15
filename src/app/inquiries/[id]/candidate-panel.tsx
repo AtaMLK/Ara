@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
-import { getSupplierRfqRecipientsAction, sendSupplierRfqAction, verifySupplierCandidateAction } from './supplier-rfq-actions';
+import { getSupplierRfqPreviewAction, sendSupplierRfqAction, verifySupplierCandidateAction } from './supplier-rfq-actions';
 
 type Requirement = {
   id: string;
@@ -189,40 +189,6 @@ function representationStatus(candidate: Candidate): { label: string; kind: 'off
   return { label: 'Representation not confirmed', kind: 'unknown' };
 }
 
-function buildPreview(requirements: Requirement[], candidate: Candidate, language: 'tr' | 'en') {
-  const product = requirements.find((item) => item.id === candidate.requirement_id && item.type === 'product');
-  if (!product) return null;
-
-  const index = product.source_ref ? product.source_ref : '';
-  const sameItem = requirements.filter((item) => {
-    if (item.id === product.id) return true;
-    return Boolean(index) && item.source_ref === index;
-  });
-  const model = sameItem.filter((item) => item.type === 'model_part_number').map((item) => item.value).join(' / ');
-  const quantity = sameItem.find((item) => item.type === 'quantity')?.value ?? '';
-  const specs = sameItem.filter((item) => ['specification', 'delivery', 'other'].includes(item.type)).map((item) => item.value);
-
-  const subject = language === 'tr' ? `Teklif Talebi – ${product.value}` : `RFQ – ${product.value}`;
-  const lines = [
-    language === 'tr' ? 'Merhaba,' : 'Dear Sir/Madam,',
-    language === 'tr'
-      ? 'Aşağıdaki ürün için fiyat teklifinizi ve teslim süresini paylaşmanızı rica ederiz.'
-      : 'We would like to request your quotation for the following item.',
-    '',
-    `1. ${product.value}`,
-    model ? `Model / Part Number: ${model}` : '',
-    quantity ? `Quantity: ${quantity}` : '',
-    ...specs,
-    '',
-    language === 'tr'
-      ? 'Lütfen birim fiyat, stok/uygunluk, teslim süresi, ödeme şartları ve teklif geçerlilik süresini belirtiniz.'
-      : 'Please provide unit price, availability, delivery time, payment terms and quotation validity.',
-    '',
-    language === 'tr' ? 'İyi çalışmalar,\nArya Automation' : 'Best regards,\nArya Automation',
-  ].filter(Boolean);
-
-  return { subject, body: lines.join('\n'), recipient: emailFor(candidate) };
-}
 
 export function CandidatePanel({
   inquiryId,
@@ -242,7 +208,7 @@ export function CandidatePanel({
   const [busy, setBusy] = useState(false);
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifiedIds, setVerifiedIds] = useState<string[]>([]);
-  const [preview, setPreview] = useState<{ subject: string; body: string; recipient: string | null; language: 'tr' | 'en' } | null>(null);
+  const [preview, setPreview] = useState<Awaited<ReturnType<typeof getSupplierRfqPreviewAction>>['previews'] | null>(null);
 
   const grouped = useMemo(() => {
     const map = new Map<string, Candidate[]>();
@@ -286,36 +252,11 @@ function isVerified(candidate: Candidate) {
   const modalCandidates = selectedProductId ? (grouped.get(selectedProductId) ?? []) : [];
   const selectedCandidates = candidates.filter((candidate) => selected.includes(candidate.id));
 
-  async function openPreview(language: 'tr' | 'en') {
-    setError('');
-    if (!selected.length) {
-      const message = 'Select at least one supplier.';
-      setError(message);
-      toast.error('No supplier selected', { description: message });
-      return;
-    }
-    const first = selectedCandidates[0];
-    const item = buildPreview(requirements, first, language);
-    if (!item) {
-      const message = 'Selected supplier is not linked to a product requirement.';
-      setError(message);
-      toast.error('RFQ preview unavailable', { description: message });
-      return;
-    }
-
-    const { recipients } = await getSupplierRfqRecipientsAction({
-      inquiryId,
-      candidateIds: selected,
-    });
-    const recipientEmails = recipients.map((entry) => entry.email).filter(Boolean);
-    if (!recipientEmails.length) {
-      const message = 'No active supplier email found for the selected supplier.';
-      setError(message);
-      toast.error('Supplier email unavailable', { description: message });
-      return;
-    }
-
-    setPreview({ ...item, recipient: recipientEmails.join(', '), language });
+  async function openPreview() {
+    setError('');setBusy(true);
+    try {const result=await getSupplierRfqPreviewAction({inquiryId,candidateIds:selected});setPreview(result.previews);}
+    catch(e){const message=e instanceof Error?e.message:'RFQ preview unavailable';setError(message);toast.error('RFQ preview unavailable',{description:message});}
+    finally {setBusy(false);}
   }
 
   async function verify(candidateId: string) {
@@ -339,7 +280,7 @@ function isVerified(candidate: Candidate) {
     setError('');
     setSendConfirmation('');
     try {
-      const result = await sendSupplierRfqAction({ inquiryId, candidateIds: selected });
+      const result = await sendSupplierRfqAction({ inquiryId, candidateIds: selected,previews:preview??undefined });
       setSelected([]);
       setSentIds((current) => [...new Set([...current, ...result.results.map((item) => item.candidateId)])]);
       toast.success(
@@ -546,9 +487,9 @@ function isVerified(candidate: Candidate) {
                     <button
                       className="primary-button supplier-send-button"
                       disabled={busy}
-                      onClick={() => openPreview(group === 'Turkey' ? 'tr' : 'en')}
+                      onClick={() => openPreview()}
                     >
-                      Send Email
+                      Review supplier messages
                     </button>
                   )}
                 </div>
@@ -563,12 +504,14 @@ function isVerified(candidate: Candidate) {
         <div className="supplier-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}>
           <div className="supplier-modal supplier-preview-modal" role="dialog" aria-modal="true">
             <div className="supplier-modal-head">
-              <div><div className="eyebrow">EMAIL PREVIEW</div><h2>{preview.language === 'tr' ? 'Turkish Supplier RFQ' : 'English Supplier RFQ'}</h2></div>
+              <div><div className="eyebrow">EMAIL PREVIEW</div><h2>{`Review ${preview.length} supplier message${preview.length===1?'':'s'}`}</h2></div>
               <button className="text-button" onClick={() => setPreview(null)}>Close</button>
             </div>
-            <div className="preview-meta"><strong>To</strong><span>{preview.recipient || '—'}</span></div>
-            <div className="preview-meta"><strong>Subject</strong><span>{preview.subject}</span></div>
-            <textarea className="supplier-email-preview" value={preview.body} readOnly />
+            {preview.map(message=><section className="detail-card" key={message.candidateId}>
+              <div className="preview-meta"><strong>To</strong><span>{message.recipient}</span></div>
+              <div className="preview-meta"><strong>Subject</strong><span>{message.subject}</span></div>
+              <iframe title={'Supplier message to '+message.recipient} sandbox="" srcDoc={message.html} style={{width:'100%',height:350,border:0,background:'white'}} />
+            </section>)}
             <div className="supplier-preview-actions">
               <button className="secondary-button" onClick={() => setPreview(null)}>Cancel</button>
               <button className="primary-button" disabled={busy} onClick={send}>{busy ? 'Sending…' : 'Confirm & Send'}</button>

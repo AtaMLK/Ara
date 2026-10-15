@@ -20,9 +20,9 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
   const [error, setError] = useState('');
 
   // RFQ is a persisted approval state; Admin continues through RFQ controls.
-  const canStart = !['converted', 'closed', 'rfq'].includes(status);
+  const canStart = !['converted', 'closed'].includes(status) && executions.some(execution=>execution.status==='failed');
   const latestExecution = executions[0];
-  const actionLabel = status === 'processing' ? 'Start workflow' : status === 'clarification_required' || status === 'researching' ? 'Continue workflow' : 'Run workflow';
+  const actionLabel = 'Retry failed automation';
 
   async function approveClarification(id: string) {
     setBusy(true);

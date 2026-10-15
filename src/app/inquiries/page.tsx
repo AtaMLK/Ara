@@ -47,7 +47,7 @@ export default async function InquiriesPage({ searchParams }: Props) {
                 <Link className="table-link" href={`/inquiries/${item.id}`}>
                   <strong>{getInquiryDisplayReference(item.reference, oneRelated(item.customers)?.company_name || oneRelated(item.customers)?.name, item.created_at, item.current_version, item.updated_at)}</strong>
                 </Link>
-                <div className="muted inquiry-reference-full">{item.reference}</div>
+
                 <div className="muted">{item.priority}</div>
               </div>
               <div>{item.title}</div>

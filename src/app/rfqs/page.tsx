@@ -1,3 +1,4 @@
+import {readableRequest} from '@/lib/ui/inquiry-items';
 import { listRfqs } from '@/lib/data/admin';
 import { ApproveRfqButton, SendRfqButton } from './approve-button';
 import { RfqActions } from './rfq-actions';
@@ -66,7 +67,7 @@ export default async function RfqsPage({ searchParams }: Props) {
                   status={item.status}
                   createdAt={item.created_at}
                   sentAt={item.sent_at}
-                  customerRequest={item.inquiries?.original_customer_text ?? null}
+                  customerRequest={readableRequest(item.inquiries?.original_customer_text)}
                   conversation={item.conversation}
                   supplierNotification={item.supplierNotification}
                   supplierReply={item.supplierReply}
