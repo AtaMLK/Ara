@@ -35,6 +35,7 @@ export async function recordSupplierReplyLanguage(supplierId:string,body:string)
 }
 export function supplierReplyMessage(language:SupplierLanguage,reply:string){
   const text=(language==='tr'?'Merhaba,\n\n':'Hello,\n\n')+reply+(language==='tr'?'\n\nİyi çalışmalar,\nArya Automation':'\n\nBest regards,\nArya Automation');
-  const html='<div style="white-space:pre-wrap">'+text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')+'</div>';
+  const paragraphs=text.split(/\n\s*\n/).map(paragraph=>'<p style="margin:0 0 18px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6">'+paragraph.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replace(/\n/g,'<br />')+'</p>').join('');
+  const html='<!doctype html><html lang="'+language+'"><head><meta charset="utf-8" /></head><body style="margin:0;background:#f1f5f9;padding:24px 12px;color:#172b45"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:760px;margin:0 auto;background:#fff;border:1px solid #dce5ee;border-top:4px solid #285f8f"><tr><td style="padding:24px">'+paragraphs+'</td></tr></table></body></html>';
   return {html,text};
 }

@@ -1,4 +1,5 @@
 import 'server-only';
+import {renderSupplierOrderHtml} from './supplier-order-email';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {createSupabaseAdminClient} from '@/lib/supabase/admin';
@@ -11,7 +12,7 @@ const money=(value:number|null)=>value==null?'Not stated':Number(value).toLocale
 export const orderFingerprint=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function renderSupplierOrder(group:OrderGroup,company:{name:string;address:string;phone:string;website:string;taxDetails:string;email:string}) {
   if(group.language==='tr'){
-    const price=(value:number|null)=>value==null?'Belirtilmedi':money(value);
+    const price=(value:number|null)=>value==null?'Belirtilmedi':Number(value).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:6});
     const subject='Satın alma siparişi '+group.reference+' | '+group.lines.map(line=>line.model||line.description).join(', ').slice(0,140);
     const blocks=group.lines.map((line,i)=>[
       'Kalem '+(i+1)+': '+[line.model,line.description].filter(Boolean).join(' — '),line.brand?'Marka: '+line.brand:'','Miktar: '+line.quantity,
@@ -25,7 +26,7 @@ export function renderSupplierOrder(group:OrderGroup,company:{name:string;addres
       'Sipariş referansı: '+group.reference,...blocks,group.instructions?'Sipariş / teslimat talimatları:\n'+group.instructions:'',
       'Fiyat, stok durumu veya teslim koşullarında değişiklik varsa lütfen işleme almadan önce tarafımıza bildiriniz.',
       'İyi çalışmalar,',company.name,company.address,company.taxDetails,company.phone,company.website,company.email].filter(Boolean).join('\n\n');
-    return {subject,body};
+    return {subject,body,html:renderSupplierOrderHtml(group,company)};
   }
   const subject='Purchase order '+group.reference+' | '+group.lines.map(line=>line.model||line.description).join(', ').slice(0,140);
   const blocks=group.lines.map((line,i)=>[
@@ -41,7 +42,7 @@ export function renderSupplierOrder(group:OrderGroup,company:{name:string;addres
     'Purchase order reference: '+group.reference,...blocks,group.instructions?'Order instructions:\n'+group.instructions:'',
     'Please advise before processing if any quoted price, availability or delivery has changed.',
     'Regards,',company.name,company.address,company.taxDetails,company.phone,company.website,company.email].filter(Boolean).join('\n\n');
-  return {subject,body};
+  return {subject,body,html:renderSupplierOrderHtml(group,company)};
 }
 
 export async function loadOrderGroups(quoteId:string,instructions='') {

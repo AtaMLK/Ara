@@ -58,7 +58,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         </div>
       </section>
 
-      {quote.status==='accepted'&&<SupplierOrders quoteId={id} orders={(orders??[]).map(order=>({...order,supplier_name:oneRelated(order.suppliers)?.legal_name,instructions:typeof order.snapshot?.instructions==='string'?order.snapshot.instructions:''}))}/>}
+      {quote.status==='accepted'&&<SupplierOrders quoteId={id} orders={(orders??[]).map(order=>({...order,supplier_name:oneRelated(order.suppliers)?.legal_name,html:typeof order.snapshot?.email_html==='string'?order.snapshot.email_html:undefined,instructions:typeof order.snapshot?.instructions==='string'?order.snapshot.instructions:''}))}/>}
       {readiness&&<section className="section"><div className="detail-card"><h2>Consolidated quotation</h2><p>{selectedItems.length} selected offer(s) for {readiness.requestedCount} requested item(s). Alternative supplier offers remain in the Admin review.</p>{readiness.problems.map(problem=><p className="muted" key={problem}>{problem}</p>)}</div></section>}
       {quote.revisionRequest && (
         <section className="section">

@@ -17,16 +17,16 @@ export async function prepareSupplierOrdersAction(quoteId:string,instructions=''
     const message=renderSupplierOrder(group,company);
     const snapshot={...group,company};
     const payload={customer_quote_id:quote.id,inquiry_id:quote.inquiry_id,supplier_id:group.supplierId,reference:group.reference,
-      recipient_email:group.recipient,subject:message.subject,body:message.body,snapshot,fingerprint:orderFingerprint({snapshot,...message})};
+      recipient_email:group.recipient,subject:message.subject,body:message.body,snapshot:{...snapshot,email_html:message.html},fingerprint:orderFingerprint({snapshot,...message})};
     // A fixed quote/supplier key prevents a second order on retries. Only drafts
     // can be refreshed; sending/sent/uncertain messages remain immutable.
     const {error:insertError}=await db.from('supplier_order_confirmations').upsert(payload,{onConflict:'customer_quote_id,supplier_id',ignoreDuplicates:true});
     if(insertError)throw new Error('Supplier order preview could not be saved.');
     const {error:updateError}=await db.from('supplier_order_confirmations').update(payload).eq('customer_quote_id',quote.id).eq('supplier_id',group.supplierId).eq('status','draft');
     if(updateError)throw new Error('Supplier order preview could not be refreshed.');
-    const {data:order,error}=await db.from('supplier_order_confirmations').select('id,reference,status,recipient_email,subject,body,fingerprint,sent_at,error_text').eq('customer_quote_id',quote.id).eq('supplier_id',group.supplierId).single();
+    const {data:order,error}=await db.from('supplier_order_confirmations').select('id,reference,status,recipient_email,subject,body,fingerprint,sent_at,error_text,snapshot').eq('customer_quote_id',quote.id).eq('supplier_id',group.supplierId).single();
     if(error||!order)throw new Error('Supplier order preview could not be loaded.');
-    previews.push({...order,supplier_name:group.supplierName});
+    previews.push({...order,html:typeof order.snapshot?.email_html==='string'?order.snapshot.email_html:undefined,supplier_name:group.supplierName});
   }
   revalidatePath('/quotes/'+quoteId);
   return previews;
@@ -54,7 +54,7 @@ export async function sendSupplierOrderAction(orderId:string,fingerprint:string)
   if(claimError||!claimed)throw new Error('Order is already being sent, or its preview changed. Refresh its status.');
   let result;
   try{
-    const html='<div style="font-family:Arial,sans-serif;white-space:pre-wrap">'+order.body.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')+'</div>';
+    const html=message.html;
     result=await getEmailProvider().send({from,to:[order.recipient_email],subject:order.subject,text:order.body,html,idempotencyKey:'supplier-order-'+order.id});
   }catch{
     // SMTP can fail after accepting a message. Never automatically retry an
@@ -65,8 +65,8 @@ export async function sendSupplierOrderAction(orderId:string,fingerprint:string)
   }
   const {error:sentError}=await db.from('supplier_order_confirmations').update({status:'sent',sent_at:result.sentAt,provider_message_id:result.providerMessageId,error_text:null}).eq('id',order.id).eq('status','sending');
   if(sentError)throw new Error('The email was sent but its status could not be saved. Check the sent mailbox before any further action.');
-  const {error:logError}=await db.from('communications').insert({inquiry_id:order.inquiry_id,supplier_id:order.supplier_id,quote_id:order.customer_quote_id,direction:'outgoing',channel:'email',subject:order.subject,body:order.body,sent_at:result.sentAt,provider_message_id:result.providerMessageId,thread_id:result.threadId,
-    metadata:{type:'supplier_order_confirmation',language:group.language,supplier_order_id:order.id,reference:order.reference,recipient_email:order.recipient_email}});
+  const {error:logError}=await db.from('communications').insert({inquiry_id:order.inquiry_id,supplier_id:order.supplier_id,quote_id:order.customer_quote_id,direction:'outgoing',channel:'email',subject:order.subject,body:message.html,sent_at:result.sentAt,provider_message_id:result.providerMessageId,thread_id:result.threadId,
+    metadata:{type:'supplier_order_confirmation',language:group.language,plain_text:order.body,supplier_order_id:order.id,reference:order.reference,recipient_email:order.recipient_email}});
   const {error:timelineError}=await db.from('timeline_events').insert({inquiry_id:order.inquiry_id,event_type:'supplier_order_confirmation_sent',visibility:'admin',actor_type:'admin',actor_user_id:user.id,metadata:{supplier_order_id:order.id,supplier_id:order.supplier_id,quote_id:order.customer_quote_id}});
   revalidatePath('/quotes/'+order.customer_quote_id);revalidatePath('/inquiries/'+order.inquiry_id);revalidatePath('/notifications');
   if(logError||timelineError)throw new Error('Supplier order was sent and recorded. Its activity log needs checking.');

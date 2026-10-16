@@ -113,7 +113,7 @@ test('accepted quote creates separate exact supplier orders with no customer mar
   const previews=await actions.prepareSupplierOrdersAction(x.quoteId,'Deliver to our warehouse');assert.equal(previews.length,3);assert.equal(x.sent.length,0);
   for(let i=0;i<3;i++){assert.equal(previews[i].recipient_email,'sales'+i+'@example.test');assert.match(previews[i].body,new RegExp('MODEL-'+i));assert.doesNotMatch(previews[i].body,/9999|markup|500/);for(let j=0;j<3;j++)if(i!==j)assert.doesNotMatch(previews[i].body,new RegExp('MODEL-'+j));}
   await actions.sendSupplierOrderAction(previews[0].id,previews[0].fingerprint);await actions.sendSupplierOrderAction(previews[0].id,previews[0].fingerprint);
-  assert.equal(x.sent.length,1);assert.equal(x.sent[0].text,previews[0].body);assert.equal(x.sent[0].subject,previews[0].subject);assert.equal(x.f.tables.communications.length,1);
+  assert.equal(x.sent.length,1);assert.equal(x.sent[0].text,previews[0].body);assert.equal(x.sent[0].html,previews[0].html);assert.equal(x.sent[0].subject,previews[0].subject);assert.equal(x.f.tables.communications.length,1);
   const refreshed=await actions.prepareSupplierOrdersAction(x.quoteId,'Changed instructions');assert.equal(refreshed[0].status,'sent');assert.equal(refreshed[0].body,previews[0].body);
   await assert.rejects(actions.sendSupplierOrderAction(previews[1].id,previews[1].fingerprint),/preview changed/);
   await Promise.allSettled([actions.sendSupplierOrderAction(refreshed[1].id,refreshed[1].fingerprint),actions.sendSupplierOrderAction(refreshed[1].id,refreshed[1].fingerprint)]);assert.equal(x.sent.length,2);
