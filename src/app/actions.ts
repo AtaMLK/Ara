@@ -13,6 +13,7 @@ import { continueInquiryWorkflow, processQueuedWorkflow, startInquiryWorkflow } 
 import { getEmailProvider } from '@/lib/email/provider';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { applyCustomerClarificationAnswer } from '@/lib/ai/clarification-replies';
+import {prepareInquirySource,type InquiryEntryMode} from '@/lib/inquiry-submission';
 
 const idSchema = z.string().uuid();
 
@@ -27,6 +28,7 @@ export async function createCustomerInquiryAction(input: {
   description?: string;
   originalCustomerText: string;
   itemsJson?: string;
+  entryMode?: InquiryEntryMode;
   priority?: 'normal' | 'urgent';
   files?: File[];
 }) {
@@ -35,31 +37,14 @@ export async function createCustomerInquiryAction(input: {
       title: z.string().trim().max(200).optional(),
       description: z.string().trim().max(5000).optional(),
       originalCustomerText: z.string().trim().max(20000).default(''),
-      itemsJson: z.string().trim().min(2).max(30000),
+      itemsJson: z.string().trim().min(2).max(30000).default('[]'),
+      entryMode: z.enum(['manual','list','file']).default('manual'),
       priority: z.enum(['normal', 'urgent']).default('normal'),
       files: z.array(z.instanceof(File)).max(10).default([]),
     }).parse(input);
 
-    const rawItems: unknown = JSON.parse(parsed.itemsJson);
-    const itemSchema = z.object({
-      description: z.string().trim().min(1).max(5000),
-      quantity: z.coerce.number().positive(),
-      brand: z.string().trim().max(500).default(''),
-      partNumber: z.string().trim().max(500).default(''),
-      serialNumber: z.string().trim().max(500).default(''),
-      details: z.string().trim().max(5000).default(''),
-    });
-    const items = z.array(itemSchema).min(1).max(100).parse(rawItems);
-    const structuredItemsText = items.map((item, index) => [
-      `Item ${index + 1}`,
-      `Description: ${item.description}`,
-      `Quantity: ${item.quantity}`,
-      item.brand ? `Brand / Manufacturer: ${item.brand}` : null,
-      item.partNumber ? `Part Number / Model: ${item.partNumber}` : null,
-      item.serialNumber ? `Serial Number: ${item.serialNumber}` : null,
-      item.details ? `Additional details: ${item.details}` : null,
-    ].filter(Boolean).join('\n')).join('\n\n');
-    const combinedCustomerText = [structuredItemsText, parsed.originalCustomerText.trim() ? `Additional product list / customer text:\n${parsed.originalCustomerText.trim()}` : ''].filter(Boolean).join('\n\n').slice(0, 20000);
+    validateInquiryAttachments(parsed.files);
+    const {items,originalText:combinedCustomerText}=prepareInquirySource({...parsed,fileCount:parsed.files.length});
 
     const { supabase, user, customer } = await requireCustomerAccess();
     const date = new Date().toISOString().slice(0, 10).replaceAll('-', '');
@@ -76,7 +61,7 @@ export async function createCustomerInquiryAction(input: {
         status: 'processing',
         priority: parsed.priority,
         original_customer_text: combinedCustomerText,
-        normalized_information: { submitted_items: items },
+        normalized_information: { submitted_items: items,entry_mode:parsed.entryMode },
       }).select('id,reference').single();
       if (data) { inquiry = data; break; }
       if (attempt === 2) throw new ToolError('CONFLICT', error?.message ?? 'Inquiry creation failed');
@@ -143,6 +128,14 @@ const ALLOWED_INQUIRY_FILES = new Map([
   ['image/webp', 'image'],
 ]);
 
+function validateInquiryAttachments(files:File[]){
+  if(files.reduce((sum,file)=>sum+file.size,0)>INQUIRY_TOTAL_FILE_LIMIT)throw new ToolError('VALIDATION','Total attachment size must not exceed 25 MB');
+  for(const file of files){
+    if(!ALLOWED_INQUIRY_FILES.has(file.type))throw new ToolError('VALIDATION',`Unsupported file type: ${file.name}`);
+    if(file.size<=0||file.size>INQUIRY_FILE_LIMIT)throw new ToolError('VALIDATION',`File must be between 1 byte and 10 MB: ${file.name}`);
+  }
+}
+
 export async function uploadInquiryFilesAction(input: {
   inquiryId: string;
   files: File[];
@@ -162,8 +155,7 @@ export async function uploadInquiryFilesAction(input: {
 
     if (!inquiry) throw new ToolError('NOT_FOUND', 'Inquiry not found');
 
-    const totalSize = parsed.files.reduce((sum, file) => sum + file.size, 0);
-    if (totalSize > INQUIRY_TOTAL_FILE_LIMIT) throw new ToolError('VALIDATION', 'Total attachment size must not exceed 25 MB');
+    validateInquiryAttachments(parsed.files);
 
     const uploaded: Array<{ id: string; name: string }> = [];
 

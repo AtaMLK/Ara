@@ -39,7 +39,7 @@ export default function AnswerClarificationForm({ inquiryId, clarificationId }: 
 
   return (
     <form className="clarification-answer-form stack" onSubmit={submit}>
-      <label className="clarification-answer-label"><T>Your answer</T><Localized as="textarea" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Enter the model or part number…" rows={3} required /></label>
+      <label className="clarification-answer-label"><T>Your answer</T><Localized as="textarea" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Type your answer here" rows={3} required /></label>
       {error && <div className="error-box" role="alert"><T>{error}</T></div>}
       <button className="primary-button" disabled={loading || !answer.trim()}><T>{loading ? 'Submitting…' : 'Submit answer'}</T></button>
     </form>

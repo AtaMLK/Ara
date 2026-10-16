@@ -7,7 +7,7 @@ const LanguageContext=createContext<{locale:Locale;setLocale:(locale:Locale)=>vo
 export function LanguageProvider({initialLocale,children}:{initialLocale:Locale;children:ReactNode}) {
   const [locale,setLanguage]=useState(initialLocale);
   function setLocale(next:Locale){
-    document.cookie=`${localeCookie}=${next}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol==='https:'?'; Secure':''}`;
+    try{document.cookie=`${localeCookie}=${next}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol==='https:'?'; Secure':''}`;}catch{}
     document.documentElement.lang=next;
     setLanguage(next);
   }
