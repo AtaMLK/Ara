@@ -11,6 +11,8 @@ import {inquiryItems} from '@/lib/ui/inquiry-items';
 import {getInquiryDisplayReference,getQuoteReference} from '@/lib/ui/inquiry-reference';
 import { documentOutputSchema, intakeOutputSchema, intakeRepairOutputSchema, clarificationOutputSchema, clarificationRepairOutputSchema, quoteExtractionOutputSchema, comparisonOutputSchema, customerQuoteOutputSchema, supplierContactResearchOutputSchema, supplierDiscoveryOutputSchema, supplierVerificationOutputSchema } from './agent-schemas';
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
+import {normalizeDocumentRequirements} from './document-items';
+import {supplierSearchQueries,mapResearchQueries} from './research/queries';
 import {
   enqueueWorkflow,
   markExecutionRunning,
@@ -354,6 +356,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                   extracted_text: parsed.extractedText,
                   instructions: [
                     'Extract only information explicitly present in the document text.',
+                    'Return one structured items entry per requested item. Separate model/item code, ordered quantity, unit and technical description into their own fields.',
+                    'Example: D5040S SINGLE SIL3 OUT DRIVER NE LOAD LOOP POW.DINRAIL&TB 14 PCS means model D5040S, quantity 14, unit PCS, description SINGLE SIL3 OUT DRIVER NE LOAD LOOP POW.DINRAIL&TB. Do not return "14 PCS of D5040S" as a product name.',
+                    'Append stated country of origin, HS code and multiline technical specifications to that item description. Store Sales Status separately; it is not a product name or delivery term.',
+                    'Read every row and preserve item order. Quantity belongs to its own row; never confuse voltage, current, SIL rating, HS code or row position with ordered quantity.',
                     'Do not infer missing values.',
                     'Return requirements only when the document explicitly supports them.',
                     'Use sourceRef values that identify a useful location such as page number, sheet name, or row range when available.',
@@ -363,11 +369,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 },
                 documentOutputSchema,
               );
+              const normalized=normalizeDocumentRequirements(parsed.extractedText,ai.output.requirements,ai.output.items);
               extraction = {
                 extractedText: parsed.extractedText,
-                extractedData: parsed.extractedData,
+                extractedData: {...parsed.extractedData,items:normalized.items},
                 qualityFlags: [...parsed.qualityFlags, ...ai.output.qualityFlags],
-                requirements: ai.output.requirements,
+                requirements: normalized.requirements,
               };
             } else {
               extraction.qualityFlags = [...parsed.qualityFlags, 'AI_EXTRACTION_PENDING'];
@@ -3373,52 +3380,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         // Search each requested product independently. Include the exact model/part
         // number and technical specifications so generic brand queries cannot drown
         // out exact commercial product pages.
-        const productQueries = productItems.map((item) => {
-          const identity = [
-            item.brand,
-            item.model,
-            item.product,
-            ...item.specifications,
-          ].filter(Boolean).join(' ');
-
-          // Search by commercial supply route, not only exact model wording.
-          // Many authorized distributors can order the product from the brand even
-          // when the requested model is not listed on their public website.
-          // Keep this list focused to avoid wasting provider quota on near-duplicate queries.
-          const brand = item.brand?.trim() ?? '';
-          const model = item.model?.trim() ?? '';
-          const product = item.product.trim();
-          const commercial = [
-            [brand, model, 'official product'].filter(Boolean).join(' '),
-            [brand, model, 'authorized distributor Turkey'].filter(Boolean).join(' '),
-            [brand, 'official distributor Turkey'].filter(Boolean).join(' '),
-            [brand, 'representative distributor Turkey'].filter(Boolean).join(' '),
-            [brand, 'authorized distributor Europe'].filter(Boolean).join(' '),
-            [brand, 'official distributor Europe'].filter(Boolean).join(' '),
-            [brand, 'authorized distributor United States'].filter(Boolean).join(' '),
-            [brand, 'authorized distributor Asia'].filter(Boolean).join(' '),
-            [brand, 'worldwide distributor locator official'].filter(Boolean).join(' '),
-            [model, brand, product, 'supplier'].filter(Boolean).join(' '),
-            [product, 'supplier Turkey'].filter(Boolean).join(' '),
-            [product, 'distributor Turkey'].filter(Boolean).join(' '),
-          ].filter((query) => query.trim().length > 0);
-
-          return {
-            requirementId: item.requirementId,
-            product: item.product,
-            brand: item.brand,
-            model: item.model,
-            specifications: item.specifications,
-            queries: [...new Set(commercial.map((query) => query.trim()).filter(Boolean))],
-          };
-        });
+        const productQueries = productItems.map(item => ({...item,queries:supplierSearchQueries(item)}));
 
         const queryJobs = productQueries.flatMap((item) =>
           item.queries.map((query) => ({ ...item, query })),
         );
 
-        const resultBatches = await Promise.all(
-          queryJobs.map(async (job) => {
+        const resultBatches = await mapResearchQueries(queryJobs,async (job) => {
             try {
               const results = await provider.search({
                 inquiryId,
@@ -3440,8 +3408,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               });
               return { job, results: [] as ResearchResult[], error: message };
             }
-          }),
-        );
+          });
 
         const normalizeResearchText = (value: string) =>
           value.toLowerCase()

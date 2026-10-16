@@ -19,6 +19,8 @@ const documentRequirementSchema = z.object({
     const aliases: Record<string, 'product'|'model_part_number'|'quantity'|'specification'|'delivery'|'other'> = {
       product: 'product',
       product_name: 'product',
+      description: 'product',
+      item_description: 'product',
       item: 'product',
       part: 'product',
       part_name: 'product',
@@ -27,6 +29,8 @@ const documentRequirementSchema = z.object({
       model_number: 'model_part_number',
       part_number: 'model_part_number',
       part_no: 'model_part_number',
+      item_code: 'model_part_number',
+      code: 'model_part_number',
       mpn: 'model_part_number',
       quantity: 'quantity',
       qty: 'quantity',
@@ -49,6 +53,13 @@ export const documentOutputSchema = z.object({
   extractedData: z.record(z.string(), z.unknown()).default({}),
   qualityFlags: z.array(documentQualityFlagSchema).default([]),
   requirements: z.array(documentRequirementSchema).default([]),
+  items:z.array(z.object({
+    sourceRef:z.string().min(1),
+    description:z.string().min(1).describe('Technical item description, including stated country of origin and HS code. Exclude item code, ordered quantity and sales status.'),
+    model:z.string().min(1).optional().describe('Exact item code, model or part number in its own field; never embed it only in the description.'),
+    quantity:z.number().positive().optional().describe('Explicit ordered quantity. Never use a position number, model digit, HS code or electrical rating as quantity.'),
+    unit:z.string().min(1).optional(),brand:z.string().min(1).optional(),salesStatus:z.string().optional(),requestedText:z.string().min(1),
+  })).default([]),
 });
 
 const optionalIntakeText = z.preprocess(

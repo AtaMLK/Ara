@@ -403,6 +403,16 @@ test('readable PDF-only requirements advance without inventing customer-text ite
  assert.equal(result.results.some(row=>row.error),false,JSON.stringify(result.results));assert.ok(f.tables.supplier_candidates.length>0,JSON.stringify({stages:result.results,requirements:f.tables.requirements,research:f.tables.research_cases,executions:f.tables.ai_executions.map(x=>({stage:x.task_key,output:x.output_ref}))}));assert.ok(f.tables.requirements.every(row=>row.source==='pdf'));assert.equal(f.sendCount(),0);
 });
 
+test('file-only five-row PDF repairs flat extraction and researches each exact item code',async()=>{
+ const f=fixture(),text=fs.readFileSync(path.join(root,'tests/fixtures/document-item-table.txt'),'utf8'),codes=['D5072D','D5040S','D5030S','D5011S','D5212Q'];
+ f.tables.inquiries[0].original_customer_text='';f.tables.inquiry_files=[{id:randomUUID(),inquiry_id:f.inquiryId,status:'uploaded',mime_type:'application/pdf',original_name:'items.pdf',storage_path:'test.pdf'}];
+ f.mock('@/lib/ai/document-processor',{downloadInquiryFile:async()=>new Uint8Array(),parseInquiryFile:async()=>({extractedText:text,extractedData:{pages:1},qualityFlags:[]})});
+ const baseline=f.load('@/lib/ai/agent-runner');f.mock('@/lib/ai/agent-runner',{runAgent:async(ctx,input,schema)=>ctx.agentId==='document'?{output:schema.parse({requirements:codes.map((code,i)=>({type:'product',value:`${[35,14,6,6,1][i]} PCS of ${code} — technical description`,sourceRef:'row:'+i}))}),provider:'test',model:'test'}:baseline.runAgent(ctx,input,schema)});
+ const queries=[];f.mock('@/lib/ai/research/provider',{getResearchProvider:()=>({search:async({query})=>{queries.push(query);const code=codes.find(code=>query.includes(code));return code?[{sourceType:'web',sourceName:'Test supplier',sourceUrl:'https://supplier.example/'+code,finding:code+' manufacturer supplier',structuredData:{},evidence:{}}]:[];}})});
+ await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId,'document');const result=await f.load('@/lib/ai/workflow').processQueuedWorkflow(4,f.inquiryId);
+ assert.equal(result.results.some(row=>row.error),false,JSON.stringify(result.results));assert.equal(f.tables.requirements.filter(row=>row.type==='product').length,5);assert.deepEqual(f.tables.requirements.filter(row=>row.type==='quantity').map(row=>row.value),['35 PCS','14 PCS','6 PCS','6 PCS','1 PCS']);assert.equal(new Set(f.tables.research_results.map(row=>row.structured_data.arat_requirement_id)).size,5);assert.ok(queries.every(query=>!/8543709099|official distributor Europe$/.test(query)));assert.equal(f.sendCount(),0);
+});
+
 test('customer email classification accepts forwarded RFQs and leaves acknowledgements/unknown senders unmatched',async()=>{
  const f=fixture(),module=f.load('@/lib/email/customer-inquiry');
  assert.equal(module.looksLikeNewInquiry('Fwd: RFQ sensor','Please quote attached requirements',true),true);
