@@ -6,6 +6,89 @@ const { randomUUID } = require('node:crypto');
 const { stripTypeScriptTypes } = require('node:module');
 const root = path.resolve(__dirname, '..');
 
+test('late replies from three suppliers consolidate into one draft and preserve Admin prices',async()=>{
+ const f=fixture(),customerId=randomUUID();
+ Object.assign(f.tables.inquiries[0],{status:'rfq',customer_id:customerId,normalized_information:{intake:{items:[{product:'Sensor',model:'S1',quantity:2},{product:'Motor',model:'M1',quantity:3}]}}});
+ f.tables.customers=[{id:customerId,name:'Customer'}];
+ const requirements=[0,1].map((i)=>({id:randomUUID(),inquiry_id:f.inquiryId,type:'product',value:i?'Motor':'Sensor',status:'confirmed',source_ref:'intake:item:'+i}));f.tables.requirements=requirements;
+ f.tables.supplier_responses=[];f.tables.communications=[];
+ f.mock('@/lib/ai/agent-runner',{runAgent:async(ctx,input,schema)=>{
+  let output;
+  if(ctx.agentId==='quote_extraction'){const index=f.tables.supplier_responses.findIndex(r=>r.id===input.supplier_response_id);output={quotes:[{matchStatus:'match',currency:index===1?'USD':'EUR',quantity:index===1?3:2,netPrice:index===1?80:100,taxRate:20,taxMode:'excluded',taxText:'+20% VAT',leadTimeText:'two weeks'}]};}
+  else if(ctx.agentId==='comparison')output={comparisons:f.tables.supplier_responses.map((response,i)=>({supplierResponseId:response.id,findings:f.tables.supplier_quotes.filter(q=>q.supplier_response_id===response.id).map(q=>({requirementId:requirements[i===1?1:0].id,supplierQuoteId:q.id,status:'match',evidence:'Scoped supplier offer'}))}))};
+  else if(ctx.agentId==='customer_quote')output={lines:[],warnings:[]};else throw Error(ctx.agentId);
+  return {output:schema.parse(output),provider:'test',model:'test'};
+ }});
+ const queue=f.load('@/lib/ai/orchestrator'),workflow=f.load('@/lib/ai/workflow');
+ let first;
+ for(let i=0;i<3;i++){
+  const supplierId=randomUUID(),communicationId=randomUUID();f.tables.communications.push({id:communicationId,inquiry_id:f.inquiryId,supplier_id:supplierId,body:'Supplier offer'});
+  f.tables.supplier_responses.push({id:randomUUID(),communication_id:communicationId,supplier_id:supplierId,inquiry_id:f.inquiryId,status:'received'});
+  await queue.enqueueSupplierQuoteExtraction(f.inquiryId);const result=await workflow.processQueuedWorkflow(5,f.inquiryId);
+  assert.ok(!result.results.some(row=>row.error),JSON.stringify(result));
+  assert.equal(f.tables.customer_quotes.length,1);assert.equal(f.tables.customer_quote_items.length,i+1);
+  if(i===0){first=f.tables.customer_quote_items[0];Object.assign(first,{unit_price:222,price_status:'admin_confirmed'});f.tables.customer_quotes[0].status='pending_approval';}
+  else {assert.equal(first.unit_price,222);assert.equal(first.price_status,'admin_confirmed');assert.equal(f.tables.customer_quotes[0].status,'draft');}
+ }
+ assert.deepEqual(f.tables.customer_quote_items.map(line=>line.is_selected),[true,true,false]);
+ const db=f.load('@/lib/supabase/admin').createSupabaseAdminClient();
+ const load=require('./helpers/load-ts.cjs')({'@/lib/supabase/admin':{createSupabaseAdminClient:()=>db}});
+ const document=await load('@/lib/quotes/load-document').loadQuoteDocument(f.tables.customer_quotes[0].id);
+ assert.equal(document.document.lines.length,2,'Alternative must not appear in customer document');
+ assert.equal(f.sendCount(),0);
+});
+
+function supplierOrderFixture(){
+ const f=fixture(),quoteId=randomUUID(),adminId=randomUUID(),sent=[];
+ f.tables.customer_quotes=[{id:quoteId,inquiry_id:f.inquiryId,status:'accepted',reference:'AO-20261016-TEST-Q1'}];
+ f.tables.customer_quote_items=[];f.tables.supplier_quotes=[];f.tables.supplier_responses=[];f.tables.suppliers=[];f.tables.rfqs=[];
+ for(let i=0;i<3;i++){
+  const supplierId=randomUUID(),responseId=randomUUID(),offerId=randomUUID();
+  f.tables.suppliers.push({id:supplierId,legal_name:'Supplier '+i,status:'active'});
+  f.tables.rfqs.push({id:randomUUID(),supplier_id:supplierId,inquiry_id:f.inquiryId,status:'sent',recipient_email:'sales'+i+'@example.test'});
+  f.tables.supplier_responses.push({id:responseId,supplier_id:supplierId,inquiry_id:f.inquiryId});f.tables.supplier_quotes.push({id:offerId,supplier_response_id:responseId});
+  f.tables.customer_quote_items.push({id:randomUUID(),customer_quote_id:quoteId,is_selected:true,supplier_quote_id:offerId,description:'Requested item '+i,model:'MODEL-'+i,quantity:i+2,supplier_currency:i===1?'USD':'EUR',supplier_cost:100,unit_price:9999,price_calculation:{commercial:{net:100,gross:120,taxRate:20,taxMode:'excluded',delivery:{original:'two weeks'}},markup_percent:500,payment_terms:'Transfer'}});
+ }
+ const db=f.load('@/lib/supabase/admin').createSupabaseAdminClient();let denied=false,fail=false;
+ const load=require('./helpers/load-ts.cjs')({'@/lib/supabase/admin':{createSupabaseAdminClient:()=>db},'@/lib/ai/guards':{requireAdmin:async()=>{if(denied)throw Error('Admin access required');return {supabase:db,user:{id:adminId}};}},'next/cache':{revalidatePath(){}},'@/lib/quotes/company':{getCompanyProfile:async()=>({name:'Arya Automation',address:'Company address',phone:'Phone',website:'Website',taxDetails:'Tax',email:'purchase@example.test'})},'@/lib/email/provider':{getEmailProvider:()=>({send:async input=>{sent.push(input);if(fail)throw Error('SMTP timeout');return {providerMessageId:'mock-'+sent.length,sentAt:new Date().toISOString()};}})}});
+ return {f,db,quoteId,sent,load,deny:()=>denied=true,fail:()=>fail=true};
+}
+
+test('accepted quote creates separate exact supplier orders with no customer margins; repeated sends are safe',async()=>{
+ const x=supplierOrderFixture(),actions=x.load('@/app/quotes/supplier-order-actions'),old=process.env.EMAIL_FROM;process.env.EMAIL_FROM='purchase@example.test';
+ try{
+  const previews=await actions.prepareSupplierOrdersAction(x.quoteId,'Deliver to our warehouse');assert.equal(previews.length,3);assert.equal(x.sent.length,0);
+  for(let i=0;i<3;i++){assert.equal(previews[i].recipient_email,'sales'+i+'@example.test');assert.match(previews[i].body,new RegExp('MODEL-'+i));assert.doesNotMatch(previews[i].body,/9999|markup|500/);for(let j=0;j<3;j++)if(i!==j)assert.doesNotMatch(previews[i].body,new RegExp('MODEL-'+j));}
+  await actions.sendSupplierOrderAction(previews[0].id,previews[0].fingerprint);await actions.sendSupplierOrderAction(previews[0].id,previews[0].fingerprint);
+  assert.equal(x.sent.length,1);assert.equal(x.sent[0].text,previews[0].body);assert.equal(x.sent[0].subject,previews[0].subject);assert.equal(x.f.tables.communications.length,1);
+  const refreshed=await actions.prepareSupplierOrdersAction(x.quoteId,'Changed instructions');assert.equal(refreshed[0].status,'sent');assert.equal(refreshed[0].body,previews[0].body);
+  await assert.rejects(actions.sendSupplierOrderAction(previews[1].id,previews[1].fingerprint),/preview changed/);
+  await Promise.allSettled([actions.sendSupplierOrderAction(refreshed[1].id,refreshed[1].fingerprint),actions.sendSupplierOrderAction(refreshed[1].id,refreshed[1].fingerprint)]);assert.equal(x.sent.length,2);
+  x.deny();await assert.rejects(actions.prepareSupplierOrdersAction(x.quoteId),/Admin access/);await assert.rejects(actions.sendSupplierOrderAction(refreshed[2].id,refreshed[2].fingerprint),/Admin access/);
+ }finally{if(old==null)delete process.env.EMAIL_FROM;else process.env.EMAIL_FROM=old;}
+});
+
+test('supplier ordering requires acceptance, valid source and approved contact; SMTP uncertainty cannot resend',async()=>{
+ const x=supplierOrderFixture(),actions=x.load('@/app/quotes/supplier-order-actions'),q=x.f.tables.customer_quotes[0],old=process.env.EMAIL_FROM;process.env.EMAIL_FROM='purchase@example.test';
+ try{
+  q.status='sent';await assert.rejects(actions.prepareSupplierOrdersAction(x.quoteId),/acceptance/);q.status='accepted';
+  const source=x.f.tables.customer_quote_items[0].supplier_quote_id;x.f.tables.customer_quote_items[0].supplier_quote_id=null;await assert.rejects(actions.prepareSupplierOrdersAction(x.quoteId),/no supplier source/);x.f.tables.customer_quote_items[0].supplier_quote_id=source;
+  x.f.tables.rfqs[0].status='draft';await assert.rejects(actions.prepareSupplierOrdersAction(x.quoteId),/approved RFQ/);x.f.tables.rfqs[0].status='sent';
+  const p=await actions.prepareSupplierOrdersAction(x.quoteId);x.fail();await assert.rejects(actions.sendSupplierOrderAction(p[0].id,p[0].fingerprint),/delivery is uncertain/);
+  assert.equal(x.f.tables.supplier_order_confirmations[0].status,'delivery_uncertain');await assert.rejects(actions.sendSupplierOrderAction(p[0].id,p[0].fingerprint),/delivery needs checking/);assert.equal(x.sent.length,1);
+ }finally{if(old==null)delete process.env.EMAIL_FROM;else process.env.EMAIL_FROM=old;}
+});
+
+test('consolidated readiness rejects missing, duplicate or unpriced selected items',()=>{
+ const {quoteCoverage}=require('./helpers/load-ts.cjs')()('@/lib/quotes/readiness');
+ const requested=[{sourceRef:'a',label:'Sensor',quantity:'2'},{sourceRef:'b',label:'Motor',quantity:'3'}];
+ const offer=ref=>({is_selected:true,price_status:'admin_confirmed',unit_price:10,price_calculation:{source_ref:ref}});
+ assert.match(quoteCoverage(requested,[offer('a')]).problems.join(' '),/Motor/);
+ assert.match(quoteCoverage(requested,[offer('a'),offer('a'),offer('b')]).problems.join(' '),/only one/);
+ assert.equal(quoteCoverage(requested,[offer('a'),offer('b'),{...offer('a'),is_selected:false,unit_price:null}]).problems.length,0);
+ assert.match(quoteCoverage(requested,[offer('a'),{...offer('b'),unit_price:null}]).problems.join(' '),/Confirm/);
+});
+
 test('customer revision reasons use an owned quote and server-only mutation',async()=>{
  for(const reason of ['price','quantity','delivery_time','product_specification','payment_terms','other']) {
   const f=fixture(),customerId=randomUUID(),quoteId=randomUUID(),userId=randomUUID();
@@ -30,12 +113,14 @@ test('customer acceptance uses an owned quote and server-only decision update; r
   let sessionWrites=0,denyAuth=false;
   const session={from:table=>{const q=db.from(table);q.update=()=>{sessionWrites++;throw Error('RLS disallows session updates');};return q;}};
   const load=require('./helpers/load-ts.cjs')({'@/lib/ai/guards':{requireCustomerAccess:async()=>{if(denyAuth)throw Error('Authentication required');return {supabase:session,user:{id:randomUUID()},customer:{id:customerId}};}},'@/lib/supabase/admin':{createSupabaseAdminClient:()=>db},'@/lib/ai/workflow':{},'@/lib/ai/clarification-replies':{},'next/cache':{revalidatePath(){}}});
+  f.tables.profiles=[{user_id:randomUUID(),role:'admin',status:'active'}];
   const actions=load('@/app/actions');
   await actions.acceptCustomerQuoteAction(quoteId);
   assert.equal(f.tables.customer_quotes[0].status,'accepted');assert.equal(sessionWrites,0);assert.equal(f.tables.inquiries[0].status,'converted');
   assert.equal(f.tables.timeline_events.filter(e=>e.event_type==='customer_quote_accepted').length,1);
   await actions.acceptCustomerQuoteAction(quoteId);
   assert.equal(f.tables.timeline_events.filter(e=>e.event_type==='customer_quote_accepted').length,1);
+  assert.equal(f.tables.notifications.filter(n=>n.record_type==='supplier_order_confirmation'&&n.record_id===quoteId).length,1);
   f.tables.customer_quotes[0].status='sent';f.tables.customer_quotes[0].customer_id=randomUUID();
   await assert.rejects(actions.acceptCustomerQuoteAction(quoteId),/not found/);assert.equal(f.tables.customer_quotes[0].status,'sent');
   denyAuth=true;await assert.rejects(actions.acceptCustomerQuoteAction(quoteId),/Authentication required/);
@@ -343,7 +428,7 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
   class Query {
     constructor(table) { this.table = table; this.filters = []; this.op = 'read'; }
     select(columns, options) { this.selectOptions = options; return this; }
-    eq(key, value) { this.filters.push(row => row[key] === value); return this; }
+    eq(key, value) { this.filters.push(row => (key==='is_selected'?(row[key]??true):row[key]) === value); return this; }
     ilike(key, value) { const literal = value.replace(/\\([%_\\])/g, '$1').toLowerCase(); this.filters.push(row => String(row[key] ?? '').toLowerCase() === literal); return this; }
     in(key, values) { this.filters.push(row => values.includes(row[key])); return this; }
     not(key, operator, value) { this.filters.push(row => operator === 'is' ? row[key] != null : row[key] !== value); return this; }
@@ -351,7 +436,7 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
     order() { return this; }
     limit(value) { this.count = value; return this; }
     insert(value) { this.op = 'insert'; this.value = value; return this; }
-    upsert(value, options) { this.op = 'upsert'; this.value = value; this.conflict = options.onConflict.split(','); return this; }
+    upsert(value, options) { this.op = 'upsert'; this.value = value; this.conflict = options.onConflict.split(','); this.ignoreDuplicates=options.ignoreDuplicates; return this; }
     update(value) { this.op = 'update'; this.value = value; return this; }
     single() { this.one = true; return this; }
     maybeSingle() { this.one = true; return this; }
@@ -363,8 +448,8 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
       if (this.op === 'insert' || this.op === 'upsert') {
         matches = (Array.isArray(this.value) ? this.value : [this.value]).map(value => {
           let row = this.op === 'upsert' ? rows.find(row => this.conflict.every(key => row[key] === value[key])) : null;
-          if (row) Object.assign(row, value);
-          else { row = { id: randomUUID(), created_at: new Date().toISOString(), attempt_count: 0, status: 'open', ...value }; rows.push(row); }
+          if (row) {if(!this.ignoreDuplicates)Object.assign(row, value);}
+          else { row = { id: randomUUID(), created_at: new Date().toISOString(), attempt_count: 0, status: this.table==='supplier_order_confirmations'?'draft':'open', ...(this.table==='customer_quote_items'?{is_selected:true}:{}), ...value }; rows.push(row); }
           return row;
         });
       }

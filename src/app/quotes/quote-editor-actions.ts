@@ -6,6 +6,19 @@ import { requireAdmin } from '@/lib/ai/guards';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { pricePreview, reviewSupplierTax, supplierCommercial, type SupplierCommercial } from '@/lib/quotes/commercial';
 
+export async function selectQuoteOfferAction(itemId:string) {
+  z.string().uuid().parse(itemId);
+  const {user}=await requireAdmin();
+  const db=createSupabaseAdminClient();
+  const {data:item,error}=await db.from('customer_quote_items').select('id,customer_quote_id').eq('id',itemId).single();
+  if(error||!item)throw new Error('Supplier offer not found.');
+  const {error:selectError}=await db.rpc('select_customer_quote_offer',{p_item_id:itemId});
+  if(selectError)throw new Error(selectError.message);
+  const {error:auditError}=await db.from('audit_logs').insert({actor_type:'admin',actor_user_id:user.id,action:'customer_quote_supplier_offer_selected',record_type:'customer_quote_item',record_id:itemId,metadata:{customer_quote_id:item.customer_quote_id}});
+  revalidatePath('/quotes/'+item.customer_quote_id);
+  if(auditError)throw new Error('Offer selected; its audit record could not be saved.');
+}
+
 const controlsSchema = z.object({
   itemId: z.string().uuid(), quantity: z.number().positive().finite(),
   description:z.string().trim().min(1).max(2000).optional(),model:z.string().trim().max(300).optional(),brand:z.string().trim().max(300).optional(),

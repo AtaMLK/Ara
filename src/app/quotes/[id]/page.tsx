@@ -1,3 +1,7 @@
+import {SupplierOrders} from './supplier-orders';
+import AutomationRefresh from '@/components/automation-refresh';
+import {createSupabaseAdminClient} from '@/lib/supabase/admin';
+import {getQuoteReadiness} from '@/lib/quotes/readiness';
 import { oneRelated } from '@/lib/data/relations';
 import Link from 'next/link';
 import { getCustomerQuote } from '@/lib/data/admin';
@@ -12,9 +16,14 @@ function label(value: string) {
 export default async function QuoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const quote = await getCustomerQuote(id);
+  const selectedItems=quote.items.filter(item=>item.is_selected);
+  const readiness=['draft','pending_approval'].includes(quote.status)?await getQuoteReadiness(id):null;
+  const {data:orders,error:ordersError}=await createSupabaseAdminClient().from('supplier_order_confirmations').select('id,reference,status,recipient_email,subject,body,fingerprint,sent_at,error_text,snapshot,suppliers(legal_name)').eq('customer_quote_id',id).order('created_at');
+  if(ordersError)throw new Error('Supplier orders could not be loaded.');
 
   return (
     <>
+      <AutomationRefresh enabled={['draft','pending_approval','sent'].includes(quote.status)}/>
       <header className="topbar">
         <div>
           <Link className="back-link" href="/quotes">← Quotes</Link>
@@ -25,7 +34,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         <div className="topbar-actions">
           <span className="badge">{label(quote.status)}</span>
           <QuoteActions id={quote.id} status={quote.status} />
-          {quote.items.length>0&&quote.confirmedItemCount===quote.items.length&&<a className="secondary-button" href={'/api/quotes/'+quote.id+'/pdf'} target="_blank" rel="noreferrer">Preview / Download PDF</a>}
+          {selectedItems.length>0&&quote.confirmedItemCount===selectedItems.length&&(!readiness||!readiness.problems.length)&&<a className="secondary-button" href={'/api/quotes/'+quote.id+'/pdf'} target="_blank" rel="noreferrer">Preview / Download PDF</a>}
         </div>
       </header>
 
@@ -44,11 +53,13 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
           <div className="section-head"><h2>Commercial control</h2></div>
           <p className="muted">ARAT prepares supplier costs, tax and delivery. Enter markup or a manual customer price in the pre-quote review, then confirm every line before approval.</p>
           <div className="quote-control-note">
-            <strong>{quote.confirmedItemCount}/{quote.items.length}</strong> prices confirmed
+            <strong>{quote.confirmedItemCount}/{selectedItems.length}</strong> prices confirmed
           </div>
         </div>
       </section>
 
+      {quote.status==='accepted'&&<SupplierOrders quoteId={id} orders={(orders??[]).map(order=>({...order,supplier_name:oneRelated(order.suppliers)?.legal_name,instructions:typeof order.snapshot?.instructions==='string'?order.snapshot.instructions:''}))}/>}
+      {readiness&&<section className="section"><div className="detail-card"><h2>Consolidated quotation</h2><p>{selectedItems.length} selected offer(s) for {readiness.requestedCount} requested item(s). Alternative supplier offers remain in the Admin review.</p>{readiness.problems.map(problem=><p className="muted" key={problem}>{problem}</p>)}</div></section>}
       {quote.revisionRequest && (
         <section className="section">
           <div className="detail-card revision-context">

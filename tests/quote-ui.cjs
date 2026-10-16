@@ -6,7 +6,7 @@ const {chromium}=require('@playwright/test');
 const root=path.resolve(__dirname,'..'),dir=path.join(root,'test-results','quote-ui');
 fs.mkdirSync(dir,{recursive:true});
 fs.writeFileSync(path.join(dir,'loader.cjs'),`const swc=require(${JSON.stringify(require.resolve('next/dist/build/swc'))});module.exports=function(source){return swc.transformSync(source,{filename:this.resourcePath,jsc:{parser:{syntax:'typescript',tsx:true},transform:{react:{runtime:'automatic'}},target:'es2020'},module:{type:'es6'}}).code;}`);
-fs.writeFileSync(path.join(dir,'actions.js'),`export async function saveQuoteCommercialAction(input){window.__saved=input;} export async function setDraftCurrencyAction(){}`);
+fs.writeFileSync(path.join(dir,'actions.js'),`export async function saveQuoteCommercialAction(input){window.__saved=input;} export async function setDraftCurrencyAction(){} export async function selectQuoteOfferAction(id){window.__selected=id;}`);
 fs.writeFileSync(path.join(dir,'navigation.js'),`export function useRouter(){return {refresh(){}}}`);
 fs.writeFileSync(path.join(dir,'entry.tsx'),`import {createRoot} from 'react-dom/client';
 import {QuoteWorkbench} from '@/app/quotes/[id]/quote-workbench';

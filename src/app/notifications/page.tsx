@@ -28,7 +28,7 @@ export default async function NotificationsPage() {
               <div>
                 <strong>{item.title}</strong>
                 <div className="muted">{item.message}</div>
-                {item.action_url && <Link className="notification-open-link" href={item.action_url}>Open</Link>}
+                {item.action_url && <Link className="notification-open-link" href={item.action_url}>{item.record_type==='supplier_order_confirmation'?'Review & send supplier orders':'Open'}</Link>}
               </div>
               <div><span className="badge">{label(item.category)}</span></div>
               <div><span className="badge">{label(item.priority)}</span></div>

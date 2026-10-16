@@ -11,7 +11,7 @@ export async function loadQuoteDocument(quoteId:string) {
   const [inquiry,customer,items,requirements,quotes]=await Promise.all([
     db.from('inquiries').select('id,reference,created_at,current_version,updated_at,normalized_information').eq('id',q.inquiry_id).single(),
     db.from('customers').select('name,company_name').eq('id',q.customer_id).single(),
-    db.from('customer_quote_items').select('id,description,model,brand,delivery_text,quantity,unit_price,total,price_calculation,price_status').eq('customer_quote_id',q.id).order('created_at',{ascending:true}),
+    db.from('customer_quote_items').select('id,description,model,brand,delivery_text,quantity,unit_price,total,price_calculation,price_status').eq('customer_quote_id',q.id).eq('is_selected',true).order('created_at',{ascending:true}),
     db.from('requirements').select('id,type,value,source_ref,admin_edited,status').eq('inquiry_id',q.inquiry_id),
     db.from('customer_quotes').select('id,parent_quote_id,created_at').eq('inquiry_id',q.inquiry_id).order('created_at',{ascending:true}),
   ]);

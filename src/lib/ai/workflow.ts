@@ -1303,9 +1303,9 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       if (customerError) throw new ToolError('TRANSIENT', customerError.message);
       if (!customer) throw new ToolError('NOT_FOUND', 'Customer not found');
 
-      const { data: existing } = await supabase.from('customer_quotes').select('id,status,revision_number,reference').eq('inquiry_id', inquiryId).in('status', ['draft','pending_approval','sent']).order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (existing) {
-        if (existing.status==='draft') await notifyDraftReview(existing.id,existing.reference);
+      const { data: existing, error: existingError } = await supabase.from('customer_quotes').select('id,status,currency,revision_number,reference').eq('inquiry_id', inquiryId).in('status', ['draft','pending_approval','sent','accepted']).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if(existingError)throw new ToolError('TRANSIENT',existingError.message);
+      if (existing && !['draft','pending_approval'].includes(existing.status)) {
         await markExecutionSuccess(running.id, { customer_quote_id: existing.id, status: existing.status, reused_existing_quote: true });
         return { execution: running, outcome: 'existing_quote' };
       }
@@ -1324,7 +1324,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       if (quotesError) throw new ToolError('TRANSIENT', quotesError.message);
       // A draft preserves supplier currencies. Admin can choose the customer
       // currency and an approved conversion later; preparation requires no rate.
-      const customerCurrency = supplierQuotes?.find(item => item.currency)?.currency ?? 'EUR';
+      const customerCurrency = existing?.currency ?? supplierQuotes?.find(item => item.currency)?.currency ?? 'EUR';
 
       const { data: priceTiers, error: priceTiersError } = await supabase
         .from('supplier_quote_price_tiers')
@@ -1373,15 +1373,27 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       const displayInquiry=getInquiryDisplayReference(inquiry.reference,customer.company_name||customer.name,inquiry.created_at,inquiry.current_version,inquiry.updated_at);
       const {count:quoteCount,error:countError}=await supabase.from('customer_quotes').select('id',{head:true,count:'exact'}).eq('inquiry_id',inquiryId);
       if(countError)throw new ToolError('TRANSIENT',countError.message);
-      const reference=getQuoteReference(displayInquiry,(quoteCount??0)+1);
+      const reference=existing?.reference??getQuoteReference(displayInquiry,(quoteCount??0)+1);
       const requestItems=inquiryItems(inquiry.normalized_information,requirements??[]);
       const validUntilValues = ai.output.lines.map((line) => supplierQuotes?.find((quote) => quote.id === line.supplierQuoteId)?.valid_until).filter((value): value is string => Boolean(value)).sort();
-      const { data: quote, error: quoteError } = await supabase.from('customer_quotes').insert({ inquiry_id: inquiryId, customer_id: inquiry.customer_id, reference, revision_number: 0, status: 'draft', currency: customerCurrency, valid_until: validUntilValues[0] ?? null, subject: 'Quotation '+reference+' | '+(requestItems[0]?.model||inquiry.title||'Procurement request'), body: 'Please find our quotation below. Delivery and pricing are listed separately for each item.' }).select('id').single();
+      const { data: quote, error: quoteError } = existing ? {data:existing,error:null} : await supabase.from('customer_quotes').insert({ inquiry_id: inquiryId, customer_id: inquiry.customer_id, reference, revision_number: 0, status: 'draft', currency: customerCurrency, valid_until: validUntilValues[0] ?? null, subject: 'Quotation '+reference+' | '+(requestItems[0]?.model||inquiry.title||'Procurement request'), body: 'Please find our quotation below. Delivery and pricing are listed separately for each item.' }).select('id').single();
       if (quoteError || !quote) throw new ToolError('CONFLICT', quoteError?.message ?? 'Customer quote creation failed');
+      const {data:savedItems,error:savedError}=await supabase.from('customer_quote_items').select('supplier_quote_id,is_selected,price_calculation').eq('customer_quote_id',quote.id);
+      if(savedError)throw new ToolError('TRANSIENT',savedError.message);
+      const includedSources=new Set((savedItems??[]).map(item=>item.supplier_quote_id));
+      const chosenRefs=new Set((savedItems??[]).filter(item=>item.is_selected!==false).map(item=>(item.price_calculation as Record<string,unknown>)?.source_ref));
+      const proposalsByRef=new Map<string|undefined,number>();
+      for(const proposal of ai.output.lines){
+        const refs=new Set((requirements??[]).filter(r=>proposal.requirementIds.includes(r.id)).map(r=>r.source_ref));
+        const matches=requestItems.filter(item=>refs.has(item.sourceRef));
+        const request=matches.length===1?matches[0]:requestItems.length===1?requestItems[0]:undefined;
+        if(request)proposalsByRef.set(request.sourceRef,(proposalsByRef.get(request.sourceRef)??0)+1);
+      }
 
       let createdItems = 0;
       let blockedItems = 0;
       for (const line of ai.output.lines) {
+        if(includedSources.has(line.supplierQuoteId))continue;
         const supplierQuote = supplierQuotes?.find((item) => item.id === line.supplierQuoteId);
         if (!supplierQuote || supplierQuote.match_status === 'mismatch') {
           blockedItems++;
@@ -1433,9 +1445,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           leadTimeText: supplierQuote.lead_time_text,
         });
         const relatedRefs=new Set((requirements??[]).filter(r=>line.requirementIds.includes(r.id)).map(r=>r.source_ref));
-        const requestItem=requestItems.find(item=>relatedRefs.has(item.sourceRef))??(requestItems.length===1?requestItems[0]:undefined);
+        const matchedItems=requestItems.filter(item=>relatedRefs.has(item.sourceRef));
+        const requestItem=matchedItems.length===1?matchedItems[0]:(requestItems.length===1?requestItems[0]:undefined);
         const { error: itemError } = await supabase.from('customer_quote_items').insert({
           customer_quote_id: quote.id, supplier_quote_id: supplierQuote.id,
+          is_selected:!!requestItem && proposalsByRef.get(requestItem.sourceRef)===1 && !chosenRefs.has(requestItem.sourceRef),
           product_id: supplierQuote.product_id, quantity: line.quantity,
           unit_price: null, supplier_cost: commercial.net ?? commercial.gross,
           supplier_currency: supplierCurrency, exchange_rate_id: null,
@@ -1456,14 +1470,20 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           },
         });
         if (itemError) throw new ToolError('CONFLICT', itemError.message);
+        includedSources.add(line.supplierQuoteId);
+        if(requestItem)chosenRefs.add(requestItem.sourceRef);
         createdItems++;
       }
 
-      if (createdItems === 0) {
+      if (createdItems === 0 && !savedItems?.length) {
         await supabase.from('customer_quotes').delete().eq('id', quote.id).eq('status', 'draft');
         await markExecutionSuccess(running.id, { blocked: true, reason: 'all_quote_lines_blocked' });
         await createAlert(inquiryId, 'customer_quote', 'CUSTOMER_QUOTE_BLOCKED', 'No customer quote line could be prepared. Admin review is required.', 'normal');
         return { execution: running, outcome: 'blocked' };
+      }
+      if(createdItems>0 && existing?.status==='pending_approval'){
+        const {error:resetError}=await supabase.from('customer_quotes').update({status:'draft'}).eq('id',quote.id).eq('status','pending_approval');
+        if(resetError)throw new ToolError('TRANSIENT',resetError.message);
       }
       await notifyDraftReview(quote.id,reference);
       await markExecutionSuccess(running.id, { customer_quote_id: quote.id, line_count: createdItems, blocked_line_count: blockedItems, customer_currency: customerCurrency, customer_price_policy: 'UNPRICED_ADMIN_INPUT_REQUIRED', ai_provider: ai.provider, ai_model: ai.model });
@@ -1913,7 +1933,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       // The background worker executes queued stages only; completing comparison
       // must explicitly hand off to draft preparation without an Admin click.
       if (findingCount > 0) {
-        await enqueueWorkflow(inquiryId, 'customer_quote');
+        const prepared=await enqueueWorkflow(inquiryId, 'customer_quote');
+        const {error:queueError}=await supabase.from('ai_executions').update({status:'queued',completed_at:null,error_code:null,error_message:null})
+          .eq('id',prepared.id).eq('status','succeeded');
+        if(queueError)throw new ToolError('TRANSIENT',queueError.message);
       }
       return { execution: running, outcome: findingCount > 0 ? 'customer_quote_queued' : 'completed' };
     }

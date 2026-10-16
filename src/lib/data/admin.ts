@@ -1,4 +1,5 @@
 import 'server-only';
+import {oneRelated} from './relations';
 
 import { redirect } from 'next/navigation';
 import { requireAdmin } from '@/lib/ai/guards';
@@ -285,7 +286,7 @@ export async function getCustomerQuote(id: string) {
 
   const { data: items, error: itemError } = await supabase
     .from('customer_quote_items')
-    .select('id,description,model,brand,delivery_text,product_id,supplier_quote_id,quantity,unit_price,total,supplier_cost,supplier_currency,price_status,pricing_rule_id,exchange_rate_id,price_calculation,supplier_products(product_name,model_part_number)')
+    .select('id,is_selected,description,model,brand,delivery_text,product_id,supplier_quote_id,quantity,unit_price,total,supplier_cost,supplier_currency,price_status,pricing_rule_id,exchange_rate_id,price_calculation,supplier_products(product_name,model_part_number),supplier_offer:supplier_quotes(supplier_response:supplier_responses(supplier:suppliers(legal_name)))')
     .eq('customer_quote_id', id)
     .order('created_at', { ascending: true });
 
@@ -309,9 +310,9 @@ export async function getCustomerQuote(id: string) {
     ...quote,
     reference:quote.display_reference||quote.reference,
     subject:quote.subject&&/^Quotation\s*[\u2014-]/i.test(quote.subject)?'Quotation '+(quote.display_reference||quote.reference)+(rows[0]?.model?' | '+rows[0].model:''):quote.subject,
-    items: rows,
+    items: rows.map(item=>({...item,supplier_name:oneRelated(oneRelated(oneRelated(item.supplier_offer)?.supplier_response)?.supplier)?.legal_name??null})),
     rates: (rates ?? []).map(rate => ({ ...rate, rate: Number(rate.rate) })),
-    confirmedItemCount: rows.filter((item) => item.price_status === 'admin_confirmed').length,
+    confirmedItemCount: rows.filter((item) => item.is_selected && item.price_status === 'admin_confirmed').length,
     revisionRequest,
   };
 }

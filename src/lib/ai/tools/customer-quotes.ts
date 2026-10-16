@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {assertQuoteReady} from '@/lib/quotes/readiness';
 import {ToolError} from '@/lib/errors';
 import type {AIContext} from '@/lib/ai/context';
 import {requireAdmin,requireInquiryAccess} from '../guards';
@@ -26,17 +27,19 @@ export async function addCustomerQuoteItem(ctx:AIContext,input:unknown){
 }
 export async function requestQuoteApproval(quoteId:string){
  const {supabase}=await requireAdmin();
- const {data:items,error:itemError}=await supabase.from('customer_quote_items').select('id,price_status').eq('customer_quote_id',quoteId);
+ const {data:items,error:itemError}=await supabase.from('customer_quote_items').select('id,price_status').eq('customer_quote_id',quoteId).eq('is_selected',true);
  if(itemError) throw new ToolError('TRANSIENT',itemError.message);
  if(!items?.length || items.some((item)=>item.price_status!=='admin_confirmed')) throw new ToolError('APPROVAL_REQUIRED','Every customer quote item price must be confirmed by Admin');
+ await assertQuoteReady(quoteId);
  const {data,error}=await supabase.from('customer_quotes').update({status:'pending_approval'}).eq('id',quoteId).eq('status','draft').select('*').single();
  if(error||!data) throw new ToolError('CONFLICT','Quote is not in Draft state'); return data;
 }
 export async function approveCustomerQuote(quoteId:string){
  const {supabase,user}=await requireAdmin();
- const {data:items,error:itemError}=await supabase.from('customer_quote_items').select('id,price_status').eq('customer_quote_id',quoteId);
+ const {data:items,error:itemError}=await supabase.from('customer_quote_items').select('id,price_status').eq('customer_quote_id',quoteId).eq('is_selected',true);
  if(itemError) throw new ToolError('TRANSIENT',itemError.message);
- if(!items?.length || items.some((item)=>item.price_status!=='admin_confirmed')) throw new ToolError('APPROVAL_REQUIRED','Every customer quote item price must be confirmed by Admin'); const {data,error}=await supabase.from('customer_quotes').update({status:'sent',approved_by:user.id,approved_at:new Date().toISOString()}).eq('id',quoteId).eq('status','pending_approval').select('*').single();
+ if(!items?.length || items.some((item)=>item.price_status!=='admin_confirmed')) throw new ToolError('APPROVAL_REQUIRED','Every customer quote item price must be confirmed by Admin');
+ await assertQuoteReady(quoteId); const {data,error}=await supabase.from('customer_quotes').update({status:'sent',approved_by:user.id,approved_at:new Date().toISOString()}).eq('id',quoteId).eq('status','pending_approval').select('*').single();
  if(error||!data) throw new ToolError('CONFLICT','Quote is not awaiting approval'); return data;
 }
 
@@ -79,7 +82,7 @@ export async function createQuoteRevision(ctx:AIContext,quoteId:string){
 
   const {data:items,error:itemError}=await supabase
     .from('customer_quote_items')
-    .select('description,model,brand,delivery_text,price_calculation,supplier_quote_id,product_id,quantity,unit_price,exchange_rate_id,supplier_cost,supplier_currency')
+    .select('is_selected,description,model,brand,delivery_text,price_calculation,supplier_quote_id,product_id,quantity,unit_price,exchange_rate_id,supplier_cost,supplier_currency')
     .eq('customer_quote_id',parent.id);
 
   if(itemError) throw new ToolError('TRANSIENT',itemError.message);

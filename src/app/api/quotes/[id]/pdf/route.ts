@@ -3,6 +3,7 @@ import {loadQuoteDocument} from '@/lib/quotes/load-document';
 import {getQuoteCompany} from '@/lib/quotes/company';
 import {createQuotePdf} from '@/lib/quotes/document';
 import {createSupabaseAdminClient} from '@/lib/supabase/admin';
+import {getQuoteReadiness} from '@/lib/quotes/readiness';
 export const runtime='nodejs';
 export async function GET(_request:Request,{params}:{params:Promise<{id:string}>}){
   const {id}=await params,db=await createSupabaseServerClient();
@@ -23,6 +24,10 @@ export async function GET(_request:Request,{params}:{params:Promise<{id:string}>
     return new Response(await stored.arrayBuffer(),{headers:{'Content-Type':'application/pdf','Content-Disposition':'inline; filename="Quotation.pdf"','Cache-Control':'private, no-store'}});
   }
   const loaded=await loadQuoteDocument(id);
+  if(['draft','pending_approval'].includes(quote.status)){
+    const readiness=await getQuoteReadiness(id);
+    if(readiness.problems.length)return Response.json({error:readiness.problems.join(' ')},{status:409});
+  }
   if(loaded.unconfirmed)return Response.json({error:'Confirm every item price before generating the final quotation PDF.'},{status:409});
   const pdf=await createQuotePdf(loaded.document,await getQuoteCompany());
   return new Response(Buffer.from(pdf),{headers:{'Content-Type':'application/pdf','Content-Disposition':`inline; filename="Quotation-${loaded.document.reference}.pdf"`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});

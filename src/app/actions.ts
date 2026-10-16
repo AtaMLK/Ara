@@ -1,5 +1,7 @@
 'use server';
 
+import {assertQuoteReady} from '@/lib/quotes/readiness';
+import {notifyAcceptedQuote} from '@/lib/quotes/supplier-orders';
 import {loadQuoteDocument} from '@/lib/quotes/load-document';
 import {getQuoteCompany} from '@/lib/quotes/company';
 import {createQuotePdf,renderQuoteEmail} from '@/lib/quotes/document';
@@ -1495,7 +1497,7 @@ export async function acceptCustomerQuoteAction(quoteId: string) {
       .single();
 
     if (error || !quote) throw new ToolError('NOT_FOUND', 'Quotation not found');
-    if (quote.status === 'accepted') {await completeAcceptedInquiry(quote.inquiry_id,customer.id);return { ok: true };}
+    if (quote.status === 'accepted') {await completeAcceptedInquiry(quote.inquiry_id,customer.id);await notifyAcceptedQuote(quote.id);return { ok: true };}
     if (quote.status !== 'sent') throw new ToolError('CONFLICT', 'Only a sent quotation can be accepted');
 
     // Customer ownership has been verified above; only fixed decision fields are writable.
@@ -1517,6 +1519,7 @@ export async function acceptCustomerQuoteAction(quoteId: string) {
     if (!data) throw new ToolError('CONFLICT', 'This quotation has already received a decision. Refresh to see its status.');
 
     await completeAcceptedInquiry(quote.inquiry_id,customer.id);
+    await notifyAcceptedQuote(quote.id);
     await createSupabaseAdminClient().from('timeline_events').insert({
       inquiry_id: quote.inquiry_id,
       event_type: 'customer_quote_accepted',
@@ -1723,7 +1726,7 @@ export async function reviewCustomerQuoteRevisionAction(input: {
     if (quote.status !== 'revision_requested') throw new ToolError('CONFLICT','Quotation is not awaiting revision');
 
     const { data: oldItems, error: itemError } = await supabase.from('customer_quote_items')
-      .select('description,model,brand,delivery_text,product_id,supplier_quote_id,quantity,unit_price,supplier_cost,supplier_currency,exchange_rate_id,price_status,pricing_rule_id,price_calculation')
+      .select('is_selected,description,model,brand,delivery_text,product_id,supplier_quote_id,quantity,unit_price,supplier_cost,supplier_currency,exchange_rate_id,price_status,pricing_rule_id,price_calculation')
       .eq('customer_quote_id',quote.id).order('created_at',{ascending:true});
     if (itemError) throw itemError;
 
@@ -1879,7 +1882,8 @@ export async function requestQuoteApprovalAction(quoteId: string) {
     const { data: pendingItems, error: itemError } = await supabase
       .from('customer_quote_items')
       .select('id,price_status')
-      .eq('customer_quote_id', parsed);
+      .eq('customer_quote_id', parsed).eq('is_selected',true);
+    await assertQuoteReady(parsed);
 
     if (itemError) throw new ToolError('TRANSIENT', itemError.message);
     if (!pendingItems?.length) throw new ToolError('CONFLICT', 'Quote must contain at least one item');
@@ -1931,7 +1935,7 @@ export async function approveCustomerQuoteAction(quoteId: string) {
     const { data: pendingItems, error: itemError } = await supabase
       .from('customer_quote_items')
       .select('id,product_id,quantity,unit_price,total,price_status,price_calculation,supplier_products(product_name,model_part_number)')
-      .eq('customer_quote_id', parsed)
+      .eq('customer_quote_id', parsed).eq('is_selected',true)
       .order('created_at', { ascending: true });
 
     if (itemError) throw new ToolError('TRANSIENT', itemError.message);
@@ -1972,6 +1976,7 @@ export async function approveCustomerQuoteAction(quoteId: string) {
       throw new ToolError('CONFLICT', 'This customer quote has already been sent');
     }
 
+    await assertQuoteReady(quote.id);
     const loaded=await loadQuoteDocument(quote.id);
     const quoteUrl='/customer/quotes/'+quote.inquiry_id+'?revision='+quote.id;
     if(loaded.unconfirmed)throw new ToolError('APPROVAL_REQUIRED','Confirm every customer price before sending.');

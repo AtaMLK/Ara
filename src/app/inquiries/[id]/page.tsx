@@ -79,7 +79,7 @@ export default async function InquiryDetailPage({ params }: Props) {
 
   return (
     <>
-      <AutomationRefresh enabled={!['converted','closed','no_suitable_supplier'].includes(inquiry.status)}/>
+      <AutomationRefresh enabled={!['closed','no_suitable_supplier'].includes(inquiry.status)&&progress.label!=='Completed'}/>
       <header className="topbar">
         <div>
           <Link className="back-icon-button" href="/inquiries" aria-label="Back to Inquiries" title="Back to Inquiries"><span aria-hidden="true">←</span></Link>

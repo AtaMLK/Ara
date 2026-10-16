@@ -4,6 +4,13 @@ const {inquiryItems,readableRequest}=load('@/lib/ui/inquiry-items');
 const {inquiryProgress}=load('@/lib/ui/inquiry-progress');
 const {createQuotePdf,renderQuoteEmail,quotationSubject}=load('@/lib/quotes/document');
 const {extractText}=require('unpdf');
+
+test('customer acceptance waits for supplier orders before procurement is complete',()=>{
+ const facts={status:'converted',aiComplete:true,researchComplete:true,verified:true,rfqSent:true,responseReceived:true,clarificationPending:false,quoteStatuses:['accepted']};
+ const pending=inquiryProgress(facts);assert.equal(pending.label,'Supplier Orders');assert.equal(pending.steps.find(step=>step.state==='current').key,'orders');
+ assert.equal(pending.steps.find(step=>step.key==='completed').state,'upcoming');
+ const completed=inquiryProgress({...facts,supplierOrdersComplete:true});assert.equal(completed.label,'Completed');assert.ok(completed.steps.every(step=>step.state==='completed'));
+});
 test('AO references preserve date, unique inquiry suffix and revision rules',()=>{
  const {getInquiryDisplayReference,getQuoteReference}=load('@/lib/ui/inquiry-reference');
  const ref=getInquiryDisplayReference('CUS-CEB773DE-20261010-73857C','ATA MOLKARA','2026-10-10T10:00:00Z',2,'2026-10-12T10:00:00Z');
