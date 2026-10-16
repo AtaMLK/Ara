@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Mail, X } from 'lucide-react';
+import {CustomerRequestMessage} from './customer-request-message';
 
 export type RfqConversationMessage = {
   id: string;
@@ -86,8 +87,8 @@ export function RfqConversationModal({
               <div className="rfq-conversation-marker" />
               <div className="rfq-conversation-card">
                 <div className="rfq-conversation-label">Customer Request</div>
-                <div className="rfq-conversation-time">Original request</div>
-                <div className="rfq-conversation-content">{customerRequest}</div>
+                <div className="rfq-conversation-time">Customer message and submitted details</div>
+                <div className="rfq-conversation-content"><CustomerRequestMessage text={customerRequest}/></div>
               </div>
             </article>
           )}
