@@ -27,7 +27,7 @@ const emptyItem = (): InquiryItem => ({
 
 export default function CustomerInquiryForm() {
   const [items, setItems] = useState<InquiryItem[]>([emptyItem()]);
-  const [entryMode,setEntryMode]=useState<'manual'|'list'|'file'>('manual');
+  const [entryMode,setEntryMode]=useState<'manual'|'list'|'file'>('list');
   const [bulkRequest,setBulkRequest]=useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -78,7 +78,7 @@ export default function CustomerInquiryForm() {
   }
 
   return (
-    <form action={submit}>
+    <form action={submit} onReset={event=>event.preventDefault()}>
       <label className="form-field">
         <span><T>Request title </T><small><T>Optional</T></small></span>
         <Localized as="input" name="title" placeholder="Give your request a short title" maxLength={200} />
@@ -162,11 +162,11 @@ export default function CustomerInquiryForm() {
         <small><T>ARAT will read the list and extract each item and its stated quantity. You do not need to enter the items again.</T></small>
       </label>}
 
-      <label className="form-field">
-        <span><T>Attachments </T><small><T>{entryMode==='file'?'Required · PDF, Excel, CSV, PNG, JPG, WEBP · max 10 MB each':'Optional · PDF, Excel, CSV, PNG, JPG, WEBP · max 10 MB each'}</T></small></span>
-        <input name="files" type="file" required={entryMode==='file'} multiple accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp" />
-        {entryMode==='file'&&<small><T>Upload your item list with quantities and units. ARAT will process the files after submission; no manual item entry is required.</T></small>}
-      </label>
+      {entryMode==='file'&&<label className="form-field">
+        <span><T>Attachments </T><small><T>Required · PDF, Excel, CSV, PNG, JPG, WEBP · max 10 MB each</T></small></span>
+        <input name="files" type="file" required multiple accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp" />
+        <small><T>Upload your item list with quantities and units. ARAT will process the files after submission; no manual item entry is required.</T></small>
+      </label>}
 
       <label className="form-field">
         <span><T>Additional notes </T><small><T>Optional</T></small></span>

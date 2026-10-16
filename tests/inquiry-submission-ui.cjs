@@ -10,7 +10,8 @@ fs.writeFileSync(path.join(dir,'entry.tsx'),`import {createRoot} from 'react-dom
  const browser=await chromium.launch({channel:'msedge',headless:true});try{
   const page=await browser.newPage({viewport:{width:1100,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.setContent('<html lang="en" data-theme="light"><head><style>'+['globals.css','dark-surfaces.css','display-preferences.css'].map(f=>fs.readFileSync(path.join(root,'src/app',f),'utf8')).join('\n')+'</style></head><body><div id="root"></div></body></html>');await page.addScriptTag({path:path.join(dir,'bundle.js')});
-  await page.getByRole('radio',{name:'Enter items',exact:true}).waitFor();assert.equal(await page.getByLabel('Quantity',{exact:false}).evaluate(e=>e.required),true);
+  await page.getByRole('radio',{name:'Paste a list',exact:true}).waitFor();assert.equal(await page.getByRole('radio',{name:'Paste a list',exact:true}).isChecked(),true);assert.equal(await page.locator('input[type=file],input[type=number]').count(),0);
+  await page.getByRole('radio',{name:'Enter items',exact:true}).check();assert.equal(await page.getByLabel('Quantity',{exact:false}).evaluate(e=>e.required),true);assert.equal(await page.locator('textarea[name=bulkRequest],input[type=file]').count(),0);
   assert.doesNotMatch((await page.locator('body').innerText())+' '+await page.locator('input,textarea').evaluateAll(es=>es.map(e=>e.placeholder).join(' ')),/hydraulic|cylinder|Parker|HK-250/i);
   await page.getByRole('radio',{name:'Paste a list',exact:true}).check();assert.equal(await page.locator('input[type=number]').count(),0);
   await page.getByLabel('Paste your request or item list',{exact:false}).fill('Office supplies — 150 pcs\nPacking material — 12.5 kg');
