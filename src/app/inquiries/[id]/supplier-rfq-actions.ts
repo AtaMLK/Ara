@@ -1,4 +1,5 @@
 'use server';
+import {getSupplierLanguage} from '@/lib/email/supplier-language';
 
 import {createHash} from 'node:crypto';
 import {getInquiryDisplayReference} from '@/lib/ui/inquiry-reference';
@@ -9,10 +10,6 @@ import { getEmailProvider } from '@/lib/email/provider';
 import { ToolError } from '@/lib/errors';
 import { oneRelated } from '@/lib/data/relations';
 
-function isDomestic(country: string | null | undefined) {
-  const value = (country ?? '').trim().toLowerCase();
-  return value === 'turkey' || value === 'türkiye' || value === 'tr' || value.includes('turkey');
-}
 
 
 function candidateEvidenceEmail(...roots: unknown[]): string | null {
@@ -325,8 +322,7 @@ async function executeSupplierRfq(input: {
     const quantityRow = itemRequirements.find((item) => item.type === 'quantity')?.value ?? '';
     const specifications = itemRequirements.filter((item) => item.type === 'specification' || item.type === 'delivery' || item.type === 'other').map((item) => item.value);
 
-    const domestic = isDomestic(supplier.primary_country || candidate.proposed_country);
-    const language = domestic ? 'tr' : 'en';
+    const language = await getSupplierLanguage(supplier.id);
     const email = buildEmail(language, getInquiryDisplayReference(inquiry.reference,null,inquiry.created_at), [{
       product,
       model,

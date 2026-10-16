@@ -1,4 +1,5 @@
 'use server';
+import {getSupplierLanguage,supplierReplyMessage} from '@/lib/email/supplier-language';
 
 import { revalidatePath } from 'next/cache';
 
@@ -53,12 +54,13 @@ export async function approveSupplierClarificationReplyAction(formData: FormData
 
   const provider = getEmailProvider();
   const subject = rfq.subject?.startsWith('Re:') ? rfq.subject : `Re: ${rfq.subject ?? rfq.rfq_code}`;
-  const html = `<p>Merhaba,</p><p>${escapeHtml(draft)}</p><p>İyi çalışmalar,<br/>Arya Automation</p>`;
+  const language=await getSupplierLanguage(rfq.supplier_id);
+  const {html,text}=supplierReplyMessage(language,draft);
   const sent = await provider.send({
     to: [email.email],
     subject,
     html,
-    text: `Merhaba,\\n\\n${draft}\\n\\nİyi çalışmalar,\\nArya Automation`,
+    text,
     from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
     idempotencyKey: `admin-approved-clarification:${communication.id}`,
   });
@@ -75,6 +77,7 @@ export async function approveSupplierClarificationReplyAction(formData: FormData
     body: html,
     sent_at: sent.sentAt ?? new Date().toISOString(),
     metadata: {
+      language,
       type: 'customer_clarification_reply_to_supplier',
       source_communication_id: communication.id,
       approved_by: user.id,

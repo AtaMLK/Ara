@@ -66,7 +66,7 @@ export async function sendSupplierOrderAction(orderId:string,fingerprint:string)
   const {error:sentError}=await db.from('supplier_order_confirmations').update({status:'sent',sent_at:result.sentAt,provider_message_id:result.providerMessageId,error_text:null}).eq('id',order.id).eq('status','sending');
   if(sentError)throw new Error('The email was sent but its status could not be saved. Check the sent mailbox before any further action.');
   const {error:logError}=await db.from('communications').insert({inquiry_id:order.inquiry_id,supplier_id:order.supplier_id,quote_id:order.customer_quote_id,direction:'outgoing',channel:'email',subject:order.subject,body:order.body,sent_at:result.sentAt,provider_message_id:result.providerMessageId,thread_id:result.threadId,
-    metadata:{type:'supplier_order_confirmation',supplier_order_id:order.id,reference:order.reference,recipient_email:order.recipient_email}});
+    metadata:{type:'supplier_order_confirmation',language:group.language,supplier_order_id:order.id,reference:order.reference,recipient_email:order.recipient_email}});
   const {error:timelineError}=await db.from('timeline_events').insert({inquiry_id:order.inquiry_id,event_type:'supplier_order_confirmation_sent',visibility:'admin',actor_type:'admin',actor_user_id:user.id,metadata:{supplier_order_id:order.id,supplier_id:order.supplier_id,quote_id:order.customer_quote_id}});
   revalidatePath('/quotes/'+order.customer_quote_id);revalidatePath('/inquiries/'+order.inquiry_id);revalidatePath('/notifications');
   if(logError||timelineError)throw new Error('Supplier order was sent and recorded. Its activity log needs checking.');

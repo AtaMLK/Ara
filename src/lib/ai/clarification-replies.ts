@@ -1,4 +1,5 @@
 import 'server-only';
+import {getSupplierLanguage,supplierReplyMessage} from '@/lib/email/supplier-language';
 
 import { z } from 'zod';
 
@@ -71,13 +72,14 @@ async function resolveSupplierClarificationAnswer(input: {
 
   const [{ data: rfq }, { data: requirements }, { data: sourceEmail }] = await Promise.all([
     supabase.from('rfqs').select('id,rfq_code,subject,supplier_id').eq('id', rfqId).maybeSingle(),
-    supabase.from('requirements').select('type,value,status,source,source_ref').eq('inquiry_id', input.inquiryId).order('created_at', { ascending: true }).limit(100),
+    supabase.from('requirements').select('id,type,value,status,source,source_ref').eq('inquiry_id', input.inquiryId).order('created_at', { ascending: true }).limit(100),
     input.clarification.source_communication_id
-      ? supabase.from('communications').select('body,subject').eq('id', input.clarification.source_communication_id).maybeSingle()
+      ? supabase.from('communications').select('body,subject,metadata').eq('id', input.clarification.source_communication_id).maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
   if (!rfq) return;
 
+  const supplierLanguage=await getSupplierLanguage(rfq.supplier_id);
   let resolution: z.infer<typeof customerClarificationResolutionOutputSchema> | null = null;
   try {
     const ai = await runAgent(
@@ -85,12 +87,13 @@ async function resolveSupplierClarificationAnswer(input: {
       {
         clarification_question: input.clarification.question,
         customer_answer: input.answer,
+        supplier_language:supplierLanguage,
         supplier_original_email: sourceEmail?.body ?? '',
         inquiry_requirements: requirements ?? [],
         instructions: [
           'You are ARAT Agent handling a procurement clarification response.',
-          'auto_send is allowed only when the customer answer directly and clearly answers the supplier question and does not introduce a new or unverified technical fact.',
-          'Use admin_review when the answer introduces new technical specifications, model/part data, datasheet information, files, conflicting information, ambiguous information, or any information that requires verification before being sent to a supplier.',
+          'Use auto_send when the authenticated customer directly and clearly supplies the missing requirement. Newly supplied dimensions, model, quantity or technical specifications are customer-provided facts and do not by themselves require Admin approval.',
+          'Use admin_review for contradictions with confirmed requirements, commercial commitments, unreadable attachments, ambiguous or unrelated answers. Never infer missing values. supplierReply must be in supplier_language and contain only the requirement answer; omit customer identity, signatures, email addresses and unrelated details.',
           'Never invent technical facts. Rewrite the customer answer into a concise professional supplier reply.',
         ],
       },
@@ -109,9 +112,26 @@ async function resolveSupplierClarificationAnswer(input: {
     })));
   };
 
-  if (!resolution || !resolution.answerValid || resolution.decision === 'admin_review') {
+  if (!resolution || !resolution.answerValid || resolution.decision === 'admin_review'||resolution.confidence<0.85) {
+    if(resolution&&input.clarification.source_communication_id){
+      const metadata=(sourceEmail?.metadata??{}) as Record<string,unknown>;
+      await supabase.from('communications').update({metadata:{...metadata,ai_analysis:{supplier_reply_draft:resolution.supplierReply,admin_review_required:true,admin_review_status:'pending',summary:resolution.summary}}}).eq('id',input.clarification.source_communication_id);
+    }
     await notifyAdmins('Supplier clarification answer needs review', `ARAT Agent received the customer answer for ${rfq.rfq_code}. Admin approval is required before sending it to the supplier. ${resolution?.reason ?? 'The answer could not be safely validated.'}`, 'urgent');
     return;
+  }
+
+  const {data:rfqItems}=await supabase.from('rfq_items').select('requirement_id').eq('rfq_id',rfq.id);
+  const scopedIds=new Set((rfqItems??[]).map(item=>item.requirement_id));
+  const sourceRefs=[...new Set((requirements??[]).filter(item=>scopedIds.has(item.id)).map(item=>item.source_ref).filter(Boolean))];
+  const value=input.answer.trim();
+  const type=/required quantity/i.test(input.clarification.question)&&/^\d+(?:[.,]\d+)?\s*(?:pcs?|pieces?|units?|adet)?\.?$/i.test(value)?'quantity':/exact model or part number/i.test(input.clarification.question)&&value.length<100?'model_part_number':'specification';
+  const products=(requirements??[]).filter(item=>item.type==='product');
+  const sourceRef=sourceRefs.length===1?sourceRefs[0]:products.length===1?products[0].source_ref:null;
+  const {data:existingFact}=await supabase.from('requirements').select('id').eq('inquiry_id',input.inquiryId).eq('source','clarification').eq('source_ref',sourceRef).eq('value',value).limit(1).maybeSingle();
+  if(!existingFact){
+    const {error:factError}=await supabase.from('requirements').insert({inquiry_id:input.inquiryId,type,value,source:'clarification',source_ref:sourceRef,status:'confirmed'});
+    if(factError){await notifyAdmins('Customer requirement could not be saved','Review the clarification answer before replying to the supplier.','urgent');return;}
   }
 
   const { data: supplier } = await supabase.from('suppliers').select('primary_email_id').eq('id', rfq.supplier_id).maybeSingle();
@@ -132,10 +152,10 @@ async function resolveSupplierClarificationAnswer(input: {
   try {
     const provider = getEmailProvider();
     const subject = rfq.subject?.startsWith('Re:') ? rfq.subject : `Re: ${rfq.subject ?? rfq.rfq_code}`;
-    const html = `<p>Merhaba,</p><p>${escapeHtml(resolution.supplierReply)}</p><p>İyi çalışmalar,<br/>Arya Automation</p>`;
+    const {html,text}=supplierReplyMessage(supplierLanguage,resolution.supplierReply);
     const sent = await provider.send({
       to: [supplierEmail], subject, html,
-      text: `Merhaba,\\n\\n${resolution.supplierReply}\\n\\nİyi çalışmalar,\\nArya Automation`,
+      text,
       from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
       idempotencyKey: `clarification-answer:${input.clarification.id}`,
     });
@@ -143,7 +163,7 @@ async function resolveSupplierClarificationAnswer(input: {
       inquiry_id: input.inquiryId, supplier_id: rfq.supplier_id, rfq_id: rfq.id,
       direction: 'outgoing', channel: 'email', provider_message_id: sent.providerMessageId ?? null,
       thread_id: sent.threadId ?? null, subject, body: html, sent_at: sent.sentAt ?? new Date().toISOString(),
-      metadata: { type: 'customer_clarification_reply_to_supplier', clarification_id: input.clarification.id, source_communication_id: input.clarification.source_communication_id, agent: 'ARAT Agent' },
+      metadata: { language:supplierLanguage, type: 'customer_clarification_reply_to_supplier', clarification_id: input.clarification.id, source_communication_id: input.clarification.source_communication_id, agent: 'ARAT Agent' },
     });
     await notifyAdmins('ARAT Agent replied to supplier', `Customer clarification was verified and a clean response was sent to ${rfq.rfq_code}.`);
   } catch (error) {
@@ -466,9 +486,11 @@ export async function findCustomerClarificationForEmail(input: {
 
   if (!customer) return { matched: false as const, reason: 'customer_not_found' as const };
 
-  const normalizedSubject = input.subject.trim().replace(/^re:\s*/i, '');
+  const normalizedSubject = input.subject.trim().replace(/^(?:(?:re|fw|fwd|aw|ynt):\s*)+/i, '');
   const prefix = 'ARAT needs more information — ';
-  const reference = normalizedSubject.toLowerCase().startsWith(prefix.toLowerCase())
+  const reference = /^Additional requirement details - /i.test(normalizedSubject)
+    ? normalizedSubject.replace(/^Additional requirement details - /i,'').replace(/ - C[A-F0-9]{8}$/i,'').trim()
+    : normalizedSubject.toLowerCase().startsWith(prefix.toLowerCase())
     ? normalizedSubject.slice(prefix.length).split(' — ')[0].trim()
     : null;
 
@@ -499,7 +521,7 @@ export async function findCustomerClarificationForEmail(input: {
         : {};
       const type = String(metadata.type ?? '');
       const subject = (row.subject ?? '').trim().toLowerCase().replace(/^re:\s*/i, '');
-      return ['clarification', 'supplier_clarification_to_customer'].includes(type) && subject === normalizedSubject;
+      return ['clarification', 'supplier_clarification_to_customer'].includes(type) && subject === normalizedSubject.toLowerCase();
     });
     inquiryId = candidate?.inquiry_id ?? null;
   }
@@ -508,7 +530,7 @@ export async function findCustomerClarificationForEmail(input: {
 
   const { data: communications } = await supabase
     .from('communications')
-    .select('metadata,created_at')
+    .select('metadata,created_at,subject')
     .eq('customer_id', customer.id)
     .eq('inquiry_id', inquiryId)
     .eq('direction', 'outgoing')
@@ -521,7 +543,7 @@ export async function findCustomerClarificationForEmail(input: {
       const metadata = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
         ? row.metadata as Record<string, unknown>
         : {};
-      return ['clarification', 'supplier_clarification_to_customer'].includes(String(metadata.type ?? ''));
+      return ['clarification', 'supplier_clarification_to_customer'].includes(String(metadata.type ?? ''))&&(!row.subject||row.subject.trim().replace(/^(?:(?:re|fw|fwd|aw|ynt):\s*)+/i,'').toLowerCase()===normalizedSubject.toLowerCase());
     })
     .map((row) => ({
       clarificationId: typeof row.metadata?.clarification_id === 'string' ? row.metadata.clarification_id : null,

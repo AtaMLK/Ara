@@ -3,12 +3,30 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {createSupabaseAdminClient} from '@/lib/supabase/admin';
 import {getCompanyProfile} from './company';
+import {getSupplierLanguage,type SupplierLanguage} from '@/lib/email/supplier-language';
 
 export type OrderLine={itemId:string;supplierQuoteId:string;description:string;model:string;brand:string;quantity:number;currency:string;net:number|null;gross:number|null;taxText:string;delivery:string;terms:string};
-export type OrderGroup={supplierId:string;supplierName:string;recipient:string;reference:string;lines:OrderLine[];instructions:string};
+export type OrderGroup={supplierId:string;supplierName:string;recipient:string;reference:string;lines:OrderLine[];instructions:string;language?:SupplierLanguage};
 const money=(value:number|null)=>value==null?'Not stated':Number(value).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:6});
 export const orderFingerprint=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function renderSupplierOrder(group:OrderGroup,company:{name:string;address:string;phone:string;website:string;taxDetails:string;email:string}) {
+  if(group.language==='tr'){
+    const price=(value:number|null)=>value==null?'Belirtilmedi':money(value);
+    const subject='Satın alma siparişi '+group.reference+' | '+group.lines.map(line=>line.model||line.description).join(', ').slice(0,140);
+    const blocks=group.lines.map((line,i)=>[
+      'Kalem '+(i+1)+': '+[line.model,line.description].filter(Boolean).join(' — '),line.brand?'Marka: '+line.brand:'','Miktar: '+line.quantity,
+      'Net birim fiyat: '+price(line.net)+' '+line.currency,
+      'Vergi / KDV: '+(line.taxText.replace('(excluded)','(KDV hariç)').replace('(included)','(KDV dahil)').replace('(exempt)','(vergiden muaf)')||'Belirtilmedi; lütfen teyit ediniz'),
+      'KDV dahil birim fiyat: '+price(line.gross)+' '+line.currency,
+      'KDV dahil kalem toplamı: '+(line.gross==null?'Vergi teyidi bekleniyor':price(line.gross*line.quantity)+' '+line.currency),
+      'Teslim süresi: '+(line.delivery||'Lütfen teyit ediniz'),line.terms,
+    ].filter(Boolean).join('\n'));
+    const body=['Sayın '+group.supplierName+',','Aşağıdaki ürünleri teklifinizde belirtilen koşullarla sipariş ediyoruz. Sipariş kabulünü, miktarları, vergi tutarını, nihai sipariş toplamını ve sevk / teslim tarihlerini yanıtınızda teyit etmenizi rica ederiz.',
+      'Sipariş referansı: '+group.reference,...blocks,group.instructions?'Sipariş / teslimat talimatları:\n'+group.instructions:'',
+      'Fiyat, stok durumu veya teslim koşullarında değişiklik varsa lütfen işleme almadan önce tarafımıza bildiriniz.',
+      'İyi çalışmalar,',company.name,company.address,company.taxDetails,company.phone,company.website,company.email].filter(Boolean).join('\n\n');
+    return {subject,body};
+  }
   const subject='Purchase order '+group.reference+' | '+group.lines.map(line=>line.model||line.description).join(', ').slice(0,140);
   const blocks=group.lines.map((line,i)=>[
     'Item '+(i+1)+': '+[line.model,line.description].filter(Boolean).join(' — '),
@@ -58,7 +76,7 @@ export async function loadOrderGroups(quoteId:string,instructions='') {
     const recipient=rfqs.data?.find(rfq=>rfq.supplier_id===supplier.id&&rfq.recipient_email)?.recipient_email;
     if(!recipient||!z.string().email().safeParse(recipient).success)throw new Error('No previously approved RFQ email address for '+supplier.legal_name+'.');
     let group=groups.get(supplier.id);
-    if(!group){group={supplierId:supplier.id,supplierName:supplier.legal_name,recipient,reference:(quote.display_reference||quote.reference)+'-PO'+([...supplierIds].sort().indexOf(supplier.id)+1),lines:[],instructions};groups.set(supplier.id,group);}
+    if(!group){group={supplierId:supplier.id,supplierName:supplier.legal_name,recipient,reference:(quote.display_reference||quote.reference)+'-PO'+([...supplierIds].sort().indexOf(supplier.id)+1),lines:[],instructions,language:await getSupplierLanguage(supplier.id)};groups.set(supplier.id,group);}
     const calc=(item.price_calculation??{}) as Record<string,unknown>;
     if(offer?.moq!=null&&Number(item.quantity)<Number(offer.moq))throw new Error('Requested order quantity is below the supplier minimum. Obtain updated supplier terms before ordering.');
     if(typeof calc.selected_price_tier_id==='string'){

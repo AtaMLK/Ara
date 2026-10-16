@@ -1,4 +1,6 @@
 import 'server-only';
+import {recordSupplierReplyLanguage,getSupplierLanguage,supplierReplyMessage} from './supplier-language';
+import {customerRequirementQuestion,type MissingRequirementField} from './customer-requirements';
 
 import crypto from 'node:crypto';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
@@ -142,6 +144,7 @@ async function analyzeSupplierEmailAndNotify(input: {
   communicationId: string;
   rfqCode: string;
   inquiryReference: string;
+  supplierId:string;
   supplierName: string;
   supplierEmail: string;
   subject: string;
@@ -153,13 +156,25 @@ async function analyzeSupplierEmailAndNotify(input: {
 }) {
   const supabase = createSupabaseAdminClient();
 
-  const { data: inquiryRequirements } = await supabase
+  const { data: inquiryRequirements,error:requirementsError } = await supabase
     .from('requirements')
-    .select('type,value,status')
+    .select('id,type,value,status,source_ref')
     .eq('inquiry_id', input.inquiryId)
     .order('created_at', { ascending: true })
     .limit(100);
 
+  const [original,documents,rfqItems]=await Promise.all([
+    supabase.from('inquiries').select('original_customer_text,normalized_information').eq('id',input.inquiryId).maybeSingle(),
+    supabase.from('document_processing').select('extracted_text,inquiry_files!inner(inquiry_id)').eq('inquiry_files.inquiry_id',input.inquiryId),
+    supabase.from('rfq_items').select('requirement_id,requested_data').eq('rfq_id',input.rfqId),
+  ]);
+  if(requirementsError||original.error||documents.error||rfqItems.error){
+    await supabase.from('ai_alerts').insert({inquiry_id:input.inquiryId,agent_id:'email_response',alert_type:'CLARIFICATION_CONTEXT_UNAVAILABLE',message:'Request details could not be checked. Review this supplier question before asking the customer for information.',priority:'urgent'});
+    return;
+  }
+
+  await recordSupplierReplyLanguage(input.supplierId, input.body);
+  const supplierLanguage=await getSupplierLanguage(input.supplierId);
   const requirementContext = (inquiryRequirements ?? []).map((item) => ({
     type: item.type,
     value: item.value,
@@ -172,6 +187,7 @@ async function analyzeSupplierEmailAndNotify(input: {
     supplierIntent: 'quote' | 'clarification' | 'unavailable' | 'general_update' | 'unknown';
     customerActionRequired: boolean;
     customerQuestion?: string;
+    missingFields?:MissingRequirementField[];
     adminReviewRequired: boolean;
     supplierReplyDraft?: string;
     confidence: number;
@@ -189,18 +205,22 @@ async function analyzeSupplierEmailAndNotify(input: {
           rfq_code: input.rfqCode,
           inquiry_reference: input.inquiryReference,
           supplier_name: input.supplierName,
+          supplier_language:supplierLanguage,
           supplier_email: input.supplierEmail,
           subject: input.subject,
           supplier_email_body: input.body,
           inquiry_requirements: requirementContext,
+          original_customer_request:original.data,
+          customer_document_text:(documents.data??[]).map(document=>document.extracted_text).filter(Boolean),
+          supplier_requested_items:rfqItems.data??[],
           instructions: [
             'Analyze the supplier email for an internal procurement workflow.',
             'Determine whether it contains actionable commercial information such as price, availability, lead time, MOQ, payment terms, quotation validity, or a clear statement that the supplier can/cannot supply.',
             'If the supplier asks for information, first compare the request with inquiry_requirements. Do not ask the customer for information that is already present in the original request, confirmed requirements, or supplied documents.',
-            'If the requested information is already available in the inquiry/files and can answer the supplier, set customerActionRequired=false, set adminReviewRequired=true, and prepare supplierReplyDraft containing only the relevant confirmed information. Admin must approve before ARAT Agent sends existing technical data or a datasheet-derived answer to the supplier.',
+            'If the requested information is explicitly available and unambiguous in confirmed requirements or customer files, set customerActionRequired=false and adminReviewRequired=false, and prepare supplierReplyDraft using only the relevant facts for this RFQ. Do not send facts about other items. Ambiguity, contradictory values, unreadable files or commercial commitments require adminReviewRequired=true.',
             'If the information is genuinely missing from the inquiry/files, set customerActionRequired=true and write one concise customer-facing question in customerQuestion. Never copy the whole supplier email or the whole inquiry.',
             'If the customer answer will only confirm a simple fact already established in the request, ARAT Agent may later send a clean supplier reply automatically after customer confirmation.',
-            'customerQuestion must contain only the minimum missing information the customer needs to provide.',
+            'customerQuestion must contain only the minimum missing information the customer needs to provide. Return missingFields using only the requirement categories that are genuinely missing. supplierReplyDraft must use supplier_language.',
             'Never expose supplier name, supplier email, supplier contact person, supplier internal notes, supplier pricing, supplier commercial terms, private supplier details, or raw supplier wording in customerQuestion.',
             'Do not mention that a specific supplier asked for the information. Say only that additional information is needed to continue.',
             'If the supplier email is vague (for example "please provide detailed information about the specifications"), use inquiry_requirements to determine whether the requested information is already available. If yes, prepare an admin-review supplier reply; if not, ask the customer only for the missing datasheet/specification.',
@@ -233,7 +253,7 @@ async function analyzeSupplierEmailAndNotify(input: {
   // ARAT Agent first checks whether the requested information already exists in
   // the customer's request. Existing technical data goes to Admin approval;
   // only genuinely missing information is requested from the Customer.
-  if (looksLikeCustomerClarificationRequest(input.body) && !analysis.customerActionRequired && !analysis.adminReviewRequired) {
+  if (looksLikeCustomerClarificationRequest(input.body) && !analysis.customerActionRequired && !analysis.adminReviewRequired&&!analysis.supplierReplyDraft) {
     const existingTechnicalData = requirementContext
       .filter((item) => item.status === 'confirmed' && ['product', 'model_part_number', 'specification', 'quantity'].includes(item.type))
       .map((item) => item.value)
@@ -259,6 +279,12 @@ async function analyzeSupplierEmailAndNotify(input: {
     }
   }
 
+  if(analysis.confidence<0.85){analysis.adminReviewRequired=true;analysis.customerActionRequired=false;}
+  if(analysis.customerActionRequired){
+    const linkedIds=new Set((rfqItems.data??[]).map(item=>item.requirement_id));
+    const requestedItems=(inquiryRequirements??[]).filter(item=>item.type==='product'&&linkedIds.has(item.id)).map(item=>item.value);
+    analysis.customerQuestion=customerRequirementQuestion(analysis.missingFields??[],analysis.customerQuestion??'',requestedItems);
+  }
   const currentCommunication = await supabase
     .from('communications')
     .select('metadata')
@@ -271,22 +297,20 @@ async function analyzeSupplierEmailAndNotify(input: {
       ? currentCommunication.data.metadata as Record<string, unknown>
       : {};
 
+  const analysisMetadata={summary:analysis.summary,supplier_intent:analysis.supplierIntent,
+    has_actionable_information:analysis.hasActionableInformation,customer_action_required:analysis.customerActionRequired,
+    customer_question:analysis.customerQuestion??null,admin_review_required:analysis.adminReviewRequired,
+    supplier_reply_draft:analysis.supplierReplyDraft??null,admin_review_status:analysis.adminReviewRequired?'pending':null,confidence:analysis.confidence};
   await supabase.from('communications').update({
     metadata: {
       ...metadata,
-      ai_analysis: {
-        summary: analysis.summary,
-        supplier_intent: analysis.supplierIntent,
-        has_actionable_information: analysis.hasActionableInformation,
-        customer_action_required: analysis.customerActionRequired,
-        customer_question: analysis.customerQuestion ?? null,
-        admin_review_required: analysis.adminReviewRequired,
-        supplier_reply_draft: analysis.supplierReplyDraft ?? null,
-        admin_review_status: analysis.adminReviewRequired ? 'pending' : null,
-        confidence: analysis.confidence,
-      },
+      ai_analysis: analysisMetadata,
     },
-  }).eq('id', input.communicationId);
+  }).eq('id', input.communicationId).is('metadata->>requirement_reply_status',null).is('metadata->>customer_question_status',null);
+
+  if(analysis.confidence<0.85){
+    await supabase.from('ai_alerts').insert({inquiry_id:input.inquiryId,agent_id:'email_response',alert_type:'SUPPLIER_CLARIFICATION_UNCERTAIN',message:'The supplier question could not be resolved confidently. Review the available requirement details.',priority:'urgent'});
+  }
 
   const notificationMessage = analysis.customerActionRequired && analysis.customerQuestion
     ? `Supplier replied to ${input.rfqCode}. AI: ${analysis.summary} Customer clarification required: ${analysis.customerQuestion}`
@@ -328,12 +352,35 @@ async function analyzeSupplierEmailAndNotify(input: {
     await supabase.from('communications').update({
       metadata: {
         ...metadata,
+        ai_analysis:analysisMetadata,
         arat_agent: {
           status: 'admin_review_required',
           supplier_reply_draft: analysis.supplierReplyDraft,
         },
       },
     }).eq('id', input.communicationId);
+  }
+
+  if(!analysis.customerActionRequired&&!analysis.adminReviewRequired&&analysis.supplierReplyDraft){
+    if(analysis.confidence<0.85){
+      await supabase.from('ai_alerts').insert({inquiry_id:input.inquiryId,agent_id:'email_response',alert_type:'SUPPLIER_REQUIREMENT_REPLY_UNCERTAIN',message:'Supplier requirement reply needs review because the available facts could not be validated confidently.',priority:'urgent'});
+      return;
+    }
+    if(metadata.requirement_reply_status)return;
+    const reply=supplierReplyMessage(supplierLanguage,analysis.supplierReplyDraft);
+    const {data:claim,error:claimError}=await supabase.from('communications').update({metadata:{...metadata,ai_analysis:analysisMetadata,requirement_reply_status:'sending'}}).eq('id',input.communicationId).is('metadata->>requirement_reply_status',null).select('id').maybeSingle();
+    if(claimError)throw new Error('Supplier requirement reply could not be recorded.');
+    if(!claim)return;
+    try{
+      const sent=await getEmailProvider().send({from:process.env.EMAIL_FROM||process.env.SMTP_FROM||process.env.SMTP_USER||'',to:[input.supplierEmail],subject:'Re: '+input.subject.replace(/^Re:\s*/i,''),...reply,idempotencyKey:'supplier-requirement-reply:'+input.communicationId});
+      const {error:recordError}=await supabase.from('communications').insert({inquiry_id:input.inquiryId,supplier_id:input.supplierId,rfq_id:input.rfqId,direction:'outgoing',channel:'email',subject:'Re: '+input.subject.replace(/^Re:\s*/i,''),body:reply.html,provider_message_id:sent.providerMessageId,thread_id:sent.threadId,sent_at:sent.sentAt,metadata:{type:'supplier_requirement_reply',language:supplierLanguage,source_communication_id:input.communicationId}});
+      if(recordError)throw new Error('Supplier reply delivery log could not be saved.');
+      await supabase.from('communications').update({metadata:{...metadata,ai_analysis:analysisMetadata,requirement_reply_status:'sent'}}).eq('id',input.communicationId);
+    }catch{
+      await supabase.from('communications').update({metadata:{...metadata,ai_analysis:analysisMetadata,requirement_reply_status:'delivery_uncertain'}}).eq('id',input.communicationId);
+      await supabase.from('ai_alerts').insert({inquiry_id:input.inquiryId,agent_id:'email_response',alert_type:'SUPPLIER_REQUIREMENT_REPLY_DELIVERY_UNCERTAIN',message:'Check the purchasing mailbox before resending the automatic requirement reply.',priority:'urgent'});
+    }
+    return;
   }
 
   if (!analysis.customerActionRequired || !analysis.customerQuestion || !input.customerEmail) {
@@ -361,6 +408,10 @@ async function analyzeSupplierEmailAndNotify(input: {
     .limit(1)
     .maybeSingle();
 
+  if(existingClarification)return;
+  const {data:questionClaim,error:questionClaimError}=await supabase.from('communications').update({metadata:{...metadata,ai_analysis:analysisMetadata,customer_question_status:'sending'}}).eq('id',input.communicationId).is('metadata->>customer_question_status',null).select('id').maybeSingle();
+  if(questionClaimError)throw new Error('Customer requirement question could not be recorded.');
+  if(!questionClaim)return;
   const clarification = existingClarification ?? (await supabase
     .from('clarifications')
     .insert({
@@ -387,7 +438,7 @@ async function analyzeSupplierEmailAndNotify(input: {
   }
 
   const provider = getEmailProvider();
-  const customerSubject = `ARAT needs more information — ${input.inquiryReference} — ${input.rfqCode}`;
+  const customerSubject = `Additional requirement details - ${input.inquiryReference} - C${clarification.id.slice(0,8).toUpperCase()}`;
   const customerHtml =
     `<p>Dear ${escapeHtml(input.customerName || 'Customer')},</p>` +
     `<p>To complete your request, we need the following information:</p>` +
@@ -405,7 +456,7 @@ async function analyzeSupplierEmailAndNotify(input: {
       idempotencyKey: `supplier-clarification:${input.communicationId}`,
     });
 
-    await supabase.from('communications').insert({
+    const {error:questionLogError}=await supabase.from('communications').insert({
       inquiry_id: input.inquiryId,
       customer_id: input.customerId ?? null,
       rfq_id: input.rfqId,
@@ -423,6 +474,8 @@ async function analyzeSupplierEmailAndNotify(input: {
         clarification_id: clarification.id,
       },
     });
+    if(questionLogError)throw new Error('Customer clarification delivery log could not be saved.');
+    await supabase.from('communications').update({metadata:{...metadata,ai_analysis:analysisMetadata,customer_question_status:'sent'}}).eq('id',input.communicationId);
 
     if (input.customerUserId) {
       await supabase.from('notifications').insert({
@@ -450,6 +503,7 @@ async function analyzeSupplierEmailAndNotify(input: {
       },
     });
   } catch (error) {
+    await supabase.from('communications').update({metadata:{...metadata,ai_analysis:analysisMetadata,customer_question_status:'delivery_uncertain'}}).eq('id',input.communicationId);
     await supabase.from('ai_alerts').insert({
       inquiry_id: input.inquiryId,
       agent_id: 'email_response',
@@ -609,9 +663,10 @@ export async function processInboundEmail(email: InboundEmail) {
     },
   };
   const communicationWrite = existing
-    ? supabase.from('communications').update(supplierCommunication).eq('id',existing.id)
+    ? supabase.from('communications').update(supplierCommunication).eq('id',existing.id).contains('metadata',{type:'unmatched_incoming_email'})
     : supabase.from('communications').insert(supplierCommunication);
-  const { data: communication, error: communicationError } = await communicationWrite.select('id').single();
+  const { data: communication, error: communicationError } = existing&&existingType==='supplier_rfq_reply'?{data:{id:existing.id},error:null}:await communicationWrite.select('id').maybeSingle();
+  if(existing&&!communication&&!communicationError)return {ok:true,duplicate:true};
 
   if (communicationError || !communication) {
     if (communicationError?.code === '23505') return { ok: true, duplicate: true };
@@ -638,7 +693,8 @@ export async function processInboundEmail(email: InboundEmail) {
     rfqId: supplierMatch.rfq.id,
     communicationId: communication!.id,
     rfqCode: supplierMatch.rfq.rfq_code,
-    inquiryReference: inquiryContext?.reference ?? supplierMatch.rfq.subject ?? 'Inquiry',
+    inquiryReference: inquiryContext?.reference ?? 'Inquiry',
+    supplierId:supplierMatch.supplierId,
     supplierName: supplierRecord.data?.legal_name ?? 'Supplier',
     supplierEmail: extractCustomerEmail(email.from),
     subject,

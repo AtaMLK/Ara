@@ -1,0 +1,10 @@
+// Customer-visible questions are built from fixed requirement labels, never
+// from supplier email text, signatures, identity or commercial terms.
+export const missingRequirementFields=['quantity','part_number','datasheet','dimensions','voltage','power','material','temperature_range','application','delivery_address','required_delivery_date','technical_specifications'] as const;
+export type MissingRequirementField=typeof missingRequirementFields[number];
+const labels:Record<MissingRequirementField,string>={quantity:'required quantity',part_number:'exact model or part number',datasheet:'product datasheet',dimensions:'required dimensions and units',voltage:'required operating voltage',power:'required power rating',material:'required material',temperature_range:'required operating temperature range',application:'intended application',delivery_address:'delivery address',required_delivery_date:'required delivery date',technical_specifications:'technical specifications or product datasheet'};
+export function customerRequirementQuestion(fields:MissingRequirementField[],legacyQuestion='',requestedItems:string[]=[]) {
+  const inferred=fields.length?fields:missingRequirementFields.filter(field=>new RegExp(({quantity:'quantity|miktar',part_number:'part.number|model',datasheet:'datasheet|data sheet',dimensions:'dimension|size|ölçü',voltage:'voltage|volt',power:'power|watt',material:'material',temperature_range:'temperature',application:'application',delivery_address:'delivery address',required_delivery_date:'delivery date',technical_specifications:'specification|technical'} as Record<string,string>)[field],'i').test(legacyQuestion));
+  const chosen=[...new Set(inferred.length?inferred:['technical_specifications' as const])];
+  return (requestedItems.length?'For your requested item(s) '+requestedItems.map(item=>item.slice(0,200)).join('; ')+', please provide ':'To complete your request, please provide ')+ 'the following missing requirement details: '+chosen.map(field=>labels[field]).join('; ')+'.';
+}

@@ -428,6 +428,7 @@ export const supplierEmailAnalysisOutputSchema = z.object({
   supplierIntent: z.enum(['quote', 'clarification', 'unavailable', 'general_update', 'unknown']).default('unknown'),
   customerActionRequired: z.boolean().default(false),
   customerQuestion: z.string().min(1).optional(),
+  missingFields:z.array(z.enum(['quantity','part_number','datasheet','dimensions','voltage','power','material','temperature_range','application','delivery_address','required_delivery_date','technical_specifications'])).default([]),
   adminReviewRequired: z.boolean().default(false),
   supplierReplyDraft: z.string().min(1).optional(),
   confidence: z.number().min(0).max(1).default(0.5),

@@ -6,6 +6,59 @@ const { randomUUID } = require('node:crypto');
 const { stripTypeScriptTypes } = require('node:module');
 const root = path.resolve(__dirname, '..');
 
+test('supplier correspondence keeps its language until a clear unquoted reply changes it',async()=>{
+ const f=fixture(),supplierId=randomUUID();f.tables.suppliers=[{id:supplierId,primary_country:'Turkey'}];
+ const language=f.load('@/lib/email/supplier-language');
+ assert.equal(await language.getSupplierLanguage(supplierId),'tr');
+ f.tables.suppliers[0].primary_country='Germany';assert.equal(await language.getSupplierLanguage(supplierId),'tr');
+ await language.recordSupplierReplyLanguage(supplierId,'OK\n> Hello please confirm the delivery');assert.equal(await language.getSupplierLanguage(supplierId),'tr');
+ await language.recordSupplierReplyLanguage(supplierId,'Hello, please confirm the required quantity.');assert.equal(await language.getSupplierLanguage(supplierId),'en');
+ await language.recordSupplierReplyLanguage(supplierId,'Merhaba, teslim süresi ve fiyat bilgisi rica ederiz.\nOn Tuesday wrote:\nHello please confirm.');assert.equal(await language.getSupplierLanguage(supplierId),'tr');
+ const {renderSupplierOrder}=f.load('@/lib/quotes/supplier-orders');
+ const order=renderSupplierOrder({supplierId,supplierName:'Tedarikçi',recipient:'sales@example.test',reference:'AO-TEST-PO1',language:'tr',instructions:'',lines:[]},{name:'Arya',address:'',phone:'',website:'',email:'',taxDetails:''});assert.match(order.subject,/Satın alma siparişi/);assert.match(order.body,/Sipariş kabulünü/);assert.doesNotMatch(order.body,/Dear|Purchase order|Please supply/);
+});
+
+test('missing details are requested privately and a clear new customer specification continues automatically in Turkish',async()=>{
+ const {f,supplierId,rfqId}=supplierReplyFixture(),sent=[],customerId=randomUUID(),userId=randomUUID(),requirementId=randomUUID();
+ Object.assign(f.tables.inquiries[0],{customers:{id:customerId,user_id:userId,email:'customer@example.test',name:'Customer'},original_customer_text:'Please quote Sensor A'});
+ f.tables.suppliers[0].communication_language='tr';
+ f.tables.requirements=[{id:requirementId,inquiry_id:f.inquiryId,type:'product',value:'Sensor A',source_ref:'intake:item:0',status:'confirmed'}];
+ f.tables.rfq_items=[{rfq_id:rfqId,requirement_id:requirementId}];
+ f.mock('@/lib/ai/workflow',{continueInquiryWorkflow:async()=>({outcome:'continued'})});
+ f.mock('@/lib/email/provider',{getEmailProvider:()=>({send:async input=>{sent.push(input);return {providerMessageId:'mock-'+sent.length,sentAt:new Date().toISOString()};}})});
+ f.mock('@/lib/ai/agent-runner',{runAgent:async(ctx,input,schema)=>({output:schema.parse(input.customer_answer?{decision:'auto_send',answerValid:true,supplierReply:'Gerekli besleme gerilimi 24 V DC olarak belirtilmiştir.',summary:'Customer supplied voltage',reason:'Explicit customer specification',confidence:1}:{hasActionableInformation:false,summary:'Voltage required',supplierIntent:'clarification',customerActionRequired:true,missingFields:['voltage'],customerQuestion:'Supplier Company info@supplier.example requires 24V, EUR 100 confidential discount',confidence:1})})});
+ const inbound=f.load('@/lib/email/inbound');
+ const email={providerMessageId:'missing-voltage',from:'info@supplier.example',to:['purchase@example.test'],subject:'Re: RFQ-20261014-ABCDEF',text:'Merhaba, teknik bilgi rica ederiz. Çalışma voltajı nedir?',provider:'test'};
+ await inbound.processInboundEmail(email);assert.equal(sent.length,1);assert.deepEqual(sent[0].to,['customer@example.test']);
+ assert.match(sent[0].text,/operating voltage/);assert.match(sent[0].text,/Sensor A/);assert.doesNotMatch(sent[0].subject+sent[0].html,/Supplier Company|supplier\.example|EUR|100|discount|RFQ-20261014/i);
+ await inbound.processInboundEmail(email);assert.equal(sent.length,1);
+ f.unmock('@/lib/ai/clarification-replies');
+ f.tables.customers=[{id:customerId,user_id:userId,email:'customer@example.test',name:'Customer',status:'active'}];
+ f.tables.inquiries[0].customer_id=customerId;
+ const otherClarification={id:randomUUID(),inquiry_id:f.inquiryId,status:'sent',question:'Another question'};
+ f.tables.clarifications.push(otherClarification);f.tables.communications.push({id:randomUUID(),customer_id:customerId,inquiry_id:f.inquiryId,direction:'outgoing',channel:'email',subject:'Additional requirement details - '+f.tables.inquiries[0].reference+' - C'+otherClarification.id.slice(0,8).toUpperCase(),metadata:{type:'supplier_clarification_to_customer',clarification_id:otherClarification.id}});
+ const matched=await f.load('@/lib/ai/clarification-replies').findCustomerClarificationForEmail({sender:'customer@example.test',subject:'Re: Re: '+sent[0].subject});
+ assert.equal(matched.matched,true);assert.equal(matched.clarification.id,f.tables.clarifications[0].id,'Email reply must choose its own clarification when several are pending');
+ const clarification=f.tables.clarifications[0];
+ const db=f.load('@/lib/supabase/admin').createSupabaseAdminClient();
+ const customerInbound=require('./helpers/load-ts.cjs')({'@/lib/supabase/admin':{createSupabaseAdminClient:()=>db},'@/lib/ai/clarification-replies':f.load('@/lib/ai/clarification-replies'),'@/lib/ai/workflow':{continueInquiryWorkflow:async()=>({})},'@/lib/email/customer-inquiry':{ingestCustomerInquiryEmail:async()=>{throw Error('Reply must not become a new inquiry');}}});
+ const answered=await customerInbound('@/lib/email/inbound').processInboundEmail({providerMessageId:'customer-voltage-answer',provider:'test',from:'customer@example.test',to:['purchase@example.test'],subject:'Re: '+sent[0].subject,text:'24 V DC'});
+ assert.equal(answered.type,'customer_clarification');assert.equal(answered.answered,true);
+ assert.equal(sent.length,2);assert.deepEqual(sent[1].to,['info@supplier.example']);assert.match(sent[1].text,/Merhaba|24 V DC/);assert.doesNotMatch(sent[1].text,/Customer|customer@example/);
+ assert.equal(f.tables.clarifications[0].status,'answered');assert.ok(f.tables.requirements.some(r=>r.value==='24 V DC'&&r.source_ref==='intake:item:0'));
+ await f.load('@/lib/ai/clarification-replies').applyCustomerClarificationAnswer({inquiryId:f.inquiryId,clarificationId:clarification.id,answer:'24 V DC'});assert.equal(sent.length,2);
+});
+
+test('already available requirements are sent to the supplier without questioning the customer',async()=>{
+ const {f,supplierId}=supplierReplyFixture(),sent=[];f.tables.suppliers[0].communication_language='en';
+ f.tables.requirements=[{inquiry_id:f.inquiryId,type:'specification',value:'24 V DC',status:'confirmed'}];
+ f.mock('@/lib/ai/workflow',{continueInquiryWorkflow:async()=>({})});
+ f.mock('@/lib/email/provider',{getEmailProvider:()=>({send:async input=>{sent.push(input);return {providerMessageId:'mock-known',sentAt:new Date().toISOString()};}})});
+ f.mock('@/lib/ai/agent-runner',{runAgent:async(ctx,input,schema)=>({output:schema.parse({hasActionableInformation:false,summary:'Known voltage',supplierIntent:'clarification',customerActionRequired:false,adminReviewRequired:false,supplierReplyDraft:'The required operating voltage is 24 V DC.',confidence:1})})});
+ await f.load('@/lib/email/inbound').processInboundEmail({providerMessageId:'known-voltage',provider:'test',from:'info@supplier.example',to:['purchase@example.test'],subject:'Re: RFQ-20261014-ABCDEF',text:'Hello, please provide technical information about the operating voltage.'});
+ assert.equal(sent.length,1);assert.deepEqual(sent[0].to,['info@supplier.example']);assert.match(sent[0].text,/Hello|24 V DC/);assert.equal((f.tables.clarifications??[]).length,0);
+});
+
 test('late replies from three suppliers consolidate into one draft and preserve Admin prices',async()=>{
  const f=fixture(),customerId=randomUUID();
  Object.assign(f.tables.inquiries[0],{status:'rfq',customer_id:customerId,normalized_information:{intake:{items:[{product:'Sensor',model:'S1',quantity:2},{product:'Motor',model:'M1',quantity:3}]}}});
@@ -429,6 +482,7 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
     constructor(table) { this.table = table; this.filters = []; this.op = 'read'; }
     select(columns, options) { this.selectOptions = options; return this; }
     eq(key, value) { this.filters.push(row => (key==='is_selected'?(row[key]??true):row[key]) === value); return this; }
+    is(key,value){this.filters.push(row=>{const [column,field]=key.split('->>');return (field?row[column]?.[field]??null:row[column]??null)===value;});return this;}
     ilike(key, value) { const literal = value.replace(/\\([%_\\])/g, '$1').toLowerCase(); this.filters.push(row => String(row[key] ?? '').toLowerCase() === literal); return this; }
     in(key, values) { this.filters.push(row => values.includes(row[key])); return this; }
     not(key, operator, value) { this.filters.push(row => operator === 'is' ? row[key] != null : row[key] !== value); return this; }
