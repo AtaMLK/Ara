@@ -1,4 +1,5 @@
 'use client';
+import {T} from '@/components/language';
 import {useRouter} from 'next/navigation';
 
 import { useTransition } from 'react';
@@ -17,8 +18,8 @@ export default function RevisionRequestActions({ requestId }: { requestId: strin
 
   return (
     <div className="action-cell">
-      <button className="primary-button" disabled={pending} onClick={() => review('approve')}>Approve & create revision</button>
-      <button className="secondary-button" disabled={pending} onClick={() => review('reject')}>Reject</button>
+      <button className="primary-button" disabled={pending} onClick={() => review('approve')}><T>Approve & create revision</T></button>
+      <button className="secondary-button" disabled={pending} onClick={() => review('reject')}><T>Reject</T></button>
     </div>
   );
 }

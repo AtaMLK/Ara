@@ -1,3 +1,4 @@
+import {T,LanguageToggle} from '@/components/language';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { requireAdminPage } from '@/lib/data/admin';
@@ -22,29 +23,30 @@ export default async function AdminLayout({ children }: { children: ReactNode })
         <Link href="/" className="admin-brand" aria-label="ARAT Dashboard">
           <span className="admin-brand-mark">A</span>
           <span>
-            <strong>ARAT</strong>
-            <small>Procurement OS</small>
+            <strong><T>ARAT</T></strong>
+            <small><T>Procurement OS</T></small>
           </span>
         </Link>
 
-        <div className="eyebrow admin-eyebrow">ADMIN</div>
+        <div className="eyebrow admin-eyebrow"><T>ADMIN</T></div>
 
         <nav className="nav admin-nav">
           {links.map(([href, label, Icon]) => (
             <Link key={href} href={href}>
               <span className="nav-icon" aria-hidden="true">{Icon}</span>
-              <span>{label}</span>
+              <span><T>{label}</T></span>
             </Link>
           ))}
         </nav>
 
         <div className="sidebar-footer">
+          <LanguageToggle />
           <ThemeToggle />
           <SignOutButton />
         </div>
       </aside>
 
-      <main className="main">{children}</main>
+      <main className="main"><div className="admin-mobile-controls"><Link href="/">ARAT</Link><LanguageToggle/><ThemeToggle/></div>{children}</main>
     </div>
   );
 }

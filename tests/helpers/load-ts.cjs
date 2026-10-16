@@ -7,6 +7,7 @@ module.exports=function createLoader(mocks={}){
     if(!spec.startsWith('@/')&&!spec.startsWith('.'))return require(spec);
     let file=spec.startsWith('@/')?path.join(root,'src',spec.slice(2)):path.resolve(parent,spec);
     if(!path.extname(file))file+='.ts';
+    if(file.endsWith('.json'))return JSON.parse(fs.readFileSync(file,'utf8'));
     if(cache.has(file))return cache.get(file).exports;
     const module={exports:{}};cache.set(file,module);
     const code=transformSync(fs.readFileSync(file,'utf8'),{filename:file,jsc:{parser:{syntax:'typescript',tsx:file.endsWith('.tsx')},target:'es2022'},module:{type:'commonjs'}}).code;

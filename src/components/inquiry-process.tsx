@@ -1,5 +1,6 @@
 'use client';
 
+import {T,Localized,useI18n} from '@/components/language';
 import { useState } from 'react';
 import { Check, Circle, Clock3, X } from 'lucide-react';
 
@@ -12,6 +13,7 @@ export type InquiryProcessStep = {
 };
 
 export default function InquiryProcess({ steps, eyebrow = 'PROCESS' }: { steps: InquiryProcessStep[]; eyebrow?: string }) {
+  const {t}=useI18n();
   const [selected, setSelected] = useState<InquiryProcessStep | null>(null);
   const current = steps.find((step) => step.state === 'warning') ?? steps.find((step) => step.state === 'current');
 
@@ -20,27 +22,27 @@ export default function InquiryProcess({ steps, eyebrow = 'PROCESS' }: { steps: 
       <section className="section inquiry-process">
         <div className="section-head">
           <div>
-            <div className="eyebrow">{eyebrow}</div>
-            <h2>Request Process</h2>
-            <div className="muted">Follow the request step by step.</div>
+            <div className="eyebrow"><T>{eyebrow}</T></div>
+            <h2><T>Request Process</T></h2>
+            <div className="muted"><T>Follow the request step by step.</T></div>
           </div>
-          <span className="badge">{current?.title ?? 'Completed'}</span>
+          <span className="badge"><T>{current?.title ?? 'Completed'}</T></span>
         </div>
         <div className="inquiry-process-track" role="list">
           {steps.map((step, index) => (
-            <button type="button" role="listitem" key={step.key}
+            <Localized as="button" type="button" role="listitem" key={step.key}
               className={`inquiry-process-step inquiry-process-step--${step.state}`}
               onClick={() => setSelected(step)}
-              aria-label={`${step.title}: ${step.state}`}
+              aria-label={`${t(step.title)}: ${t(step.state)}`}
               title={step.detail || step.description}>
               <span className="inquiry-process-icon">
                 {step.state === 'completed' ? <Check size={15} /> : step.state === 'warning' ? <Clock3 size={15} /> : step.state === 'current' ? <span className="inquiry-process-current-dot" /> : <Circle size={13} />}
               </span>
               <span className="inquiry-process-step-text">
-                <strong>{index + 1}. {step.title}</strong>
-                <span>{step.description}</span>
+                <strong>{index + 1}. <T>{step.title}</T></strong>
+                <span><T>{step.description}</T></span>
               </span>
-            </button>
+            </Localized>
           ))}
         </div>
       </section>
@@ -50,18 +52,18 @@ export default function InquiryProcess({ steps, eyebrow = 'PROCESS' }: { steps: 
           <div className="inquiry-process-modal" role="dialog" aria-modal="true" aria-labelledby="inquiry-process-modal-title">
             <header className="inquiry-process-modal-head">
               <div>
-                <div className="eyebrow">PROCESS STEP</div>
-                <h2 id="inquiry-process-modal-title">{selected.title}</h2>
-                <div className="muted">{selected.description}</div>
+                <div className="eyebrow"><T>PROCESS STEP</T></div>
+                <h2 id="inquiry-process-modal-title"><T>{selected.title}</T></h2>
+                <div className="muted"><T>{selected.description}</T></div>
               </div>
-              <button type="button" className="arat-dialog-close" onClick={() => setSelected(null)} aria-label="Close"><X size={17} /></button>
+              <Localized as="button" type="button" className="arat-dialog-close" onClick={() => setSelected(null)} aria-label="Close"><X size={17} /></Localized>
             </header>
             <div className="inquiry-process-modal-body">
-              <div className={`inquiry-process-modal-status inquiry-process-modal-status--${selected.state}`}>{selected.state === 'completed' ? 'Completed' : selected.state === 'warning' ? 'Action required' : selected.state === 'current' ? 'Current stage' : 'Upcoming'}</div>
-              <p>{selected.detail || selected.description}</p>
+              <div className={`inquiry-process-modal-status inquiry-process-modal-status--${selected.state}`}><T>{selected.state === 'completed' ? 'Completed' : selected.state === 'warning' ? 'Action required' : selected.state === 'current' ? 'Current stage' : 'Upcoming'}</T></div>
+              <p><T>{selected.detail || selected.description}</T></p>
             </div>
             <footer className="inquiry-process-modal-foot">
-              <button type="button" className="secondary-button" onClick={() => setSelected(null)}>Close</button>
+              <button type="button" className="secondary-button" onClick={() => setSelected(null)}><T>Close</T></button>
             </footer>
           </div>
         </div>

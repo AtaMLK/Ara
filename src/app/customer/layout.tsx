@@ -1,3 +1,4 @@
+import {T,LanguageToggle} from '@/components/language';
 import {loadCustomerQuoteItems} from '@/lib/data/customer-quote-items';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
@@ -81,8 +82,8 @@ export default async function CustomerLayout({ children }: { children: ReactNode
         <Link className="customer-brand" href="/customer" aria-label="ARAT Customer Portal">
           <span className="customer-brand-mark">A</span>
           <span>
-            <strong>ARAT</strong>
-            <small>Customer Portal</small>
+            <strong><T>ARAT</T></strong>
+            <small><T>Customer Portal</T></small>
           </span>
         </Link>
         <div className="customer-nav-actions">
@@ -90,6 +91,7 @@ export default async function CustomerLayout({ children }: { children: ReactNode
             <CustomerNotificationCenter items={notificationItems} details={notificationDetails} />
             {unreadCount > 0 && <span className="nav-notification-count">{unreadCount > 99 ? '99+' : unreadCount}</span>}
           </div>
+          <LanguageToggle />
           <ThemeToggle />
           <SignOutButton />
         </div>

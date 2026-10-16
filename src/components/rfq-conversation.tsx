@@ -1,5 +1,6 @@
 'use client';
 
+import {T,Localized,DateText} from '@/components/language';
 import { useState } from 'react';
 import { Mail, X } from 'lucide-react';
 import {CustomerRequestMessage} from './customer-request-message';
@@ -74,11 +75,11 @@ export function RfqConversationModal({
       <div className="rfq-conversation-dialog" role="dialog" aria-modal="true" aria-labelledby="rfq-conversation-title">
         <header className="rfq-conversation-head">
           <div>
-            <div className="eyebrow">RFQ CONVERSATION</div>
+            <div className="eyebrow"><T>RFQ CONVERSATION</T></div>
             <h2 id="rfq-conversation-title">{rfqCode}</h2>
             <div className="muted">{supplier}</div>
           </div>
-          <button type="button" className="arat-dialog-close" onClick={onClose} aria-label="Close"><X size={17} /></button>
+          <Localized as="button" type="button" className="arat-dialog-close" onClick={onClose} aria-label="Close"><X size={17} /></Localized>
         </header>
 
         <div className="rfq-conversation-body">
@@ -86,8 +87,8 @@ export function RfqConversationModal({
             <article className="rfq-conversation-item rfq-conversation-item--customer">
               <div className="rfq-conversation-marker" />
               <div className="rfq-conversation-card">
-                <div className="rfq-conversation-label">Customer Request</div>
-                <div className="rfq-conversation-time">Customer message and submitted details</div>
+                <div className="rfq-conversation-label"><T>Customer Request</T></div>
+                <div className="rfq-conversation-time"><T>Customer message and submitted details</T></div>
                 <div className="rfq-conversation-content"><CustomerRequestMessage text={customerRequest}/></div>
               </div>
             </article>
@@ -104,10 +105,10 @@ export function RfqConversationModal({
                 <button type="button" className="rfq-conversation-card rfq-conversation-toggle" onClick={() => setExpanded(open ? null : message.id)}>
                   <div className="rfq-conversation-card-head">
                     <div>
-                      <div className="rfq-conversation-label"><Mail size={14} />{title}</div>
-                      <div className="rfq-conversation-subject">{message.subject || '(No subject)'}</div>
+                      <div className="rfq-conversation-label"><Mail size={14} /><T>{title}</T></div>
+                      <div className="rfq-conversation-subject">{message.subject ||<T>{'(No subject)'}</T>}</div>
                     </div>
-                    <span className="muted">{new Date(when).toLocaleString('en-GB')}</span>
+                    <span className="muted"><DateText value={when} format="datetime"/></span>
                   </div>
                   {open && <div className="rfq-conversation-content">{bodyText(message.body)}</div>}
                   {!open && <div className="rfq-conversation-preview">{bodyText(message.body).replace(/\s+/g, ' ').slice(0, 180)}</div>}
@@ -116,7 +117,7 @@ export function RfqConversationModal({
             );
           })}
 
-          {!customerRequest && sorted.length === 0 && <div className="empty">No conversation messages are available yet.</div>}
+          {!customerRequest && sorted.length === 0 && <div className="empty"><T>No conversation messages are available yet.</T></div>}
         </div>
       </div>
     </div>

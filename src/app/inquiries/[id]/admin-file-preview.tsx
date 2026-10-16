@@ -1,5 +1,6 @@
 'use client';
 
+import {T,Localized} from '@/components/language';
 import { useState } from 'react';
 import { getAdminInquiryFileUrlAction } from '@/app/actions';
 
@@ -101,26 +102,26 @@ export default function AdminFilePreview({ inquiryId, fileId, fileName, mimeType
         {canPreview && (
           <button className="inline-button" type="button" onClick={loadFile} disabled={loading}>
             <Icon name="eye" size={14} />
-            {loading ? 'Opening…' : 'Preview'}
+            <T>{loading ? 'Opening…' : 'Preview'}</T>
           </button>
         )}
         <button className="inline-button" type="button" onClick={downloadFile} disabled={loading}>
-          <Icon name="download" size={14} />
+          <Icon name="download" size={14} /><T>
           Download
-        </button>
+        </T></button>
       </div>
 
-      {error && <div className="error-inline file-action-error">{error}</div>}
+      {error && <div className="error-inline file-action-error"><T>{error}</T></div>}
 
       {open && url && (
-        <div className="file-preview-backdrop" role="dialog" aria-modal="true" aria-label={fileName}>
+        <Localized as="div" className="file-preview-backdrop" role="dialog" aria-modal="true" aria-label={fileName}>
           <div className="file-preview-modal">
             <div className="file-preview-head">
               <div>
                 <strong>{fileName}</strong>
                 <div className="muted">{mimeType}</div>
               </div>
-              <button
+              <Localized as="button"
                 className="icon-button"
                 type="button"
                 onClick={() => setOpen(false)}
@@ -128,18 +129,18 @@ export default function AdminFilePreview({ inquiryId, fileId, fileName, mimeType
                 title="Close preview"
               >
                 <Icon name="close" size={17} />
-              </button>
+              </Localized>
             </div>
 
             <div className="file-preview-body">
               {mimeType === 'application/pdf' ? (
-                <iframe title={fileName} src={url} />
+                <Localized as="iframe" title={fileName} src={url} />
               ) : (
                 <img src={url} alt={fileName} />
               )}
             </div>
           </div>
-        </div>
+        </Localized>
       )}
     </>
   );

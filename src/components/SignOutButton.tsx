@@ -1,5 +1,6 @@
 'use client';
 
+import {T} from '@/components/language';
 import { createBrowserClient } from '@supabase/ssr';
 
 export default function SignOutButton() {
@@ -25,8 +26,8 @@ export default function SignOutButton() {
         color: 'var(--arat-text)',
         textAlign: 'center',
       }}
-    >
+    ><T>
       Sign out
-    </button>
+    </T></button>
   );
 }

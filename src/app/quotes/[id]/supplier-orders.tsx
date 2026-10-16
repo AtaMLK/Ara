@@ -1,4 +1,5 @@
 'use client';
+import {T,Localized} from '@/components/language';
 import {useState} from 'react';
 import {useRouter} from 'next/navigation';
 import {prepareSupplierOrdersAction,sendSupplierOrderAction} from '../supplier-order-actions';
@@ -8,19 +9,19 @@ export function SupplierOrders({quoteId,orders}:{quoteId:string;orders:Preview[]
   const router=useRouter();
   async function prepare(){setBusy(true);setError('');try{setPreviews(await prepareSupplierOrdersAction(quoteId,instructions));setDirty(false);}catch(e){setError(e instanceof Error?e.message:'Could not prepare orders.');}finally{setBusy(false);}}
   async function send(order:Preview){setBusy(true);setError('');try{await sendSupplierOrderAction(order.id,order.fingerprint);setPreviews(rows=>rows.map(row=>row.id===order.id?{...row,status:'sent'}:row));}catch(e){setError(e instanceof Error?e.message:'Could not send order.');setPreviews(rows=>rows.map(row=>row.id===order.id?{...row,status:'check_status'}:row));}finally{setBusy(false);router.refresh();}}
-  return <section className="section supplier-orders" id="supplier-order-confirmation"><div className="detail-card supplier-orders-panel"><div className="section-head"><h2>Customer accepted · supplier orders</h2></div>
-    <p>Review one purchase order PDF per supplier. The attachment contains only that supplier’s accepted items, quantities, original costs, tax and delivery terms.</p>
-    <label>Purchasing / delivery instructions<textarea value={instructions} maxLength={4000} onChange={e=>{setInstructions(e.target.value);setDirty(true);}} rows={3} placeholder="Delivery address, requested dispatch date or other instructions for suppliers" /></label>
-    <button className="secondary-button" disabled={busy} onClick={prepare}>{busy?'Working…':'Prepare / refresh supplier order previews'}</button>
-    {error&&<p className="error-box" role="alert">{error}</p>}
-    {dirty&&previews.some(order=>order.status==='draft')&&<p className="muted">Refresh the previews to apply your changed instructions before sending.</p>}
-    {previews.map(order=><article className="detail-card supplier-order-preview" key={order.id}><h3>{order.supplier_name||order.reference}</h3><p><strong>To:</strong> {order.recipient_email}</p><p><strong>Subject:</strong> {order.subject}</p><span className="badge">{order.status.replaceAll('_',' ')}</span>
-      {order.pdf_url&&<div className="supplier-order-pdf"><a className="secondary-button" href={order.pdf_url} target="_blank" rel="noreferrer">{order.pdf_is_copy?'Purchase order PDF copy (current template)':'Preview / Download purchase order PDF'}</a><iframe title={'Purchase order PDF: '+order.reference} src={order.pdf_url} className="supplier-order-email-frame" /></div>}
-      {order.html?<><iframe title={'Supplier email preview: '+order.subject} srcDoc={order.html} sandbox="" className="supplier-order-email-frame supplier-order-note-frame" /><details className="supplier-order-plain"><summary>Plain-text version</summary><pre style={{whiteSpace:'pre-wrap',fontFamily:'inherit',lineHeight:1.6}}>{order.body}</pre></details></>:<pre style={{whiteSpace:'pre-wrap',fontFamily:'inherit',lineHeight:1.6}}>{order.body}</pre>}
+  return <section className="section supplier-orders" id="supplier-order-confirmation"><div className="detail-card supplier-orders-panel"><div className="section-head"><h2><T>Customer accepted · supplier orders</T></h2></div>
+    <p><T>Review one purchase order PDF per supplier. The attachment contains only that supplier’s accepted items, quantities, original costs, tax and delivery terms.</T></p>
+    <label><T>Purchasing / delivery instructions</T><Localized as="textarea" value={instructions} maxLength={4000} onChange={e=>{setInstructions(e.target.value);setDirty(true);}} rows={3} placeholder="Delivery address, requested dispatch date or other instructions for suppliers" /></label>
+    <button className="secondary-button" disabled={busy} onClick={prepare}><T>{busy?'Working…':'Prepare / refresh supplier order previews'}</T></button>
+    {error&&<p className="error-box" role="alert"><T>{error}</T></p>}
+    {dirty&&previews.some(order=>order.status==='draft')&&<p className="muted"><T>Refresh the previews to apply your changed instructions before sending.</T></p>}
+    {previews.map(order=><article className="detail-card supplier-order-preview" key={order.id}><h3>{order.supplier_name||order.reference}</h3><p><strong><T>To:</T></strong> {order.recipient_email}</p><p><strong><T>Subject:</T></strong> {order.subject}</p><span className="badge"><T>{order.status.replaceAll('_',' ')}</T></span>
+      {order.pdf_url&&<div className="supplier-order-pdf"><a className="secondary-button" href={order.pdf_url} target="_blank" rel="noreferrer"><T>{order.pdf_is_copy?'Purchase order PDF copy (current template)':'Preview / Download purchase order PDF'}</T></a><Localized as="iframe" title={'Purchase order PDF: '+order.reference} src={order.pdf_url} className="supplier-order-email-frame" /></div>}
+      {order.html?<><Localized as="iframe" title={'Supplier email preview: '+order.subject} srcDoc={order.html} sandbox="" className="supplier-order-email-frame supplier-order-note-frame" /><details className="supplier-order-plain"><summary><T>Plain-text version</T></summary><pre style={{whiteSpace:'pre-wrap',fontFamily:'inherit',lineHeight:1.6}}>{order.body}</pre></details></>:<pre style={{whiteSpace:'pre-wrap',fontFamily:'inherit',lineHeight:1.6}}>{order.body}</pre>}
       {order.error_text&&<p className="error-box">{order.error_text}</p>}
-      {order.status==='draft'&&<button className="primary-button" disabled={busy||dirty} onClick={()=>send(order)}>Send order confirmation to supplier & order items</button>}
-      {['sending','delivery_uncertain','check_status'].includes(order.status)&&<p className="muted">Check delivery status and the sent mailbox before taking further action.</p>}
-      {order.status==='sent'&&<p className="muted">Order confirmation sent{order.sent_at?' · '+new Date(order.sent_at).toLocaleString('en-GB'):''}.</p>}
+      {order.status==='draft'&&<button className="primary-button" disabled={busy||dirty} onClick={()=>send(order)}><T>Send order confirmation to supplier & order items</T></button>}
+      {['sending','delivery_uncertain','check_status'].includes(order.status)&&<p className="muted"><T>Check delivery status and the sent mailbox before taking further action.</T></p>}
+      {order.status==='sent'&&<p className="muted"><T>Order confirmation sent</T>{order.sent_at?' · '+new Date(order.sent_at).toLocaleString('en-GB'):''}.</p>}
     </article>)}
   </div></section>;
 }

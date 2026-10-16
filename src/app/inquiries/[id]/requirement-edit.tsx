@@ -1,5 +1,6 @@
 'use client';
 
+import {T} from '@/components/language';
 import { useState } from 'react';
 import { updateRequirementAction } from '@/app/actions';
 
@@ -11,7 +12,7 @@ export function RequirementEdit({ inquiryId, requirement }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  if (!editing) return <button className="inline-button" onClick={() => setEditing(true)}>Edit</button>;
+  if (!editing) return <button className="inline-button" onClick={() => setEditing(true)}><T>Edit</T></button>;
 
   async function save(formData: FormData) {
     setSaving(true);
@@ -33,13 +34,13 @@ export function RequirementEdit({ inquiryId, requirement }: {
   return <form className="inline-edit" action={save}>
     <input name="value" defaultValue={requirement.value} required />
     <select name="status" defaultValue={requirement.status}>
-      <option value="open">Open</option>
-      <option value="clarification_required">Clarification Required</option>
-      <option value="confirmed">Confirmed</option>
-      <option value="rejected">Rejected</option>
+      <option value="open"><T>Open</T></option>
+      <option value="clarification_required"><T>Clarification Required</T></option>
+      <option value="confirmed"><T>Confirmed</T></option>
+      <option value="rejected"><T>Rejected</T></option>
     </select>
-    <button className="inline-button" disabled={saving}>{saving ? '…' : 'Save'}</button>
-    <button type="button" className="inline-button" onClick={() => setEditing(false)}>Cancel</button>
-    {error && <span className="error-inline">{error}</span>}
+    <button className="inline-button" disabled={saving}><T>{saving ? '…' : 'Save'}</T></button>
+    <button type="button" className="inline-button" onClick={() => setEditing(false)}><T>Cancel</T></button>
+    {error && <span className="error-inline"><T>{error}</T></span>}
   </form>;
 }

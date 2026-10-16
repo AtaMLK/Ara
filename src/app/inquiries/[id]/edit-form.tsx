@@ -1,5 +1,6 @@
 'use client';
 
+import {T} from '@/components/language';
 import { useState } from 'react';
 import { updateInquiryAction } from '@/app/actions';
 
@@ -19,7 +20,7 @@ export function InquiryEditForm({
   const [error, setError] = useState('');
 
   if (!editing) {
-    return <button className="secondary-button" onClick={() => setEditing(true)}>Edit inquiry</button>;
+    return <button className="secondary-button" onClick={() => setEditing(true)}><T>Edit inquiry</T></button>;
   }
 
   async function save(formData: FormData) {
@@ -41,12 +42,12 @@ export function InquiryEditForm({
 
   return (
     <form className="edit-card" action={save}>
-      <label>Title<input name="title" defaultValue={title} required /></label>
-      <label>Description<textarea name="description" defaultValue={description} rows={5} /></label>
-      {error && <div className="error-box">{error}</div>}
+      <label><T>Title</T><input name="title" defaultValue={title} required /></label>
+      <label><T>Description</T><textarea name="description" defaultValue={description} rows={5} /></label>
+      {error && <div className="error-box"><T>{error}</T></div>}
       <div className="form-actions">
-        <button type="button" className="secondary-button" onClick={() => setEditing(false)}>Cancel</button>
-        <button className="primary-button" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
+        <button type="button" className="secondary-button" onClick={() => setEditing(false)}><T>Cancel</T></button>
+        <button className="primary-button" disabled={saving}><T>{saving ? 'Saving…' : 'Save changes'}</T></button>
       </div>
     </form>
   );

@@ -1,3 +1,4 @@
+import {T} from '@/components/language';
 
 'use client';
 
@@ -68,50 +69,50 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
     <section className="section workflow-panel">
       <div className="section-head">
         <div>
-          <div className="eyebrow">WORKFLOW</div>
-          <h2>Procurement Workflow</h2>
+          <div className="eyebrow"><T>WORKFLOW</T></div>
+          <h2><T>Procurement Workflow</T></h2>
         </div>
-        {canStart && <button className="button" onClick={run} disabled={busy}>{busy ? 'Running…' : actionLabel}</button>}
+        {canStart && <button className="button" onClick={run} disabled={busy}><T>{busy ? 'Running…' : actionLabel}</T></button>}
       </div>
 
       <div className="workflow-grid">
         <div className="detail-card">
-          <strong>Current stage</strong>
-          <div className="workflow-stage">{label(status)}</div>
-          <div className="muted">The runner only advances through verified gates. It never invents research or sends email without approval.</div>
+          <strong><T>Current stage</T></strong>
+          <div className="workflow-stage"><T>{label(status)}</T></div>
+          <div className="muted"><T>The runner only advances through verified gates. It never invents research or sends email without approval.</T></div>
         </div>
         <div className="detail-card">
-          <strong>Latest execution</strong>
+          <strong><T>Latest execution</T></strong>
           {latestExecution ? <>
-            <div>{label(latestExecution.agent_id)} · {label(latestExecution.status)}</div>
-            <div className="muted">Attempts: {latestExecution.attempt_count}</div>
-          </> : <div className="muted">No workflow execution yet.</div>}
+            <div><T>{label(latestExecution.agent_id)}</T> · <T>{label(latestExecution.status)}</T></div>
+            <div className="muted"><T>Attempts: </T>{latestExecution.attempt_count}</div>
+          </> : <div className="muted"><T>No workflow execution yet.</T></div>}
         </div>
       </div>
 
-      {error && <div className="error-inline">{error}</div>}
+      {error && <div className="error-inline"><T>{error}</T></div>}
 
       {clarifications.length > 0 && <div className="detail-card">
-        <strong>Clarifications</strong>
+        <strong><T>Clarifications</T></strong>
         <div className="list">
           {clarifications.slice(0, 5).map((item) => <div className="list-item" key={item.id}>
-            <div><strong>{label(item.status)}</strong><div className="muted">{item.question}</div></div>{item.status === 'draft' && <button className="inline-button" onClick={() => approveClarification(item.id)} disabled={busy}>Approve</button>}
-            {item.status === 'pending_approval' && <button className="inline-button" onClick={() => sendClarification(item.id)} disabled={busy}>Send to customer</button>}
+            <div><strong><T>{label(item.status)}</T></strong><div className="muted">{item.question}</div></div>{item.status === 'draft' && <button className="inline-button" onClick={() => approveClarification(item.id)} disabled={busy}><T>Approve</T></button>}
+            {item.status === 'pending_approval' && <button className="inline-button" onClick={() => sendClarification(item.id)} disabled={busy}><T>Send to customer</T></button>}
           </div>)}
         </div>
       </div>}
 
       {researchCases.length > 0 && <div className="detail-card">
-        <strong>Research</strong>
-        <div className="muted">Latest case: {label(researchCases[0].status)}</div>
+        <strong><T>Research</T></strong>
+        <div className="muted"><T>Latest case: </T><T>{label(researchCases[0].status)}</T></div>
       </div>}
 
       {alerts.length > 0 && <div className="detail-card">
-        <strong>Open AI Alerts</strong>
+        <strong><T>Open AI Alerts</T></strong>
         <div className="list">
           {alerts.map((alert) => <div className="list-item" key={alert.id}>
-            <div><strong>{label(alert.alert_type)}</strong><div className="muted">{alert.message}</div></div>
-            <span className="badge">{label(alert.priority)}</span>
+            <div><strong><T>{label(alert.alert_type)}</T></strong><div className="muted">{alert.message}</div></div>
+            <span className="badge"><T>{label(alert.priority)}</T></span>
           </div>)}
         </div>
       </div>}

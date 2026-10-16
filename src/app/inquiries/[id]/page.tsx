@@ -1,3 +1,4 @@
+import {T,DateText} from '@/components/language';
 import {readableRequest} from '@/lib/ui/inquiry-items';
 import AutomationIssues from './automation-issues';
 import AutomationRefresh from '@/components/automation-refresh';
@@ -83,7 +84,7 @@ export default async function InquiryDetailPage({ params }: Props) {
       <header className="topbar">
         <div>
           <Link className="back-icon-button" href="/inquiries" aria-label="Back to Inquiries" title="Back to Inquiries"><span aria-hidden="true">←</span></Link>
-          <div className="eyebrow">INQUIRY</div>
+          <div className="eyebrow"><T>INQUIRY</T></div>
           <h1 className="title inquiry-display-reference">{displayReference}</h1>
           <div className="muted">{inquiry.title}</div>
         </div>
@@ -99,14 +100,14 @@ export default async function InquiryDetailPage({ params }: Props) {
       <section className="section">
         <div className="section-head">
           <div>
-            <div className="eyebrow">EMAIL</div>
-            <h2 id="email-center">Email Center</h2>
-            <div className="muted">All customer and supplier email activity for this inquiry. Supplier email content is visible only in the Admin portal.</div>
+            <div className="eyebrow"><T>EMAIL</T></div>
+            <h2 id="email-center"><T>Email Center</T></h2>
+            <div className="muted"><T>All customer and supplier email activity for this inquiry. Supplier email content is visible only in the Admin portal.</T></div>
           </div>
-          <span className="badge">{communicationsResult.data?.length ?? 0} emails</span>
+          <span className="badge">{communicationsResult.data?.length ?? 0}<T> emails</T></span>
         </div>
         {(communicationsResult.data ?? []).length === 0 ? (
-          <div className="detail-card"><div className="empty">No emails have been received or sent for this inquiry yet.</div></div>
+          <div className="detail-card"><div className="empty"><T>No emails have been received or sent for this inquiry yet.</T></div></div>
         ) : (
           <div className="email-center-list">
             {(communicationsResult.data ?? []).map((email) => {
@@ -120,14 +121,14 @@ export default async function InquiryDetailPage({ params }: Props) {
                   <div className="email-center-head">
                     <div>
                       <span className={`email-status-dot email-status-${tone}`} aria-hidden="true" />
-                      <strong>{labelText}</strong>
+                      <strong><T>{labelText}</T></strong>
                       {oneRelated(email.suppliers)?.legal_name && <span className="muted"> · {oneRelated(email.suppliers)?.legal_name}</span>}
                     </div>
-                    <span className="muted">{new Date(email.received_at ?? email.sent_at ?? email.created_at).toLocaleString('en-GB')}</span>
+                    <span className="muted"><DateText value={email.received_at ?? email.sent_at ?? email.created_at} format="datetime"/></span>
                   </div>
-                  <div className="email-center-subject">{email.subject || '(No subject)'}</div>
-                  <div className="email-center-meta">{incoming ? 'Received' : 'Sent'} · {email.channel}</div>
-                  <div className="email-center-body">{readableRequest(email.body)||'No message body recorded.'}</div>
+                  <div className="email-center-subject">{email.subject ||<T>{'(No subject)'}</T>}</div>
+                  <div className="email-center-meta"><T>{incoming ? 'Received' : 'Sent'}</T> · {email.channel}</div>
+                  <div className="email-center-body">{readableRequest(email.body)||<T>{'No message body recorded.'}</T>}</div>
                   {(() => {
                     const aiAnalysis = metadata.ai_analysis && typeof metadata.ai_analysis === 'object' && !Array.isArray(metadata.ai_analysis)
                       ? metadata.ai_analysis as Record<string, unknown>
@@ -139,15 +140,15 @@ export default async function InquiryDetailPage({ params }: Props) {
                       <div className="supplier-reply-approval">
                         <div className="supplier-reply-approval-head">
                           <div>
-                            <strong>ARAT Agent prepared a reply</strong>
-                            <div className="muted">The requested information already exists in the inquiry. Admin approval is required before sending it to the supplier.</div>
+                            <strong><T>ARAT Agent prepared a reply</T></strong>
+                            <div className="muted"><T>The requested information already exists in the inquiry. Admin approval is required before sending it to the supplier.</T></div>
                           </div>
-                          <span className="badge status-pending_approval">Approval required</span>
+                          <span className="badge status-pending_approval"><T>Approval required</T></span>
                         </div>
                         <div className="supplier-reply-draft">{draft}</div>
                         <form action={async (formData) => { 'use server'; await approveSupplierClarificationReplyAction(formData); }}>
                           <input type="hidden" name="communicationId" value={email.id} />
-                          <button className="primary-button" type="submit">Approve &amp; Send to Supplier</button>
+                          <button className="primary-button" type="submit"><T>Approve &amp; Send to Supplier</T></button>
                         </form>
                       </div>
                     );
@@ -162,23 +163,23 @@ export default async function InquiryDetailPage({ params }: Props) {
       <section className="section">
         <div className="section-head">
           <div>
-            <div className="eyebrow">RFQ</div>
-            <h2>RFQs</h2>
-            <div className="muted">RFQs created by Admin after supplier verification and email confirmation.</div>
+            <div className="eyebrow"><T>RFQ</T></div>
+            <h2><T>RFQs</T></h2>
+            <div className="muted"><T>RFQs created by Admin after supplier verification and email confirmation.</T></div>
           </div>
-          <span className="badge">{rfqsResult.data?.filter((rfq) => ['draft', 'pending_approval', 'approved', 'sent'].includes(rfq.status)).length ?? 0} active</span>
+          <span className="badge">{rfqsResult.data?.filter((rfq) => ['draft', 'pending_approval', 'approved', 'sent'].includes(rfq.status)).length ?? 0}<T> active</T></span>
         </div>
         {(rfqsResult.data ?? []).filter((rfq) => rfq.status !== 'cancelled').length === 0 ? (
-          <div className="detail-card"><div className="empty">No RFQ has been sent for this inquiry yet.</div></div>
+          <div className="detail-card"><div className="empty"><T>No RFQ has been sent for this inquiry yet.</T></div></div>
         ) : (
           <div className="table">
-            <div className="row header"><div>Supplier</div><div>Recipient</div><div>Status</div><div>Created</div></div>
+            <div className="row header"><div><T>Supplier</T></div><div><T>Recipient</T></div><div><T>Status</T></div><div><T>Created</T></div></div>
             {(rfqsResult.data ?? []).filter((rfq) => rfq.status !== 'cancelled').map((rfq) => (
               <div className="row" key={rfq.id}>
                 <div><strong>{oneRelated(rfq.suppliers)?.legal_name ?? '—'}</strong><div className="muted">{rfq.subject}</div></div>
-                <div>{rfq.recipient_email || 'No recipient email'}</div>
-                <div><span className={`badge status-badge status-${rfq.status}`}>{label(rfq.status)}</span></div>
-                <div>{new Date(rfq.created_at).toLocaleString('en-GB')}</div>
+                <div>{rfq.recipient_email ||<T>{'No recipient email'}</T>}</div>
+                <div><span className={`badge status-badge status-${rfq.status}`}><T>{label(rfq.status)}</T></span></div>
+                <div><DateText value={rfq.created_at} format="datetime"/></div>
               </div>
             ))}
           </div>
@@ -188,40 +189,40 @@ export default async function InquiryDetailPage({ params }: Props) {
 
       <section className="detail-grid">
         <div className="detail-card">
-          <div className="section-head"><h2>Customer request</h2></div>
+          <div className="section-head"><h2><T>Customer request</T></h2></div>
           <RequestItems normalized={inquiry.normalized_information} requirements={requirementsResult.data??[]} original={inquiry.original_customer_text??inquiry.description}/>
         </div>
 
         <div className="detail-card">
-          <div className="section-head"><h2>Overview</h2></div>
+          <div className="section-head"><h2><T>Overview</T></h2></div>
           <dl className="details">
-            <div><dt>Priority</dt><dd>{label(inquiry.priority)}</dd></div>
-            <div><dt>Version</dt><dd>{inquiry.current_version}</dd></div>
-            <div><dt>Created</dt><dd>{new Date(inquiry.created_at).toLocaleString('en-GB')}</dd></div>
-            <div><dt>Updated</dt><dd>{new Date(inquiry.updated_at).toLocaleString('en-GB')}</dd></div>
+            <div><dt><T>Priority</T></dt><dd><T>{label(inquiry.priority)}</T></dd></div>
+            <div><dt><T>Version</T></dt><dd>{inquiry.current_version}</dd></div>
+            <div><dt><T>Created</T></dt><dd><DateText value={inquiry.created_at} format="datetime"/></dd></div>
+            <div><dt><T>Updated</T></dt><dd><DateText value={inquiry.updated_at} format="datetime"/></dd></div>
           </dl>
           {inquiry.description && <p className="detail-text">{inquiry.description}</p>}
         </div>
 
         <div className="detail-card">
-          <div className="section-head"><h2>Customer</h2></div>
+          <div className="section-head"><h2><T>Customer</T></h2></div>
           <dl className="details">
-            <div><dt>Name</dt><dd>{customer?.company_name || customer?.name || '—'}</dd></div>
-            <div><dt>Email</dt><dd>{customer?.email || '—'}</dd></div>
-            <div><dt>Country</dt><dd>{customer?.country || '—'}</dd></div>
+            <div><dt><T>Name</T></dt><dd>{customer?.company_name || customer?.name || '—'}</dd></div>
+            <div><dt><T>Email</T></dt><dd>{customer?.email || '—'}</dd></div>
+            <div><dt><T>Country</T></dt><dd>{customer?.country || '—'}</dd></div>
           </dl>
         </div>
       </section>
 
       <section className="section requirements-compact-section">
-        <div className="section-head"><h2>Requirements</h2></div>
+        <div className="section-head"><h2><T>Requirements</T></h2></div>
         <div className="table requirements-compact-table">
-          <div className="row header"><div>Type</div><div>Value</div><div>Status</div><div>Source</div></div>
-          {requirementsResult.data.length === 0 ? <div className="empty">No requirements extracted.</div> : requirementsResult.data.map((item) => (
+          <div className="row header"><div><T>Type</T></div><div><T>Value</T></div><div><T>Status</T></div><div><T>Source</T></div></div>
+          {requirementsResult.data.length === 0 ? <div className="empty"><T>No requirements extracted.</T></div> : requirementsResult.data.map((item) => (
             <div className="row" key={item.id}>
-              <div>{label(item.type)}</div><div>{item.value}<div><RequirementEdit inquiryId={inquiry.id} requirement={{ id: item.id, value: item.value, status: item.status }} /></div></div>
-              <div><span className="badge">{label(item.status)}</span></div>
-              <div>{label(item.source)}{item.admin_edited ? ' · Admin edited' : ''}</div>
+              <div><T>{label(item.type)}</T></div><div>{item.value}<div><RequirementEdit inquiryId={inquiry.id} requirement={{ id: item.id, value: item.value, status: item.status }} /></div></div>
+              <div><span className="badge"><T>{label(item.status)}</T></span></div>
+              <div><T>{label(item.source)}</T><T>{item.admin_edited ? ' · Admin edited' : ''}</T></div>
             </div>
           ))}
         </div>
@@ -229,15 +230,15 @@ export default async function InquiryDetailPage({ params }: Props) {
 
       <section className="detail-grid">
         <div className="detail-card">
-          <div className="section-head"><h2>Files</h2></div>
-          {filesResult.data.length === 0 ? <div className="empty">No files.</div> : <div className="list">
+          <div className="section-head"><h2><T>Files</T></h2></div>
+          {filesResult.data.length === 0 ? <div className="empty"><T>No files.</T></div> : <div className="list">
             {filesResult.data.map((file) => (
               <div className="list-item" key={file.id}>
                 <div>
                   <strong>{file.original_name.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')}</strong>
-                  <div className="muted">{file.mime_type} · {Math.round(file.file_size / 1024)} KB</div>
+                  <div className="muted">{file.mime_type} · {Math.round(file.file_size / 1024)}<T> KB</T></div>
                 </div>
-                <span className={`badge status-badge status-${file.status}`}>{label(file.status)}</span>
+                <span className={`badge status-badge status-${file.status}`}><T>{label(file.status)}</T></span>
                 <AdminFilePreview
                   inquiryId={inquiry.id}
                   fileId={file.id}
@@ -252,8 +253,8 @@ export default async function InquiryDetailPage({ params }: Props) {
         <div className="detail-card">
           <div className="section-head">
             <div>
-              <h2>Timeline</h2>
-              <div className="muted">Latest activity</div>
+              <h2><T>Timeline</T></h2>
+              <div className="muted"><T>Latest activity</T></div>
             </div>
           </div>
           <AdminActivityTimeline events={timelineResult.data ?? []} />

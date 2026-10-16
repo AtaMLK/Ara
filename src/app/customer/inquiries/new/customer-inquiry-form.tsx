@@ -1,5 +1,6 @@
 'use client';
 
+import {T,Localized} from '@/components/language';
 import Link from 'next/link';
 import { useState } from 'react';
 import { createCustomerInquiryAction } from '@/app/actions';
@@ -73,30 +74,30 @@ export default function CustomerInquiryForm() {
   return (
     <form action={submit}>
       <label className="form-field">
-        <span>Request title <small>Optional</small></span>
-        <input name="title" placeholder="e.g. Hydraulic cylinder spare parts" maxLength={200} />
+        <span><T>Request title </T><small><T>Optional</T></small></span>
+        <Localized as="input" name="title" placeholder="e.g. Hydraulic cylinder spare parts" maxLength={200} />
       </label>
 
       <div className="customer-items-section">
         <div className="customer-items-heading">
           <div>
-            <strong>Products</strong>
-            <div className="muted">Description and quantity are required. Other details are optional.</div>
+            <strong><T>Products</T></strong>
+            <div className="muted"><T>Description and quantity are required. Other details are optional.</T></div>
           </div>
         </div>
 
         {items.map((item, index) => (
           <div className="customer-item-card" key={index}>
             <div className="customer-item-card-header">
-              <strong>Item {index + 1}</strong>
+              <strong><T>Item </T>{index + 1}</strong>
               {items.length > 1 && (
-                <button type="button" className="secondary-button" onClick={() => removeItem(index)}>Remove</button>
+                <button type="button" className="secondary-button" onClick={() => removeItem(index)}><T>Remove</T></button>
               )}
             </div>
 
             <label className="form-field">
-              <span>Product description <small>Required</small></span>
-              <textarea
+              <span><T>Product description </T><small><T>Required</T></small></span>
+              <Localized as="textarea"
                 value={item.description}
                 onChange={(e) => updateItem(index, 'description', e.target.value)}
                 required
@@ -108,8 +109,8 @@ export default function CustomerInquiryForm() {
 
             <div className="customer-item-grid">
               <label className="form-field">
-                <span>Quantity <small>Required</small></span>
-                <input
+                <span><T>Quantity </T><small><T>Required</T></small></span>
+                <Localized as="input"
                   value={item.quantity}
                   onChange={(e) => updateItem(index, 'quantity', e.target.value)}
                   required
@@ -121,54 +122,54 @@ export default function CustomerInquiryForm() {
                 />
               </label>
               <label className="form-field">
-                <span>Brand / Manufacturer <small>Optional</small></span>
-                <input value={item.brand} onChange={(e) => updateItem(index, 'brand', e.target.value)} placeholder="e.g. Parker" />
+                <span><T>Brand / Manufacturer </T><small><T>Optional</T></small></span>
+                <Localized as="input" value={item.brand} onChange={(e) => updateItem(index, 'brand', e.target.value)} placeholder="e.g. Parker" />
               </label>
               <label className="form-field">
-                <span>Part Number / Model <small>Optional</small></span>
-                <input value={item.partNumber} onChange={(e) => updateItem(index, 'partNumber', e.target.value)} placeholder="e.g. HK-250" />
+                <span><T>Part Number / Model </T><small><T>Optional</T></small></span>
+                <Localized as="input" value={item.partNumber} onChange={(e) => updateItem(index, 'partNumber', e.target.value)} placeholder="e.g. HK-250" />
               </label>
               <label className="form-field">
-                <span>Serial Number <small>Optional</small></span>
-                <input value={item.serialNumber} onChange={(e) => updateItem(index, 'serialNumber', e.target.value)} placeholder="If applicable" />
+                <span><T>Serial Number </T><small><T>Optional</T></small></span>
+                <Localized as="input" value={item.serialNumber} onChange={(e) => updateItem(index, 'serialNumber', e.target.value)} placeholder="If applicable" />
               </label>
             </div>
 
             <label className="form-field">
-              <span>Additional product details <small>Optional</small></span>
-              <textarea value={item.details} onChange={(e) => updateItem(index, 'details', e.target.value)} maxLength={5000} rows={2} placeholder="Size, specification, application, delivery requirement, etc." />
+              <span><T>Additional product details </T><small><T>Optional</T></small></span>
+              <Localized as="textarea" value={item.details} onChange={(e) => updateItem(index, 'details', e.target.value)} maxLength={5000} rows={2} placeholder="Size, specification, application, delivery requirement, etc." />
             </label>
           </div>
         ))}
 
-        <button type="button" className="secondary-button" onClick={addItem}>+ Add Another Item</button>
+        <button type="button" className="secondary-button" onClick={addItem}><T>+ Add Another Item</T></button>
       </div>
 
       <label className="form-field">
-        <span>Have a product list already? <small>Optional</small></span>
-        <textarea name="bulkRequest" maxLength={20000} rows={5} placeholder="You can paste an existing product list here. The structured items above are still required." />
+        <span><T>Have a product list already? </T><small><T>Optional</T></small></span>
+        <Localized as="textarea" name="bulkRequest" maxLength={20000} rows={5} placeholder="You can paste an existing product list here. The structured items above are still required." />
       </label>
 
       <label className="form-field">
-        <span>Attachments <small>Optional · PDF, Excel, CSV, PNG, JPG, WEBP · max 10 MB each</small></span>
+        <span><T>Attachments </T><small><T>Optional · PDF, Excel, CSV, PNG, JPG, WEBP · max 10 MB each</T></small></span>
         <input name="files" type="file" multiple accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp" />
       </label>
 
       <label className="form-field">
-        <span>Additional notes <small>Optional</small></span>
-        <textarea name="description" maxLength={5000} rows={4} placeholder="Anything else ARAT should know?" />
+        <span><T>Additional notes </T><small><T>Optional</T></small></span>
+        <Localized as="textarea" name="description" maxLength={5000} rows={4} placeholder="Anything else ARAT should know?" />
       </label>
 
       <label className="form-field">
-        <span>Priority</span>
-        <select name="priority" defaultValue="normal"><option value="normal">Normal</option><option value="urgent">Urgent</option></select>
+        <span><T>Priority</T></span>
+        <select name="priority" defaultValue="normal"><option value="normal"><T>Normal</T></option><option value="urgent"><T>Urgent</T></option></select>
       </label>
 
-      {error && <div className="form-error" role="alert">{error}</div>}
+      {error && <div className="form-error" role="alert"><T>{error}</T></div>}
 
       <div className="form-actions inquiry-submit-row">
-        <Link className="secondary-button" href="/customer">Cancel</Link>
-        <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Submitting…' : 'Submit request'}</button>
+        <Link className="secondary-button" href="/customer"><T>Cancel</T></Link>
+        <button className="primary-button" type="submit" disabled={busy}><T>{busy ? 'Submitting…' : 'Submit request'}</T></button>
       </div>
     </form>
   );

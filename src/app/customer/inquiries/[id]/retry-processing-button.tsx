@@ -1,5 +1,6 @@
 'use client';
 
+import {T} from '@/components/language';
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { retryCustomerInquiryDocumentAction } from '@/app/actions';
@@ -33,9 +34,9 @@ export default function RetryProcessingButton({ inquiryId }: { inquiryId: string
         onClick={handleRetry}
         disabled={isPending}
       >
-        {isPending ? 'Processing…' : 'Retry processing'}
+        <T>{isPending ? 'Processing…' : 'Retry processing'}</T>
       </button>
-      {error && <div className="error-inline retry-error">{error}</div>}
+      {error && <div className="error-inline retry-error"><T>{error}</T></div>}
     </div>
   );
 }

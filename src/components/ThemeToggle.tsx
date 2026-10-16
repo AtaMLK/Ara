@@ -1,27 +1,29 @@
 'use client';
 
+import {T,Localized} from '@/components/language';
 import { useEffect, useState } from 'react';
 
 export default function ThemeToggle() {
   const [dark, setDark] = useState(false);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem('arat-theme');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const isDark = saved ? saved === 'dark' : prefersDark;
-    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+    const isDark = document.documentElement.dataset.theme === 'dark';
     setDark(isDark);
+    const observer=new MutationObserver(()=>setDark(document.documentElement.dataset.theme==='dark'));
+    observer.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+    return ()=>observer.disconnect();
   }, []);
 
   function toggle() {
-    const next = !dark;
+    const next = document.documentElement.dataset.theme !== 'dark';
     document.documentElement.dataset.theme = next ? 'dark' : 'light';
-    window.localStorage.setItem('arat-theme', next ? 'dark' : 'light');
+    try{window.localStorage.setItem('arat-theme', next ? 'dark' : 'light');}catch{}
+    document.cookie=`arat-theme=${next?'dark':'light'}; Path=/; Max-Age=31536000; SameSite=Lax`;
     setDark(next);
   }
 
   return (
-    <button
+    <Localized as="button"
       type="button"
       className="theme-toggle"
       onClick={toggle}
@@ -29,7 +31,7 @@ export default function ThemeToggle() {
       title={dark ? 'Light mode' : 'Dark mode'}
     >
       <span className="theme-toggle-icon" aria-hidden="true">{dark ? '☼' : '☾'}</span>
-      <span>{dark ? 'Light' : 'Dark'}</span>
-    </button>
+      <span><T>{dark ? 'Light' : 'Dark'}</T></span>
+    </Localized>
   );
 }

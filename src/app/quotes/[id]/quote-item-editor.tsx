@@ -1,5 +1,6 @@
 'use client';
 
+import {T} from '@/components/language';
 import { useState } from 'react';
 import { confirmCustomerQuoteItemPriceAction, updateCustomerQuoteItemQuantityAction } from '@/app/actions';
 
@@ -57,27 +58,27 @@ export function QuoteItemEditor({ item, currency, editable }: { item: Item; curr
     <article className="quote-item">
       <div className="quote-item-main">
         <div>
-          <div className="eyebrow">LINE ITEM</div>
-          <h3>{item.supplier_products?.product_name || item.supplier_products?.model_part_number || item.product_id || 'Product not linked'}</h3>
-          <div className="muted">Qty {item.quantity} · Supplier quote {item.supplier_quote_id || '—'}</div>
+          <div className="eyebrow"><T>LINE ITEM</T></div>
+          <h3>{item.supplier_products?.product_name || item.supplier_products?.model_part_number || item.product_id ||<T>{'Product not linked'}</T>}</h3>
+          <div className="muted"><T>Qty </T>{item.quantity}<T> · Supplier quote </T>{item.supplier_quote_id || '—'}</div>
         </div>
-        <span className="badge">{item.price_status === 'admin_confirmed' ? 'Admin confirmed' : 'Suggested'}</span>
+        <span className="badge"><T>{item.price_status === 'admin_confirmed' ? 'Admin confirmed' : 'Suggested'}</T></span>
       </div>
 
       <div className="quote-item-grid">
-        <div><span className="field-label">Quantity</span><div className="price-edit"><input type="number" min="0.0001" step="1" value={quantity} disabled={!editable || saving} onChange={(e) => setQuantity(e.target.value)} /></div></div>
-        <div><span className="field-label">Supplier cost</span><strong>{item.supplier_cost ?? '—'} {item.supplier_currency || ''}</strong></div>
-        <div><span className="field-label">Exchange rate</span><strong>{rate ?? 'Same currency'}</strong></div>
-        <div><span className="field-label">Markup rule</span><strong>{markup == null ? '—' : markup + '%'}</strong></div>
-        <div><span className="field-label">Suggested / customer price</span><div className="price-edit"><input type="number" min="0" step="0.01" value={price} disabled={!editable || saving} onChange={(e) => setPrice(e.target.value)} /><span>{currency}</span></div></div>
-        <div><span className="field-label">Line total</span><strong>{(Number(item.quantity) * Number(item.unit_price)).toFixed(2)} {currency}</strong></div>
+        <div><span className="field-label"><T>Quantity</T></span><div className="price-edit"><input type="number" min="0.0001" step="1" value={quantity} disabled={!editable || saving} onChange={(e) => setQuantity(e.target.value)} /></div></div>
+        <div><span className="field-label"><T>Supplier cost</T></span><strong>{item.supplier_cost ?? '—'} {item.supplier_currency || ''}</strong></div>
+        <div><span className="field-label"><T>Exchange rate</T></span><strong>{rate ?? 'Same currency'}</strong></div>
+        <div><span className="field-label"><T>Markup rule</T></span><strong>{markup == null ? '—' : markup + '%'}</strong></div>
+        <div><span className="field-label"><T>Suggested / customer price</T></span><div className="price-edit"><input type="number" min="0" step="0.01" value={price} disabled={!editable || saving} onChange={(e) => setPrice(e.target.value)} /><span>{currency}</span></div></div>
+        <div><span className="field-label"><T>Line total</T></span><strong>{(Number(item.quantity) * Number(item.unit_price)).toFixed(2)} {currency}</strong></div>
       </div>
 
       {editable && (
         <div className="quote-item-actions">
-          <button className="secondary-button" disabled={saving} onClick={confirmQuantity}>Save quantity</button>
-          {item.price_status !== 'admin_confirmed' && <button className="primary-button" disabled={saving} onClick={confirmPrice}>{saving ? 'Confirming…' : 'Confirm price'}</button>}
-          {error && <span className="error-inline">{error}</span>}
+          <button className="secondary-button" disabled={saving} onClick={confirmQuantity}><T>Save quantity</T></button>
+          {item.price_status !== 'admin_confirmed' && <button className="primary-button" disabled={saving} onClick={confirmPrice}><T>{saving ? 'Confirming…' : 'Confirm price'}</T></button>}
+          {error && <span className="error-inline"><T>{error}</T></span>}
         </div>
       )}
     </article>

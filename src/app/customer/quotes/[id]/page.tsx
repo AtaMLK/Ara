@@ -1,3 +1,4 @@
+import {T} from '@/components/language';
 import {loadCustomerQuoteItems} from '@/lib/data/customer-quote-items';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -32,21 +33,21 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
     <>
       <header className="topbar">
         <div>
-          <Link className="back-link" href={`/customer/inquiries/${id}`}>← Request</Link>
-          <div className="eyebrow">CUSTOMER QUOTE</div>
+          <Link className="back-link" href={`/customer/inquiries/${id}`}><T>← Request</T></Link>
+          <div className="eyebrow"><T>CUSTOMER QUOTE</T></div>
           <h1 className="title">{quote.display_reference||quote.reference}</h1>
-          <div className="muted">Revision R{quote.revision_number} · {quote.currency}</div>
+          <div className="muted"><T>Revision R</T>{quote.revision_number} · {quote.currency}</div>
         </div>
-        <span className="badge">{quote.status.replaceAll('_', ' ')}</span>
+        <span className="badge"><T>{quote.status.replaceAll('_', ' ')}</T></span>
       </header>
 
       <section className="section">
-        <div className="section-head"><h2>Quotation history</h2><span className="muted">{quotes?.length ?? 0} revision{(quotes?.length ?? 0) === 1 ? '' : 's'}</span></div>
+        <div className="section-head"><h2><T>Quotation history</T></h2><span className="muted">{quotes?.length ?? 0}<T> revision</T>{(quotes?.length ?? 0) === 1 ? '' : 's'}</span></div>
         <div className="quote-history">
           {(quotes ?? []).slice().reverse().map((historyQuote) => (
             <Link className={`quote-history-item ${historyQuote.id === quote.id ? 'active' : ''}`} key={historyQuote.id} href={`/customer/quotes/${id}?revision=${historyQuote.id}`}>
               <div><strong>{historyQuote.display_reference||historyQuote.reference}</strong><span className="muted">R{historyQuote.revision_number}</span></div>
-              <span className="badge">{historyQuote.status.replaceAll('_',' ')}</span>
+              <span className="badge"><T>{historyQuote.status.replaceAll('_',' ')}</T></span>
             </Link>
           ))}
         </div>
@@ -55,7 +56,7 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
       <section className="detail-card">
         <div className="section-head"><h2>{!quote.subject||/Quotation.*(?:DRAFT-|CUS-)/i.test(quote.subject)?quotationSubject(quote.display_reference||quote.reference):quote.subject}</h2></div>
         {quoteMessage(quote.body) && <p className="detail-text">{quoteMessage(quote.body)}</p>}
-        {quote.valid_until && <p className="muted">Valid until: {quote.valid_until}</p>}
+        {quote.valid_until && <p className="muted"><T>Valid until: </T>{quote.valid_until}</p>}
 
         <div className="quote-items customer-quote-items">
           {(items ?? []).map((item) => {
@@ -63,11 +64,11 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
             return (
               <div className="quote-item" key={item.id}>
                 <div className="quote-item-grid">
-                  <div><strong>{[item.model,item.description||product?.product_name||product?.model_part_number].filter(Boolean).join(' \u2014 ')||'Item description pending'}</strong>{product?.model_part_number && product?.product_name && <div className="muted">{product.model_part_number}</div>}</div>
-                  <div><span className="muted">Qty</span><strong>{item.quantity}</strong></div>
-                  <div><span className="muted">Delivery</span><strong>{item.delivery_text||'To be confirmed'}</strong></div>
-                  <div><span className="muted">Unit price</span><strong>{Number(item.unit_price).toFixed(2)} {quote.currency}</strong></div>
-                  <div><span className="muted">Total</span><strong>{Number(item.total).toFixed(2)} {quote.currency}</strong></div>
+                  <div><strong>{[item.model,item.description||product?.product_name||product?.model_part_number].filter(Boolean).join(' \u2014 ')||<T>{'Item description pending'}</T>}</strong>{product?.model_part_number && product?.product_name && <div className="muted">{product.model_part_number}</div>}</div>
+                  <div><span className="muted"><T>Qty</T></span><strong>{item.quantity}</strong></div>
+                  <div><span className="muted"><T>Delivery</T></span><strong>{item.delivery_text||<T>{'To be confirmed'}</T>}</strong></div>
+                  <div><span className="muted"><T>Unit price</T></span><strong>{Number(item.unit_price).toFixed(2)} {quote.currency}</strong></div>
+                  <div><span className="muted"><T>Total</T></span><strong>{Number(item.total).toFixed(2)} {quote.currency}</strong></div>
                 </div>
               </div>
             );
@@ -75,13 +76,13 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
         </div>
 
         <div className="customer-quote-total">
-          <span>Total</span>
+          <span><T>Total</T></span>
           <strong>{total.toFixed(2)} {quote.currency}</strong>
         </div>
 
-        {quote.status === 'accepted' && <div className="success-box">You accepted this quotation.</div>}
-        {quote.status === 'revision_requested' && <div className="notice-box">A revision request has been submitted.</div>}
-        {quote.status === 'rejected' && <div className="notice-box">This quotation was rejected.</div>}
+        {quote.status === 'accepted' && <div className="success-box"><T>You accepted this quotation.</T></div>}
+        {quote.status === 'revision_requested' && <div className="notice-box"><T>A revision request has been submitted.</T></div>}
+        {quote.status === 'rejected' && <div className="notice-box"><T>This quotation was rejected.</T></div>}
 
         {canAct && <CustomerQuoteActions quoteId={quote.id} />}
       </section>

@@ -7,7 +7,7 @@ const db=require('./helpers/load-ts.cjs')()('@/lib/supabase/admin').createSupaba
 const dir=path.resolve('test-results/portal-audit');fs.mkdirSync(dir,{recursive:true});
 const run=randomBytes(4).toString('hex'),password=randomBytes(24).toString('base64url')+'aA1!';
 const users=[],customers=[],inquiries=[],suppliers=[],findings=[],errors=[];let browser;
-const check=async(name,fn)=>{try{await fn();findings.push({name,status:'passed'});console.log('PASS '+name);}catch(e){findings.push({name,status:'failed',error:e.message});console.log('FAIL '+name+': '+e.message.split('\n')[0]);}};
+const check=async(name,fn)=>{try{await fn();findings.push({name,status:'passed'});console.log('PASS '+name);return true;}catch(e){findings.push({name,status:'failed',error:e.message});console.log('FAIL '+name+': '+e.message.split('\n')[0]);return false;}};
 async function insert(table,value){const r=await db.from(table).insert(value).select().single();if(r.error)throw Error(table+': '+r.error.message);return r.data;}
 async function account(role,index){
  const email=`arat-qa-${run}-${role}${index}@example.invalid`;
@@ -57,11 +57,52 @@ async function cleanup(){
  }
  browser=await chromium.launch({channel:'msedge',headless:true});
  const ac=await browser.newContext({viewport:{width:1440,height:1000}}),cc=await browser.newContext({viewport:{width:1440,height:1000}}),anon=await browser.newContext();
- ac.setDefaultTimeout(12000);cc.setDefaultTimeout(12000);anon.setDefaultTimeout(12000);
+ ac.setDefaultTimeout(30000);cc.setDefaultTimeout(30000);anon.setDefaultTimeout(30000);
  let ap,cp;
  await check('Admin password sign-in and routing',async()=>{ap=await login(ac,admin);assert.equal(new URL(ap.url()).pathname,'/');});
  await check('Customer password sign-in preserves requested quotation',async()=>{cp=await login(cc,customer,'/customer/quotes/'+accepted.inquiry.id);assert.equal(new URL(cp.url()).pathname,'/customer/quotes/'+accepted.inquiry.id);});
  if(!ap||!cp)throw Error('Required login failed');
+ if(process.argv.includes('--display')){
+  const adminRoutes=['/','/inquiries','/suppliers','/rfqs','/quotes','/quotes/revisions','/customers','/notifications','/settings','/inquiries/'+accepted.inquiry.id,'/quotes/'+draft.q.id];
+  const customerRoutes=['/customer','/customer/inquiries/new','/customer/inquiries/'+accepted.inquiry.id,'/customer/quotes/'+accepted.inquiry.id,'/customer/notifications'];
+  for(const [role,page,routes]of [['admin',ap,adminRoutes],['customer',cp,customerRoutes]]){
+   const ready=await check(role+' switches to Turkish and persists on reload',async()=>{
+    await page.locator('.language-toggle:visible').click();await page.locator('html[lang="tr"]').waitFor();
+    assert.match(await body(page),role==='admin'?/Kontrol paneli/:/Teklifi kabul et/);
+    await page.reload();await page.locator('html[lang="tr"]').waitFor();
+    await page.locator('.theme-toggle:visible').click();await page.locator('html[data-theme="dark"]').waitFor();
+   });
+   if(!ready)throw Error('Display setup did not finish; stopping and cleaning disposable records.');
+   if(role==='admin')await check('Turkish dark pricing dialog has translated controls and readable text',async()=>{
+    await page.goto('http://localhost:3000/quotes/'+draft.q.id);
+    await page.getByRole('button',{name:'Ön teklifi incele ve fiyatlandır',exact:true}).click();
+    await page.getByRole('dialog').waitFor();assert.equal(await page.getByLabel('Müşteri fiyat yöntemi').count(),1);
+    assert.deepEqual(await page.evaluate(require('./helpers/contrast-audit.cjs')),[]);
+    await page.screenshot({path:path.join(dir,'admin-turkish-pricing.png'),fullPage:true});await page.keyboard.press('Escape');
+   });
+   for(const route of routes)await check(role+' Turkish dark page '+route.replace(/[0-9a-f-]{36}/g,':id'),async()=>{
+    const r=await page.goto('http://localhost:3000'+route);assert.ok(r.status()<400);await page.locator('html[lang="tr"][data-theme="dark"]').waitFor();
+    assert.doesNotMatch(await body(page),/Runtime (?:Error|ToolError)|Application error|Authentication required/);
+    const surfaces=await page.evaluate(()=>[...document.querySelectorAll('main *,aside *,header *')].filter(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);if(r.width<2||r.height<2||s.visibility==='hidden'||e.matches('.primary-button,.button,.customer-brand-mark,.admin-brand-mark,.inquiry-process-current-dot,.nav-notification-count'))return false;const rgb=s.backgroundColor.match(/[\d.]+/g)?.map(Number);return rgb&&rgb.length>=3&&(rgb.length<4||rgb[3]>.8)&&rgb.slice(0,3).every(v=>v>180)}).map(e=>({tag:e.tagName,cls:e.className,bg:getComputedStyle(e).backgroundColor})).slice(0,15));
+    assert.deepEqual(surfaces,[],'Unexpected light surfaces: '+JSON.stringify(surfaces));
+    const contrast=await page.evaluate(require('./helpers/contrast-audit.cjs'));
+    assert.deepEqual(contrast,[],'Unreadable text: '+JSON.stringify(contrast));
+   });
+   await page.screenshot({path:path.join(dir,role+'-turkish-dark.png'),fullPage:true});
+   await page.setViewportSize({width:390,height:844});await page.goto('http://localhost:3000'+(role==='admin'?'/quotes/'+draft.q.id:'/customer/inquiries/new'));
+   await check(role+' Turkish mobile controls remain usable',async()=>{assert.ok(await page.locator('.language-toggle:visible').isVisible());assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:path.join(dir,role+'-turkish-mobile.png'),fullPage:true});});
+   if(role==='customer'){
+    await page.getByLabel('Ürün açıklaması',{exact:false}).fill('Original HS-421T customer wording');
+    await page.getByLabel('Miktar',{exact:false}).fill('150');await page.getByLabel('Öncelik',{exact:false}).selectOption('urgent');
+   }
+   await page.locator('.language-toggle:visible').click();await page.locator('html[lang="en"]').waitFor();
+   if(role==='customer')await check('Language switch preserves unsaved customer data and submitted option values',async()=>{
+    assert.equal(await page.getByLabel('Product description',{exact:false}).inputValue(),'Original HS-421T customer wording');assert.equal(await page.getByLabel('Quantity',{exact:false}).inputValue(),'150');assert.equal(await page.getByLabel('Priority',{exact:false}).inputValue(),'urgent');
+   });
+   await page.reload();assert.equal(await page.locator('html').getAttribute('lang'),'en');
+  }
+  return;
+ }
  const runOfferSelection=async()=>{await check('Admin changes selected supplier offer atomically in a draft',async()=>{const f=await quote(customer.customer,'draft','offer choice');const updated=await db.from('customer_quote_items').update({price_calculation:{source_ref:'intake:item:0',commercial:{net:175}}}).eq('id',f.line.id);assert.ifError(updated.error);const alternative=await insert('customer_quote_items',{customer_quote_id:f.q.id,is_selected:false,description:'Alternative sensor offer',model:'QA-ALT',quantity:150,supplier_cost:180,supplier_currency:'EUR',price_status:'suggested',price_calculation:{source_ref:'intake:item:0',commercial:{net:180}}});await ap.goto('http://localhost:3000/quotes/'+f.q.id);await ap.getByRole('button',{name:'Review & price pre-quote'}).click();await ap.getByRole('button',{name:'Use this supplier offer for this item',exact:true}).click();await ap.getByRole('dialog').waitFor({state:'hidden'});const r=await db.from('customer_quote_items').select('id,is_selected').eq('customer_quote_id',f.q.id);assert.ifError(r.error);assert.equal(r.data.find(row=>row.id===f.line.id).is_selected,false);assert.equal(r.data.find(row=>row.id===alternative.id).is_selected,true);});};
  if(process.argv.includes('--selection')){await runOfferSelection();return;}
  if(process.argv.includes('--orders')){

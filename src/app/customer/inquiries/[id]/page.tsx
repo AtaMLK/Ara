@@ -1,3 +1,4 @@
+import {T} from '@/components/language';
 import RequestItems from '@/components/request-items';
 import AutomationRefresh from '@/components/automation-refresh';
 import {loadInquiryProgress} from '@/lib/data/inquiry-progress';
@@ -51,7 +52,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
       <header className="topbar">
         <div>
           <Link className="back-icon-button" href="/customer" aria-label="Back to My Requests" title="Back to My Requests"><span aria-hidden="true">←</span></Link>
-          <div className="eyebrow">CUSTOMER PORTAL</div>
+          <div className="eyebrow"><T>CUSTOMER PORTAL</T></div>
           <h1 className="title inquiry-display-reference">{getInquiryDisplayReference(inquiryResult.data.reference, oneRelated(inquiryResult.data.customers)?.company_name || oneRelated(inquiryResult.data.customers)?.name, inquiryResult.data.created_at, inquiryResult.data.current_version, inquiryResult.data.updated_at)}</h1>
           <div className="muted">{inquiryResult.data.title}</div>
         </div>
@@ -61,22 +62,22 @@ export default async function CustomerInquiryPage({ params }: Props) {
 
       <section className="detail-grid">
         <div className="detail-card">
-          <div className="section-head"><h2>Your request</h2></div>
+          <div className="section-head"><h2><T>Your request</T></h2></div>
           <RequestItems normalized={inquiryResult.data.normalized_information} requirements={visibleRequirements} original={inquiryResult.data.original_customer_text??inquiryResult.data.description}/>
         </div>
         <div className="detail-card">
-          <div className="section-head"><h2>Attachments</h2></div>
+          <div className="section-head"><h2><T>Attachments</T></h2></div>
           {(filesResult.data ?? []).length === 0 ? (
-            <div className="empty">No attachments.</div>
+            <div className="empty"><T>No attachments.</T></div>
           ) : (
             <div className="list">
               {(filesResult.data ?? []).map((file) => (
                 <div className="list-item" key={file.id}>
                   <div>
                     <strong>{file.original_name.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')}</strong>
-                    <div className="muted">{Math.round(file.file_size / 1024)} KB · {file.mime_type}</div>
+                    <div className="muted">{Math.round(file.file_size / 1024)}<T> KB · </T>{file.mime_type}</div>
                   </div>
-                  <span className={`badge status-badge status-${file.status}`}>{file.status.replaceAll('_', ' ')}</span>
+                  <span className={`badge status-badge status-${file.status}`}><T>{file.status.replaceAll('_', ' ')}</T></span>
                   {file.status !== 'processing_failed' && <CustomerFileLink inquiryId={id} fileId={file.id} />}
                   {file.status === 'processing_failed' && (
                     <RetryProcessingButton inquiryId={id} />
@@ -90,30 +91,30 @@ export default async function CustomerInquiryPage({ params }: Props) {
 
       {timelineEvents.some((event) => event.event_type === 'workflow_document_waiting_for_ai_provider') && (
         <section className="processing-notice" aria-live="polite">
-          <div className="processing-notice-icon">AI</div>
+          <div className="processing-notice-icon"><T>AI</T></div>
           <div>
-            <strong>AI document processing is waiting for setup.</strong>
-            <p>
+            <strong><T>AI document processing is waiting for setup.</T></strong>
+            <p><T>
               This attachment is safely stored and does not need to be uploaded again. Image and scanned-document extraction requires the AI provider. Once it is configured, retry processing to continue the workflow.
-            </p>
+            </T></p>
           </div>
         </section>
       )}
 
       <section className="section detail-grid">
         <div className="detail-card">
-          <div className="section-head"><h2>Additional notes</h2></div>
-          <p className="detail-text">{inquiryResult.data.description || 'No additional notes.'}</p>
+          <div className="section-head"><h2><T>Additional notes</T></h2></div>
+          <p className="detail-text">{inquiryResult.data.description ||<T>{'No additional notes.'}</T>}</p>
         </div>
         <div className="detail-card">
-          <div className="section-head"><h2>Requirements</h2></div>
+          <div className="section-head"><h2><T>Requirements</T></h2></div>
           {visibleRequirements.map((item) => (
             <div className="list-item" key={item.id}>
               <strong>{item.type.replaceAll('_',' ')}</strong>
               <span>{item.value}</span>
-              <span className="badge">{item.status.replaceAll('_',' ')}</span>
+              <span className="badge"><T>{item.status.replaceAll('_',' ')}</T></span>
               <span className="muted requirement-source">
-                {item.source === 'customer_text' ? 'From your request' : item.source === 'clarification' ? 'From your answer' : 'From attachment'}
+                <T>{item.source === 'customer_text' ? 'From your request' : item.source === 'clarification' ? 'From your answer' : 'From attachment'}</T>
               </span>
             </div>
           ))}
@@ -122,23 +123,23 @@ export default async function CustomerInquiryPage({ params }: Props) {
 
 
       <section className="section">
-        <div className="section-head"><h2>Quotation</h2></div>
+        <div className="section-head"><h2><T>Quotation</T></h2></div>
         {latestQuote ? (
           <div className="detail-card">
             <div>
-              <div className="eyebrow">CUSTOMER QUOTE</div>
+              <div className="eyebrow"><T>CUSTOMER QUOTE</T></div>
               <h3>{latestQuote.display_reference||latestQuote.reference}</h3>
-              <p className="muted">Revision R{latestQuote.revision_number} · {latestQuote.status.replaceAll('_', ' ')}</p>
+              <p className="muted"><T>Revision R</T>{latestQuote.revision_number} · <T>{latestQuote.status.replaceAll('_', ' ')}</T></p>
             </div>
-            <Link className="secondary-button" href={`/customer/quotes/${id}`}>View quotation</Link>
+            <Link className="secondary-button" href={`/customer/quotes/${id}`}><T>View quotation</T></Link>
           </div>
-        ) : <div className="empty">No quotation is available yet.</div>}
+        ) : <div className="empty"><T>No quotation is available yet.</T></div>}
       </section>
       <section className="section">
         <div className="section-head">
           <div>
-            <h2>Activity</h2>
-            <p className="section-caption">The latest steps are shown first. Open the timeline to see the full history.</p>
+            <h2><T>Activity</T></h2>
+            <p className="section-caption"><T>The latest steps are shown first. Open the timeline to see the full history.</T></p>
           </div>
         </div>
         <div className="detail-card">
@@ -147,13 +148,13 @@ export default async function CustomerInquiryPage({ params }: Props) {
       </section>
 
       <section className="section">
-        <div className="section-head"><h2>Action required</h2></div>
+        <div className="section-head"><h2><T>Action required</T></h2></div>
         {clarifications.length === 0 ? (
-          <div className="empty">There are no questions waiting for your answer.</div>
+          <div className="empty"><T>There are no questions waiting for your answer.</T></div>
         ) : (
           clarifications.map((item) => (
             <div className="detail-card" key={item.id}>
-              <div className="eyebrow">CLARIFICATION</div>
+              <div className="eyebrow"><T>CLARIFICATION</T></div>
               <h3>{item.question}</h3>
               <AnswerClarificationForm inquiryId={id} clarificationId={item.id} />
             </div>

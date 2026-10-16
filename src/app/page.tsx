@@ -1,3 +1,4 @@
+import {T,DateText} from '@/components/language';
 import Link from 'next/link';
 import { getDashboardData } from '@/lib/data/admin';
 
@@ -18,9 +19,9 @@ export default async function Dashboard() {
     <>
       <header className="topbar">
         <div>
-          <div className="eyebrow">ADMIN</div>
-          <h1 className="title">Dashboard</h1>
-          <div className="muted">Procurement activity and items requiring attention.</div>
+          <div className="eyebrow"><T>ADMIN</T></div>
+          <h1 className="title"><T>Dashboard</T></h1>
+          <div className="muted"><T>Procurement activity and items requiring attention.</T></div>
         </div>
       </header>
 
@@ -32,28 +33,28 @@ export default async function Dashboard() {
           ['Quotes Awaiting Approval', data.quotesAwaitingApproval, 'receipt'],
         ].map(([labelText, value, iconKind]) => (
           <div className="card dashboard-kpi-card" key={String(labelText)}>
-            <div className="dashboard-kpi-top"><span className="dashboard-kpi-icon"><MetricIcon kind={String(iconKind)} /></span><span className="muted">{labelText}</span></div>
+            <div className="dashboard-kpi-top"><span className="dashboard-kpi-icon"><MetricIcon kind={String(iconKind)} /></span><span className="muted"><T>{labelText}</T></span></div>
             <div className="kpi">{value}</div>
-            <div className="eyebrow">Current</div>
+            <div className="eyebrow"><T>Current</T></div>
           </div>
         ))}
       </section>
 
       <section className="section">
         <div className="section-head">
-          <h2>Recent Activity</h2>
+          <h2><T>Recent Activity</T></h2>
         </div>
         <div className="table">
           <div className="row header">
-            <div>Event</div><div>Actor</div><div>Time</div><div>Inquiry</div>
+            <div><T>Event</T></div><div><T>Actor</T></div><div><T>Time</T></div><div><T>Inquiry</T></div>
           </div>
           {data.recentActivity.length === 0 ? (
-            <div className="empty">No activity yet.</div>
+            <div className="empty"><T>No activity yet.</T></div>
           ) : data.recentActivity.map((item) => (
             <div className="row" key={item.id}>
-              <div>{label(item.eventType)}</div>
-              <div><span className="badge">{label(item.actorType)}</span></div>
-              <div>{formatDate(item.createdAt)}</div>
+              <div><T>{label(item.eventType)}</T></div>
+              <div><span className="badge"><T>{label(item.actorType)}</T></span></div>
+              <div><DateText value={item.createdAt}/></div>
               <Link className="muted dashboard-inquiry-link" href={`/inquiries/${item.inquiryId}`}>{item.inquiryId.slice(0, 8)}…</Link>
             </div>
           ))}

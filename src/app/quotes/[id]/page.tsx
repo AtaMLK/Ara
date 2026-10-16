@@ -1,3 +1,4 @@
+import {T} from '@/components/language';
 import {SupplierOrders} from './supplier-orders';
 import AutomationRefresh from '@/components/automation-refresh';
 import {createSupabaseAdminClient} from '@/lib/supabase/admin';
@@ -26,57 +27,57 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
       <AutomationRefresh enabled={['draft','pending_approval','sent'].includes(quote.status)}/>
       <header className="topbar">
         <div>
-          <Link className="back-link" href="/quotes">← Quotes</Link>
-          <div className="eyebrow">CUSTOMER QUOTE</div>
+          <Link className="back-link" href="/quotes"><T>← Quotes</T></Link>
+          <div className="eyebrow"><T>CUSTOMER QUOTE</T></div>
           <h1 className="title">{quote.reference}</h1>
-          <div className="muted">{oneRelated(quote.customers)?.company_name || oneRelated(quote.customers)?.name || 'Customer'} · {quote.currency}</div>
+          <div className="muted">{oneRelated(quote.customers)?.company_name || oneRelated(quote.customers)?.name ||<T>{'Customer'}</T>} · {quote.currency}</div>
         </div>
         <div className="topbar-actions">
-          <span className="badge">{label(quote.status)}</span>
+          <span className="badge"><T>{label(quote.status)}</T></span>
           <QuoteActions id={quote.id} status={quote.status} />
-          {selectedItems.length>0&&quote.confirmedItemCount===selectedItems.length&&(!readiness||!readiness.problems.length)&&<a className="secondary-button" href={'/api/quotes/'+quote.id+'/pdf?preview=current'} target="_blank" rel="noreferrer">Preview / Download PDF</a>}
-          {['sent','accepted','rejected','revision_requested','superseded'].includes(quote.status)&&<a className="secondary-button" href={'/api/quotes/'+quote.id+'/pdf'} target="_blank" rel="noreferrer">Originally sent PDF</a>}
+          {selectedItems.length>0&&quote.confirmedItemCount===selectedItems.length&&(!readiness||!readiness.problems.length)&&<a className="secondary-button" href={'/api/quotes/'+quote.id+'/pdf?preview=current'} target="_blank" rel="noreferrer"><T>Preview / Download PDF</T></a>}
+          {['sent','accepted','rejected','revision_requested','superseded'].includes(quote.status)&&<a className="secondary-button" href={'/api/quotes/'+quote.id+'/pdf'} target="_blank" rel="noreferrer"><T>Originally sent PDF</T></a>}
         </div>
       </header>
 
       <section className="detail-grid">
         <div className="detail-card">
-          <div className="section-head"><h2>Quote details</h2></div>
+          <div className="section-head"><h2><T>Quote details</T></h2></div>
           <dl className="details">
-            <div><dt>Reference</dt><dd>{quote.reference}</dd></div>
-            <div><dt>Customer</dt><dd>{oneRelated(quote.customers)?.company_name || oneRelated(quote.customers)?.name || '—'}</dd></div>
-            <div><dt>Currency</dt><dd>{quote.currency}</dd></div>
-            <div><dt>Validity</dt><dd>{quote.valid_until ? new Date(quote.valid_until).toLocaleDateString('en-GB') : 'No expiry'}</dd></div>
-            <div><dt>Revision</dt><dd>R{quote.revision_number}</dd></div>
+            <div><dt><T>Reference</T></dt><dd>{quote.reference}</dd></div>
+            <div><dt><T>Customer</T></dt><dd>{oneRelated(quote.customers)?.company_name || oneRelated(quote.customers)?.name || '—'}</dd></div>
+            <div><dt><T>Currency</T></dt><dd>{quote.currency}</dd></div>
+            <div><dt><T>Validity</T></dt><dd><T>{quote.valid_until ? new Date(quote.valid_until).toLocaleDateString('en-GB') : 'No expiry'}</T></dd></div>
+            <div><dt><T>Revision</T></dt><dd>R{quote.revision_number}</dd></div>
           </dl>
         </div>
         <div className="detail-card">
-          <div className="section-head"><h2>Commercial control</h2></div>
-          <p className="muted">ARAT prepares supplier costs, tax and delivery. Enter markup or a manual customer price in the pre-quote review, then confirm every line before approval.</p>
+          <div className="section-head"><h2><T>Commercial control</T></h2></div>
+          <p className="muted"><T>ARAT prepares supplier costs, tax and delivery. Enter markup or a manual customer price in the pre-quote review, then confirm every line before approval.</T></p>
           <div className="quote-control-note">
-            <strong>{quote.confirmedItemCount}/{selectedItems.length}</strong> prices confirmed
-          </div>
+            <strong>{quote.confirmedItemCount}/{selectedItems.length}</strong><T> prices confirmed
+          </T></div>
         </div>
       </section>
 
       {quote.status==='accepted'&&<SupplierOrders quoteId={id} orders={(orders??[]).map(order=>({...order,supplier_name:oneRelated(order.suppliers)?.legal_name,pdf_url:order.snapshot?.pdf_path?'/api/supplier-orders/'+order.id+'/pdf?v='+order.snapshot.pdf_sha256:order.status==='sent'?'/api/supplier-orders/'+order.id+'/pdf?copy=current':undefined,pdf_is_copy:!order.snapshot?.pdf_path&&order.status==='sent',html:typeof order.snapshot?.email_html==='string'?order.snapshot.email_html:undefined,instructions:typeof order.snapshot?.instructions==='string'?order.snapshot.instructions:''}))}/>}
-      {readiness&&<section className="section"><div className="detail-card"><h2>Consolidated quotation</h2><p>{selectedItems.length} selected offer(s) for {readiness.requestedCount} requested item(s). Alternative supplier offers remain in the Admin review.</p>{readiness.problems.map(problem=><p className="muted" key={problem}>{problem}</p>)}</div></section>}
+      {readiness&&<section className="section"><div className="detail-card"><h2><T>Consolidated quotation</T></h2><p>{selectedItems.length}<T> selected offer(s) for </T>{readiness.requestedCount}<T> requested item(s). Alternative supplier offers remain in the Admin review.</T></p>{readiness.problems.map(problem=><p className="muted" key={problem}><T>{problem}</T></p>)}</div></section>}
       {quote.revisionRequest && (
         <section className="section">
           <div className="detail-card revision-context">
-            <div className="section-head"><h2>Customer revision request</h2><span className="badge">{label(quote.revisionRequest.status)}</span></div>
+            <div className="section-head"><h2><T>Customer revision request</T></h2><span className="badge"><T>{label(quote.revisionRequest.status)}</T></span></div>
             <dl className="details">
-              <div><dt>Reason</dt><dd>{label(quote.revisionRequest.reason)}</dd></div>
-              <div><dt>Customer message</dt><dd>{quote.revisionRequest.free_text || 'No additional details.'}</dd></div>
+              <div><dt><T>Reason</T></dt><dd><T>{label(quote.revisionRequest.reason)}</T></dd></div>
+              <div><dt><T>Customer message</T></dt><dd>{quote.revisionRequest.free_text ||<T>{'No additional details.'}</T>}</dd></div>
             </dl>
           </div>
         </section>
       )}
 
       <section className="section">
-        <div className="section-head"><h2>Quote items</h2><span className="muted">{quote.items.length} line{quote.items.length === 1 ? '' : 's'}</span></div>
+        <div className="section-head"><h2><T>Quote items</T></h2><span className="muted">{quote.items.length}<T> line</T>{quote.items.length === 1 ? '' : 's'}</span></div>
         <div className="quote-items">
-          {quote.items.length === 0 ? <div className="empty">No quote items.</div> : <QuoteWorkbench
+          {quote.items.length === 0 ? <div className="empty"><T>No quote items.</T></div> : <QuoteWorkbench
             items={quote.items.map(item=>({...item,supplier_products:oneRelated(item.supplier_products)}))}
             currency={quote.currency} editable={quote.status === 'draft' || quote.status === 'pending_approval'}
             quoteId={quote.id} reference={quote.reference} rates={quote.rates} />}
@@ -85,7 +86,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
 
       {(quote.status === 'draft' || quote.status === 'pending_approval') && <section className="section"><QuoteDetailsEditor quote={quote} /></section>}
       <section className="section">
-        <div className="detail-card"><div className="section-head"><h2>Customer message</h2></div><div className="detail-text">{quote.body || 'No message.'}</div></div>
+        <div className="detail-card"><div className="section-head"><h2><T>Customer message</T></h2></div><div className="detail-text">{quote.body ||<T>{'No message.'}</T>}</div></div>
       </section>
     </>
   );

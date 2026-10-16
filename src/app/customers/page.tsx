@@ -1,3 +1,4 @@
+import {T} from '@/components/language';
 import { requireAdminPage } from '@/lib/data/admin';
 import { CreateCustomerForm, ChangeCustomerPassword } from './customer-form';
 
@@ -15,9 +16,9 @@ export default async function CustomersPage() {
     <>
       <header className="topbar customers-topbar">
         <div>
-          <div className="eyebrow">ADMIN</div>
-          <h1 className="title">Customers</h1>
-          <div className="muted">Admin-created customer accounts and access.</div>
+          <div className="eyebrow"><T>ADMIN</T></div>
+          <h1 className="title"><T>Customers</T></h1>
+          <div className="muted"><T>Admin-created customer accounts and access.</T></div>
         </div>
       </header>
 
@@ -25,12 +26,12 @@ export default async function CustomersPage() {
 
       <section className="section">
         <div className="table standard-table">
-          <div className="row header"><div>Customer</div><div>Type / Country</div><div>Email</div><div>Status</div><div>Access</div></div>
+          <div className="row header"><div><T>Customer</T></div><div><T>Type / Country</T></div><div><T>Email</T></div><div><T>Status</T></div><div><T>Access</T></div></div>
           {(customers ?? []).length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon" aria-hidden="true">◇</div>
-              <strong>No customers yet</strong>
-              <span>Create a customer account above and it will appear in this list.</span>
+              <strong><T>No customers yet</T></strong>
+              <span><T>Create a customer account above and it will appear in this list.</T></span>
             </div>
           ) : (customers ?? []).map((customer) => (
             <div className="row" key={customer.id}>
@@ -39,10 +40,10 @@ export default async function CustomersPage() {
                 <div className="muted">{customer.customer_code} · {customer.name}</div>
               </div>
               <div>
-                {customer.customer_type === 'company' ? 'Company' : 'Individual'} · {customer.country}
+                <T>{customer.customer_type === 'company' ? 'Company' : 'Individual'}</T> · {customer.country}
               </div>
               <div>{customer.email}</div>
-              <div><span className={`badge ${customer.status === 'active' ? 'status-approved' : 'status-rejected'}`}>{customer.status}</span></div>
+              <div><span className={`badge ${customer.status === 'active' ? 'status-approved' : 'status-rejected'}`}><T>{customer.status}</T></span></div>
               <div><ChangeCustomerPassword customerId={customer.id} /></div>
             </div>
           ))}

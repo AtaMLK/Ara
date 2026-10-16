@@ -1,5 +1,6 @@
 'use client';
 
+import {T} from '@/components/language';
 import { FormEvent, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
@@ -63,17 +64,17 @@ export default function LoginPage() {
   return (
     <main className="auth-page">
       <form className="auth-card" onSubmit={submit}>
-        <div className="brand">ARAT</div>
-        <div className="eyebrow">ARAT PORTAL</div>
-        <h1 className="title">Sign in</h1>
-        <p className="muted">Sign in with your authorized Admin or Customer account.</p>
+        <div className="brand"><T>ARAT</T></div>
+        <div className="eyebrow"><T>ARAT PORTAL</T></div>
+        <h1 className="title"><T>Sign in</T></h1>
+        <p className="muted"><T>Sign in with your authorized Admin or Customer account.</T></p>
 
-        <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" /></label>
-        <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" /></label>
+        <label><T>Email</T><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" /></label>
+        <label><T>Password</T><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" /></label>
 
-        {error && <div className="error-box">{error}</div>}
-        <button className="primary-button" disabled={loading}>{loading ? 'Signing in…' : 'Sign in'}</button>
-        <p><a href="/forgot-password">Forgot password?</a></p>
+        {error && <div className="error-box"><T>{error}</T></div>}
+        <button className="primary-button" disabled={loading}><T>{loading ? 'Signing in…' : 'Sign in'}</T></button>
+        <p><a href="/forgot-password"><T>Forgot password?</T></a></p>
       </form>
     </main>
   );

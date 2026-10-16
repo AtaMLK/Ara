@@ -1,5 +1,6 @@
 'use client';
 
+import {T,Localized,DateText} from '@/components/language';
 import { useState } from 'react';
 
 type TimelineEvent = {
@@ -57,10 +58,10 @@ export default function ActivityTimeline({ events }: { events: TimelineEvent[] }
     <div className="activity-timeline">
       <div className="timeline">
         {visibleEvents.length === 0 ? (
-          <div className="empty">No activity yet.</div>
+          <div className="empty"><T>No activity yet.</T></div>
         ) : (
           visibleEvents.map((event) => (
-            <button
+            <Localized as="button"
               className="timeline-item timeline-button"
               key={event.id}
               type="button"
@@ -69,8 +70,8 @@ export default function ActivityTimeline({ events }: { events: TimelineEvent[] }
             >
               <span className={`timeline-dot timeline-dot--${getTone(event)}`} />
               <span className="timeline-content">
-                <strong>{getLabel(event)}</strong>
-                <span className="muted">{new Date(event.created_at).toLocaleString()}</span>
+                <strong><T>{getLabel(event)}</T></strong>
+                <span className="muted"><DateText value={event.created_at} format="datetime"/></span>
                 {expanded && (
                   <span className="timeline-detail">
                     {event.event_type.replaceAll('_', ' ')}
@@ -80,7 +81,7 @@ export default function ActivityTimeline({ events }: { events: TimelineEvent[] }
                 )}
               </span>
               <span className="timeline-chevron" aria-hidden="true">›</span>
-            </button>
+            </Localized>
           ))
         )}
       </div>
@@ -90,7 +91,7 @@ export default function ActivityTimeline({ events }: { events: TimelineEvent[] }
           type="button"
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? 'Show latest 3 only' : `View all activity · ${events.length} events`}
+          <T>{expanded ? 'Show latest 3 only' : `View all activity · ${events.length} events`}</T>
         </button>
       )}
     </div>

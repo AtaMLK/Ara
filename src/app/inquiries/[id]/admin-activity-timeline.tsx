@@ -1,5 +1,6 @@
 'use client';
 
+import {T,DateText} from '@/components/language';
 import { useState } from 'react';
 
 type Event = {
@@ -20,19 +21,19 @@ export default function AdminActivityTimeline({ events }: { events: Event[] }) {
   return (
     <div className="activity-timeline">
       <div className="timeline">
-        {visible.length === 0 ? <div className="empty">No timeline events.</div> : visible.map((event) => (
+        {visible.length === 0 ? <div className="empty"><T>No timeline events.</T></div> : visible.map((event) => (
           <div className="list-item timeline-list-item" key={event.id}>
             <div>
-              <strong>{label(event.event_type)}</strong>
-              <div className="muted">{label(event.actor_type)}{event.agent_id ? ' · ' + event.agent_id : ''}</div>
+              <strong><T>{label(event.event_type)}</T></strong>
+              <div className="muted"><T>{label(event.actor_type)}</T>{event.agent_id ? ' · ' + event.agent_id : ''}</div>
             </div>
-            <span className="muted">{new Date(event.created_at).toLocaleString('en-GB')}</span>
+            <span className="muted"><DateText value={event.created_at} format="datetime"/></span>
           </div>
         ))}
       </div>
       {events.length > 3 && (
         <button className="timeline-expand" type="button" onClick={() => setExpanded((value) => !value)}>
-          {expanded ? 'Show latest 3 only' : 'View all activity · ' + events.length + ' events'}
+          <T>{expanded ? 'Show latest 3 only' : 'View all activity · ' + events.length + ' events'}</T>
         </button>
       )}
     </div>

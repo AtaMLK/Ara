@@ -1,5 +1,6 @@
 'use client';
 
+import {T,Localized,useI18n} from '@/components/language';
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
@@ -199,6 +200,7 @@ export function CandidatePanel({
   requirements: Requirement[];
   candidates: Candidate[];
 }) {
+  const {t}=useI18n();
   const products = requirements.filter((item) => item.type === 'product');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -255,7 +257,7 @@ function isVerified(candidate: Candidate) {
   async function openPreview() {
     setError('');setBusy(true);
     try {const result=await getSupplierRfqPreviewAction({inquiryId,candidateIds:selected});setPreview(result.previews);}
-    catch(e){const message=e instanceof Error?e.message:'RFQ preview unavailable';setError(message);toast.error('RFQ preview unavailable',{description:message});}
+    catch(e){const message=e instanceof Error?e.message:'RFQ preview unavailable';setError(message);toast.error(t('RFQ preview unavailable'),{description:t(message)});}
     finally {setBusy(false);}
   }
 
@@ -265,11 +267,11 @@ function isVerified(candidate: Candidate) {
     try {
       await verifySupplierCandidateAction({ inquiryId, candidateId });
       setVerifiedIds((current) => current.includes(candidateId) ? current : [...current, candidateId]);
-      toast.success('Supplier verified', { description: 'The supplier is now ready for RFQ selection.' });
+      toast.success(t('Supplier verified'), { description: t('The supplier is now ready for RFQ selection.') });
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not verify supplier';
       setError(message);
-      toast.error('Supplier verification failed', { description: message });
+      toast.error(t('Supplier verification failed'), { description: t(message) });
     } finally {
       setVerifying(null);
     }
@@ -284,11 +286,11 @@ function isVerified(candidate: Candidate) {
       setSelected([]);
       setSentIds((current) => [...new Set([...current, ...result.results.map((item) => item.candidateId)])]);
       toast.success(
-        result.results.length === 1 ? 'RFQ email sent' : 'RFQ emails sent',
+        t(result.results.length === 1 ? 'RFQ email sent' : 'RFQ emails sent'),
         {
-          description: result.results.length === 1
+          description: t(result.results.length === 1
             ? `Sent successfully to ${result.results[0].email}.`
-            : `${result.results.length} supplier emails were sent successfully.`,
+            : `${result.results.length} supplier emails were sent successfully.`),
         },
       );
       setSendConfirmation('');
@@ -296,7 +298,7 @@ function isVerified(candidate: Candidate) {
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not send supplier RFQ';
       setError(message);
-      toast.error('RFQ email failed', { description: message });
+      toast.error(t('RFQ email failed'), { description: t(message) });
     } finally {
       setBusy(false);
     }
@@ -306,21 +308,21 @@ function isVerified(candidate: Candidate) {
     <section className="section supplier-candidate-section">
       <div className="section-head">
         <div>
-          <div className="eyebrow">SUPPLIER DISCOVERY</div>
-          <h2>Supplier Candidates</h2>
-          <div className="muted">Suppliers are researched per product and consolidated here.</div>
+          <div className="eyebrow"><T>SUPPLIER DISCOVERY</T></div>
+          <h2><T>Supplier Candidates</T></h2>
+          <div className="muted"><T>Suppliers are researched per product and consolidated here.</T></div>
         </div>
-        <span className="badge">{candidates.length} candidates · {candidates.filter(valid).length} ready</span>
+        <span className="badge">{candidates.length}<T> candidates · </T>{candidates.filter(valid).length}<T> ready</T></span>
       </div>
 
-      {error && <div className="error-inline">{error}</div>}
+      {error && <div className="error-inline"><T>{error}</T></div>}
       {sendConfirmation && <div className="success-inline">{sendConfirmation}</div>}
 
       {products.length === 0 ? (
-        <div className="detail-card"><div className="empty">No product requirements are confirmed yet.</div></div>
+        <div className="detail-card"><div className="empty"><T>No product requirements are confirmed yet.</T></div></div>
       ) : (
         <div className="table supplier-product-table">
-          <div className="row header"><div>Product</div><div>Brand / Model</div><div>Suppliers Found</div><div>Status</div></div>
+          <div className="row header"><div><T>Product</T></div><div><T>Brand / Model</T></div><div><T>Suppliers Found</T></div><div><T>Status</T></div></div>
           {products.map((product) => {
             const rows = grouped.get(product.id) ?? [];
             const validCount = rows.length;
@@ -335,7 +337,7 @@ function isVerified(candidate: Candidate) {
                     {validCount}
                   </button>
                 </div>
-                <div>{validCount ? <span className="badge status-approved">Candidates found</span> : <span className="badge">Researching</span>}</div>
+                <div>{validCount ? <span className="badge status-approved"><T>Candidates found</T></span> : <span className="badge"><T>Researching</T></span>}</div>
               </div>
             );
           })}
@@ -348,10 +350,10 @@ function isVerified(candidate: Candidate) {
           <div className="supplier-modal" role="dialog" aria-modal="true">
             <div className="supplier-modal-head">
               <div>
-                <div className="eyebrow">SUPPLIER SHORTLIST</div>
+                <div className="eyebrow"><T>SUPPLIER SHORTLIST</T></div>
                 <h2>{requirements.find((item) => item.id === selectedProductId)?.value}</h2>
               </div>
-              <button className="text-button" onClick={() => setSelectedProductId(null)}>Close</button>
+              <button className="text-button" onClick={() => setSelectedProductId(null)}><T>Close</T></button>
             </div>
 
             {(['Turkey', 'Europe', 'Asia', 'International'] as const).map((group) => {
@@ -366,8 +368,8 @@ function isVerified(candidate: Candidate) {
               return (
                 <div className="supplier-modal-group" key={group}>
                   <div className="supplier-modal-group-head">
-                    <div><strong>{title}</strong><div className="muted">{rows.length} candidate{rows.length === 1 ? '' : 's'}</div></div>
-                    <span className="badge">{group === 'Turkey' ? 'Türkçe' : 'English'}</span>
+                    <div><strong><T>{title}</T></strong><div className="muted">{rows.length}<T> candidate</T>{rows.length === 1 ? '' : 's'}</div></div>
+                    <span className="badge"><T>{group === 'Turkey' ? 'Türkçe' : 'English'}</T></span>
                   </div>
                   {rows.map((candidate) => {
                     const canSend = valid(candidate);
@@ -388,11 +390,11 @@ function isVerified(candidate: Candidate) {
                             ? 'Candidate is not finalized'
                             : '';
                     return (
-                      <label className="supplier-candidate-row" key={candidate.id} title={disabledReason || 'Select supplier'}>
+                      <Localized as="label" className="supplier-candidate-row" key={candidate.id} title={disabledReason ||'Select supplier'}>
                         <input type="checkbox" checked={selected.includes(candidate.id)} disabled={!canSend || rfqSent} onChange={() => toggle(candidate.id)} />
                         <div className="supplier-candidate-main">
                           <strong>{candidate.suppliers?.legal_name || candidate.proposed_name}</strong>
-                          <div className="muted">{region(normalizedCountry(candidate))} · {normalizedCountry(candidate) || 'Country not verified'}</div>
+                          <div className="muted">{region(normalizedCountry(candidate))} · {normalizedCountry(candidate) ||<T>{'Country not verified'}</T>}</div>
                           <div className="muted">
                             {(() => {
                               const website = candidate.suppliers?.supplier_websites.find((item) => item.is_primary)?.url ?? candidate.proposed_website;
@@ -405,7 +407,7 @@ function isVerified(candidate: Candidate) {
                             const representation = representationStatus(candidate);
                             return (
                               <div className={representation.kind === 'official' ? 'supplier-match-line' : representation.kind === 'not_official' ? 'supplier-match-warning' : 'muted'}>
-                                {representation.kind === 'official' ? '✓ ' : representation.kind === 'not_official' ? 'ⓘ ' : '○ '}{representation.label}
+                                {representation.kind === 'official' ? '✓ ' : representation.kind === 'not_official' ? 'ⓘ ' : '○ '}<T>{representation.label}</T>
                               </div>
                             );
                           })()}
@@ -413,35 +415,35 @@ function isVerified(candidate: Candidate) {
                             const meta = matchMeta(candidate);
                             return (
                               <>
-                                <div className="supplier-match-line"><strong>{meta.label}</strong>{meta.score !== null ? ` · ${meta.score}/100` : ''} · Covers {meta.coverageCount}/{meta.coverageTotal} products</div>
+                                <div className="supplier-match-line"><strong><T>{meta.label}</T></strong>{meta.score !== null ? ` · ${meta.score}/100` : ''}<T> · Covers </T>{meta.coverageCount}/{meta.coverageTotal}<T> products</T></div>
                                 {meta.type !== 'exact_product' && (
                                   <div className="supplier-match-warning">
-                                    ⚠ {meta.type === 'same_brand_distributor'
+                                    ⚠ <T>{meta.type === 'same_brand_distributor'
                                       ? 'Exact model not confirmed'
                                       : meta.type === 'same_brand_similar'
                                         ? 'Similar product; exact model not confirmed'
-                                        : 'Related alternative'}
+                                        : 'Related alternative'}</T>
                                   </div>
                                 )}
                                 {meta.note && <div className="muted">{meta.note}</div>}
                               </>
                             );
                           })()}
-                          {contact?.name && <div className="muted">Contact: {contact.name}{contact.job_title ? ` · ${contact.job_title}` : ''}{contact.department ? ` · ${contact.department}` : ''}</div>}
+                          {contact?.name && <div className="muted"><T>Contact: </T>{contact.name}{contact.job_title ? ` · ${contact.job_title}` : ''}{contact.department ? ` · ${contact.department}` : ''}</div>}
                           {contact?.phone && <div className="muted">{contact.phone}</div>}
                           {!contact?.phone && candidate.suppliers?.supplier_phones.find((item) => item.status === 'active')?.phone && (
                             <div className="muted">{candidate.suppliers.supplier_phones.find((item) => item.status === 'active')?.phone}</div>
                           )}
                           {candidate.suppliers?.supplier_addresses.find((item) => item.is_primary)?.address && (
-                            <div className="muted">Address: {candidate.suppliers.supplier_addresses.find((item) => item.is_primary)?.address}</div>
+                            <div className="muted"><T>Address: </T>{candidate.suppliers.supplier_addresses.find((item) => item.is_primary)?.address}</div>
                           )}
                           <details onClick={(event) => event.stopPropagation()}>
-                            <summary>All contact details and evidence</summary>
-                            {candidate.suppliers?.supplier_emails.filter((item) => item.status === 'active').map((item) => <div key={item.email}>Email: {item.email}</div>)}
-                            {candidate.suppliers?.supplier_phones.filter((item) => item.status === 'active').map((item) => <div key={item.id}>Phone: {item.phone}</div>)}
-                            {candidate.suppliers?.supplier_addresses.map((item) => <div key={item.id}>Address: {item.address}</div>)}
+                            <summary><T>All contact details and evidence</T></summary>
+                            {candidate.suppliers?.supplier_emails.filter((item) => item.status === 'active').map((item) => <div key={item.email}><T>Email: </T>{item.email}</div>)}
+                            {candidate.suppliers?.supplier_phones.filter((item) => item.status === 'active').map((item) => <div key={item.id}><T>Phone: </T>{item.phone}</div>)}
+                            {candidate.suppliers?.supplier_addresses.map((item) => <div key={item.id}><T>Address: </T>{item.address}</div>)}
                             {candidate.suppliers?.supplier_contacts.filter((item) => item.status === 'active').map((item) => (
-                              <div key={item.id}>Contact: {[item.name, item.job_title, item.department, item.email, item.phone, item.professional_profile].filter(Boolean).join(' · ')}</div>
+                              <div key={item.id}><T>Contact: </T>{[item.name, item.job_title, item.department, item.email, item.phone, item.professional_profile].filter(Boolean).join(' · ')}</div>
                             ))}
                             {(() => {
                               const evidence = (candidate.verification_evidence ?? {}) as Record<string, unknown>;
@@ -450,24 +452,24 @@ function isVerified(candidate: Candidate) {
                               const urls = [evidence.source_url, ...(Array.isArray(evidence.contact_sources) ? evidence.contact_sources : [])]
                                 .filter((value): value is string => typeof value === 'string' && /^https?:\/\//i.test(value));
                               return <>
-                                {assessment?.explanation && <div>Verification: {assessment.explanation}</div>}
-                                {missing.length > 0 && <div className="supplier-match-warning">Not found in public evidence: {missing.join(', ')}</div>}
-                                {[...new Set(urls)].map((url) => <div key={url}><a href={url} target="_blank" rel="noreferrer">Source: {url}</a></div>)}
+                                {assessment?.explanation && <div><T>Verification: </T>{assessment.explanation}</div>}
+                                {missing.length > 0 && <div className="supplier-match-warning"><T>Not found in public evidence: </T>{missing.join(', ')}</div>}
+                                {[...new Set(urls)].map((url) => <div key={url}><a href={url} target="_blank" rel="noreferrer"><T>Source: </T>{url}</a></div>)}
                               </>;
                             })()}
                           </details>
                         </div>
                         <div className="supplier-candidate-contact">
-                          <span>{email || 'No email found yet'}</span>
+                          <span>{email ||<T>{'No email found yet'}</T>}</span>
                           {researchContact(candidate)?.sourceUrl && (
-                            <a className="muted" href={researchContact(candidate)!.sourceUrl!} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                            <a className="muted" href={researchContact(candidate)!.sourceUrl!} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}><T>
                               Email source
-                            </a>
+                            </T></a>
                           )}
                           {rfqSent ? (
-                            <span className="badge status-approved">✓ Email Sent</span>
+                            <span className="badge status-approved"><T>✓ Email Sent</T></span>
                           ) : verified ? (
-                            <span className="badge status-approved">✓ Verified</span>
+                            <span className="badge status-approved"><T>✓ Verified</T></span>
                           ) : (
                             <button
                               type="button"
@@ -475,12 +477,12 @@ function isVerified(candidate: Candidate) {
                               disabled={verifying === candidate.id || !candidate.supplier_id}
                               onClick={(event) => { event.preventDefault(); event.stopPropagation(); void verify(candidate.id); }}
                             >
-                              {verifying === candidate.id ? 'Verifying…' : 'Verify Supplier'}
+                              <T>{verifying === candidate.id ? 'Verifying…' : 'Verify Supplier'}</T>
                             </button>
                           )}
                           {!canSend && disabledReason && <span className="muted">{disabledReason}</span>}
                         </div>
-                      </label>
+                      </Localized>
                     );
                   })}
                   {rows.some(valid) && (
@@ -488,9 +490,9 @@ function isVerified(candidate: Candidate) {
                       className="primary-button supplier-send-button"
                       disabled={busy}
                       onClick={() => openPreview()}
-                    >
+                    ><T>
                       Review supplier messages
-                    </button>
+                    </T></button>
                   )}
                 </div>
               );
@@ -504,17 +506,17 @@ function isVerified(candidate: Candidate) {
         <div className="supplier-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}>
           <div className="supplier-modal supplier-preview-modal" role="dialog" aria-modal="true">
             <div className="supplier-modal-head">
-              <div><div className="eyebrow">EMAIL PREVIEW</div><h2>{`Review ${preview.length} supplier message${preview.length===1?'':'s'}`}</h2></div>
-              <button className="text-button" onClick={() => setPreview(null)}>Close</button>
+              <div><div className="eyebrow"><T>EMAIL PREVIEW</T></div><h2>{`Review ${preview.length} supplier message${preview.length===1?'':'s'}`}</h2></div>
+              <button className="text-button" onClick={() => setPreview(null)}><T>Close</T></button>
             </div>
             {preview.map(message=><section className="detail-card" key={message.candidateId}>
-              <div className="preview-meta"><strong>To</strong><span>{message.recipient}</span></div>
-              <div className="preview-meta"><strong>Subject</strong><span>{message.subject}</span></div>
-              <iframe title={'Supplier message to '+message.recipient} sandbox="" srcDoc={message.html} style={{width:'100%',height:350,border:0,background:'white'}} />
+              <div className="preview-meta"><strong><T>To</T></strong><span>{message.recipient}</span></div>
+              <div className="preview-meta"><strong><T>Subject</T></strong><span>{message.subject}</span></div>
+              <Localized as="iframe" title={'Supplier message to '+message.recipient} sandbox="" srcDoc={message.html} style={{width:'100%',height:350,border:0,background:'white'}} />
             </section>)}
             <div className="supplier-preview-actions">
-              <button className="secondary-button" onClick={() => setPreview(null)}>Cancel</button>
-              <button className="primary-button" disabled={busy} onClick={send}>{busy ? 'Sending…' : 'Confirm & Send'}</button>
+              <button className="secondary-button" onClick={() => setPreview(null)}><T>Cancel</T></button>
+              <button className="primary-button" disabled={busy} onClick={send}><T>{busy ? 'Sending…' : 'Confirm & Send'}</T></button>
             </div>
           </div>
         </div>,

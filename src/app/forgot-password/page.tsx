@@ -1,5 +1,6 @@
 'use client';
 
+import {T} from '@/components/language';
 import { FormEvent, useState } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
@@ -35,15 +36,15 @@ export default function ForgotPasswordPage() {
   return (
     <main className="auth-page">
       <form className="auth-card" onSubmit={submit}>
-        <div className="brand">ARAT</div>
-        <div className="eyebrow">ACCOUNT RECOVERY</div>
-        <h1 className="title">Reset password</h1>
-        <p className="muted">Enter your account email. We will send a secure reset link.</p>
-        <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" /></label>
-        {error && <div className="error-box">{error}</div>}
-        {message && <div className="success-box">{message}</div>}
-        <button className="primary-button" disabled={loading}>{loading ? 'Sending…' : 'Send reset link'}</button>
-        <p><Link href="/login">Back to sign in</Link></p>
+        <div className="brand"><T>ARAT</T></div>
+        <div className="eyebrow"><T>ACCOUNT RECOVERY</T></div>
+        <h1 className="title"><T>Reset password</T></h1>
+        <p className="muted"><T>Enter your account email. We will send a secure reset link.</T></p>
+        <label><T>Email</T><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" /></label>
+        {error && <div className="error-box"><T>{error}</T></div>}
+        {message && <div className="success-box"><T>{message}</T></div>}
+        <button className="primary-button" disabled={loading}><T>{loading ? 'Sending…' : 'Send reset link'}</T></button>
+        <p><Link href="/login"><T>Back to sign in</T></Link></p>
       </form>
     </main>
   );

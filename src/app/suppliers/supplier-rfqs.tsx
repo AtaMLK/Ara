@@ -1,5 +1,6 @@
 'use client';
 
+import {T,Localized,DateText} from '@/components/language';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, X } from 'lucide-react';
@@ -33,43 +34,43 @@ export function SupplierRfqButton({ supplierName, rfqs }: { supplierName: string
 
   return (
     <>
-      <button type="button" className="supplier-rfq-trigger" onClick={() => setOpen(true)} title="View supplier RFQs">
+      <Localized as="button" type="button" className="supplier-rfq-trigger" onClick={() => setOpen(true)} title="View supplier RFQs">
         <Eye size={15} />
-        <span>RFQs</span>
+        <span><T>RFQs</T></span>
         <b>{rfqs.length}</b>
-      </button>
+      </Localized>
 
       {open && typeof document !== 'undefined' && createPortal(
         <div className="arat-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
           <div className="supplier-rfq-dialog" role="dialog" aria-modal="true" aria-labelledby="supplier-rfq-title">
             <div className="supplier-rfq-head">
               <div>
-                <div className="eyebrow">SUPPLIER RFQ HISTORY</div>
+                <div className="eyebrow"><T>SUPPLIER RFQ HISTORY</T></div>
                 <h2 id="supplier-rfq-title">{supplierName}</h2>
-                <div className="muted">{rfqs.length} RFQ{rfqs.length === 1 ? '' : 's'} associated with this supplier</div>
+                <div className="muted">{rfqs.length}<T> RFQ</T>{rfqs.length === 1 ? '' : 's'}<T> associated with this supplier</T></div>
               </div>
-              <button type="button" className="arat-dialog-close" onClick={() => setOpen(false)} aria-label="Close"><X size={17} /></button>
+              <Localized as="button" type="button" className="arat-dialog-close" onClick={() => setOpen(false)} aria-label="Close"><X size={17} /></Localized>
             </div>
 
             <div className="supplier-rfq-list">
               {rfqs.length === 0 ? (
-                <div className="empty">No RFQs have been created for this supplier.</div>
+                <div className="empty"><T>No RFQs have been created for this supplier.</T></div>
               ) : (
                 rfqs.map((rfq) => (
                   <div className="supplier-rfq-item" key={rfq.id}>
                     <div className="supplier-rfq-main">
-                      <strong>{rfq.rfq_code || 'RFQ'}</strong>
-                      <div className="muted">{rfq.subject || 'Quotation Request'}</div>
+                      <strong>{rfq.rfq_code ||<T>{'RFQ'}</T>}</strong>
+                      <div className="muted">{rfq.subject ||<T>{'Quotation Request'}</T>}</div>
                       <small>
-                        {new Date(rfq.created_at).toLocaleDateString('en-GB')}
+                        <DateText value={rfq.created_at} format="date"/>
                         {rfq.sent_at ? ' · Sent ' + new Date(rfq.sent_at).toLocaleDateString('en-GB') : ''}
                       </small>
                     </div>
                     <div className="supplier-rfq-meta">
-                      <span className="badge">{rfq.status.replaceAll('_', ' ')}</span>
+                      <span className="badge"><T>{rfq.status.replaceAll('_', ' ')}</T></span>
                       <RfqActions
                         rfqId={rfq.id}
-                        rfqCode={rfq.rfq_code || 'RFQ'}
+                        rfqCode={rfq.rfq_code ||'RFQ'}
                         subject={rfq.subject}
                         body={rfq.body}
                         supplier={supplierName}

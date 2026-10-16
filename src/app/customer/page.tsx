@@ -1,3 +1,4 @@
+import {T,Localized,DateText} from '@/components/language';
 import Link from 'next/link';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import SignOutButton from '@/components/SignOutButton';
@@ -6,15 +7,15 @@ import { getInquiryDisplayReference } from '@/lib/ui/inquiry-reference';
 export default async function CustomerPortalPage() {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return <main className="auth-page"><div className="auth-card"><div className="brand">ARAT</div><h1 className="title">Sign in required</h1><Link className="primary-button" href="/login">Sign in</Link></div></main>;
+  if (!user) return <main className="auth-page"><div className="auth-card"><div className="brand"><T>ARAT</T></div><h1 className="title"><T>Sign in required</T></h1><Link className="primary-button" href="/login"><T>Sign in</T></Link></div></main>;
 
   const { data: profile } = await supabase.from('profiles').select('role,status').eq('user_id', user.id).single();
   if (profile?.role !== 'customer' || profile.status !== 'active') {
-    return <main className="section"><div className="error-box">Customer portal access is not available for this account.</div></main>;
+    return <main className="section"><div className="error-box"><T>Customer portal access is not available for this account.</T></div></main>;
   }
 
   const { data: customer } = await supabase.from('customers').select('id,name,company_name,status').eq('user_id', user.id).single();
-  if (!customer || customer.status !== 'active') return <main className="section"><div className="error-box">Customer account not found or inactive.</div></main>;
+  if (!customer || customer.status !== 'active') return <main className="section"><div className="error-box"><T>Customer account not found or inactive.</T></div></main>;
 
   const { data: inquiries } = await supabase
     .from('inquiries')
@@ -45,15 +46,15 @@ export default async function CustomerPortalPage() {
   return (
     <main className="portal-shell">
       <header className="topbar">
-        <div><div className="eyebrow">CUSTOMER PORTAL</div><h1 className="title">Welcome{customer.company_name ? `, ${customer.company_name}` : ` ${customer.name}`}</h1><div className="muted">Your procurement requests and actions.</div></div>
-        <div className="topbar-actions"><Link className="primary-button new-request-button" href="/customer/inquiries/new"><span aria-hidden="true">+</span> New Request</Link><SignOutButton /></div>
+        <div><div className="eyebrow"><T>CUSTOMER PORTAL</T></div><h1 className="title"><T>Welcome</T>{customer.company_name ? `, ${customer.company_name}` : ` ${customer.name}`}</h1><div className="muted"><T>Your procurement requests and actions.</T></div></div>
+        <div className="topbar-actions"><Link className="primary-button new-request-button" href="/customer/inquiries/new"><span aria-hidden="true">+</span><T> New Request</T></Link><SignOutButton /></div>
       </header>
       <section className="section">
         <div className="table customer-requests-table">
-          <div className="row header"><div>Reference</div><div>Request</div><div>Status</div><div>Updated</div></div>
-          {(inquiries ?? []).length === 0 ? <div className="empty">No procurement requests yet.</div> : (inquiries ?? []).map((item) => (
+          <div className="row header"><div><T>Reference</T></div><div><T>Request</T></div><div><T>Status</T></div><div><T>Updated</T></div></div>
+          {(inquiries ?? []).length === 0 ? <div className="empty"><T>No procurement requests yet.</T></div> : (inquiries ?? []).map((item) => (
             <Link className="row row-link" href={`/customer/inquiries/${item.id}`} key={item.id}>
-              <div><strong>{getInquiryDisplayReference(item.reference, customer.company_name || customer.name, item.created_at, item.current_version, item.updated_at)}</strong></div><div>{item.title}</div><div className="status-cell"><span className={`badge status-badge status-${item.status}`}>{item.status.replaceAll('_',' ')}</span>{notificationByInquiry.get(item.id) && <span className={`customer-request-notification-dot customer-request-notification-dot--${notificationByInquiry.get(item.id)!.tone}`} title={notificationByInquiry.get(item.id)!.title} aria-label={notificationByInquiry.get(item.id)!.title} />}</div><div>{new Date(item.updated_at).toLocaleDateString('en-GB')}</div>
+              <div><strong>{getInquiryDisplayReference(item.reference, customer.company_name || customer.name, item.created_at, item.current_version, item.updated_at)}</strong></div><div>{item.title}</div><div className="status-cell"><span className={`badge status-badge status-${item.status}`}><T>{item.status.replaceAll('_',' ')}</T></span>{notificationByInquiry.get(item.id) && <Localized as="span" className={`customer-request-notification-dot customer-request-notification-dot--${notificationByInquiry.get(item.id)!.tone}`} title={notificationByInquiry.get(item.id)!.title} aria-label={notificationByInquiry.get(item.id)!.title} />}</div><div><DateText value={item.updated_at} format="date"/></div>
             </Link>
           ))}
         </div>

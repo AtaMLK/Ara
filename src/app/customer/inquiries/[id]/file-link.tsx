@@ -1,5 +1,6 @@
 'use client';
 
+import {T} from '@/components/language';
 import { useState } from 'react';
 import { getCustomerInquiryFileUrlAction } from '@/app/actions';
 
@@ -23,9 +24,9 @@ export default function CustomerFileLink({ inquiryId, fileId }: { inquiryId: str
   return (
     <div>
       <button className="inline-button" type="button" onClick={openFile} disabled={loading}>
-        {loading ? 'Opening…' : 'Open'}
+        <T>{loading ? 'Opening…' : 'Open'}</T>
       </button>
-      {error && <div className="error-inline">{error}</div>}
+      {error && <div className="error-inline"><T>{error}</T></div>}
     </div>
   );
 }

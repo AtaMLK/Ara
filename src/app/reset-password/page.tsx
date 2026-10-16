@@ -1,5 +1,6 @@
 'use client';
 
+import {T} from '@/components/language';
 import { FormEvent, useState } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
@@ -46,15 +47,15 @@ export default function ResetPasswordPage() {
   return (
     <main className="auth-page">
       <form className="auth-card" onSubmit={submit}>
-        <div className="brand">ARAT</div>
-        <div className="eyebrow">ACCOUNT RECOVERY</div>
-        <h1 className="title">Choose a new password</h1>
-        <label>New password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" /></label>
-        <label>Confirm password<input type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} required minLength={8} autoComplete="new-password" /></label>
-        {error && <div className="error-box">{error}</div>}
-        {message && <div className="success-box">{message}</div>}
-        <button className="primary-button" disabled={loading}>{loading ? 'Saving…' : 'Change password'}</button>
-        {message && <p><Link href="/login">Go to sign in</Link></p>}
+        <div className="brand"><T>ARAT</T></div>
+        <div className="eyebrow"><T>ACCOUNT RECOVERY</T></div>
+        <h1 className="title"><T>Choose a new password</T></h1>
+        <label><T>New password</T><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" /></label>
+        <label><T>Confirm password</T><input type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} required minLength={8} autoComplete="new-password" /></label>
+        {error && <div className="error-box"><T>{error}</T></div>}
+        {message && <div className="success-box"><T>{message}</T></div>}
+        <button className="primary-button" disabled={loading}><T>{loading ? 'Saving…' : 'Change password'}</T></button>
+        {message && <p><Link href="/login"><T>Go to sign in</T></Link></p>}
       </form>
     </main>
   );

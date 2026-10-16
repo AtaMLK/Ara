@@ -1,5 +1,6 @@
 'use client';
 
+import {T,Localized,useI18n} from '@/components/language';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -51,7 +52,7 @@ function ConfirmDialog({ open, title, description, loading, onCancel, onConfirm 
           <AlertTriangle size={18} />
         </div>
 
-        <button
+        <Localized as="button"
           type="button"
           className="arat-dialog-close"
           onClick={onCancel}
@@ -59,18 +60,18 @@ function ConfirmDialog({ open, title, description, loading, onCancel, onConfirm 
           aria-label="Close"
         >
           <X size={17} />
-        </button>
+        </Localized>
 
-        <h2 id="arat-dialog-title">{title}</h2>
-        <p>{description}</p>
+        <h2 id="arat-dialog-title"><T>{title}</T></h2>
+        <p><T>{description}</T></p>
 
         <div className="arat-dialog-actions">
-          <button type="button" className="secondary-button" onClick={onCancel} disabled={loading}>
+          <button type="button" className="secondary-button" onClick={onCancel} disabled={loading}><T>
             Cancel
-          </button>
+          </T></button>
           <button type="button" className="arat-danger-button" onClick={onConfirm} disabled={loading}>
             {loading ? <Loader2 size={15} className="arat-spin" /> : <Trash2 size={15} />}
-            {loading ? 'Hiding…' : 'Hide'}
+            <T>{loading ? 'Hiding…' : 'Hide'}</T>
           </button>
         </div>
       </div>
@@ -80,6 +81,7 @@ function ConfirmDialog({ open, title, description, loading, onCancel, onConfirm 
 }
 
 export function DeleteSupplierButton({ id, name }: { id: string; name: string }) {
+  const {t}=useI18n();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -89,13 +91,13 @@ export function DeleteSupplierButton({ id, name }: { id: string; name: string })
     try {
       await softDeleteSupplierAction(id);
       setOpen(false);
-      toast.success('Supplier hidden', {
-        description: 'The supplier was removed from the active list. Its history is preserved.',
+      toast.success(t('Supplier hidden'), {
+        description: t('The supplier was removed from the active list. Its history is preserved.'),
       });
       router.refresh();
     } catch (error) {
-      toast.error('Could not hide supplier', {
-        description: error instanceof Error ? error.message : 'Please try again.',
+      toast.error(t('Could not hide supplier'), {
+        description: t(error instanceof Error ? error.message : 'Please try again.'),
       });
       setLoading(false);
     }
@@ -112,9 +114,9 @@ export function DeleteSupplierButton({ id, name }: { id: string; name: string })
           setOpen(true);
         }}
         disabled={loading}
-      >
+      ><T>
         Delete
-      </button>
+      </T></button>
 
       <ConfirmDialog
         open={open}
@@ -129,6 +131,7 @@ export function DeleteSupplierButton({ id, name }: { id: string; name: string })
 }
 
 export function DeleteInquiryButton({ id, reference }: { id: string; reference: string }) {
+  const {t}=useI18n();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -138,13 +141,13 @@ export function DeleteInquiryButton({ id, reference }: { id: string; reference: 
     try {
       await softDeleteInquiryAction(id);
       setOpen(false);
-      toast.success('Inquiry hidden', {
-        description: 'The inquiry was removed from the active list. Its history is preserved.',
+      toast.success(t('Inquiry hidden'), {
+        description: t('The inquiry was removed from the active list. Its history is preserved.'),
       });
       router.refresh();
     } catch (error) {
-      toast.error('Could not hide inquiry', {
-        description: error instanceof Error ? error.message : 'Please try again.',
+      toast.error(t('Could not hide inquiry'), {
+        description: t(error instanceof Error ? error.message : 'Please try again.'),
       });
       setLoading(false);
     }
@@ -157,9 +160,9 @@ export function DeleteInquiryButton({ id, reference }: { id: string; reference: 
         className="secondary-button arat-delete-button"
         onClick={() => setOpen(true)}
         disabled={loading}
-      >
+      ><T>
         Delete
-      </button>
+      </T></button>
 
       <ConfirmDialog
         open={open}
