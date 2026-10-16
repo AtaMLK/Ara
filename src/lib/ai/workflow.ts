@@ -2258,15 +2258,15 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
             {
               requirements: (confirmedRequirements.data ?? []).filter((item) => item.source_ref === productRequirement.source_ref),
-              target_product: productRequirement,
+              target_product: { ...productRequirement, models: productModels.get(productRequirement.id) ?? [] },
               research_results: productResults.map((item) => ({
                 source_name: item.source_name,
                 source_url: item.source_url,
-                finding: item.finding,
+                finding: item.finding?.slice(0, 4000),
                 structured_data: item.structured_data,
                 relevance: item.relevance,
                 confidence: item.confidence,
-                evidence: normalizeEvidence(item.evidence),
+                evidence: normalizeEvidence(item.evidence).slice(0, 4).map(value => value.slice(0, 1000)),
               })),
               instructions: [
                 'Research and validate suppliers for THIS PRODUCT ONLY. Never mix evidence from another product.',
@@ -2321,11 +2321,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const extractionAi = await runAgent(
               { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
               {
-                target_product: productRequirement,
+                target_product: { ...productRequirement, models: productModels.get(productRequirement.id) ?? [] },
                 research_results: productResults.slice(0, 80).map((item) => ({
                   source_name: item.source_name,
                   source_url: item.source_url,
-                  finding: item.finding,
+                  finding: item.finding?.slice(0, 4000),
                   structured_data: item.structured_data,
                   relevance: item.relevance,
                   confidence: item.confidence,
@@ -2389,18 +2389,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               try { host = new URL(item.source_url).hostname.replace(/^www\./, ''); } catch { continue; }
               if (/(wikipedia|facebook|instagram|ebay|walmart|alibaba|manuals\.plus|researchgate|academia|britannica|\.gov\b)/i.test(host)) continue;
 
-              const companyMatches = [
-                evidenceText.match(/\b([A-Z][A-Za-z0-9&.,'()\- ]{2,100}?(?:Ltd|Limited|Inc|LLC|GmbH|S\.?A\.?S?\.?|Co\.|Corporation|Corp\.|Sensors|Energy))\b/),
-                evidenceText.match(/\b([A-Z][A-Za-z0-9&.'()\- ]{2,80}?)\s+(?:supplies|supply|manufactures|manufacture|distributes|distributor|represents|offers|sells)\b/i),
-              ];
-              let name = companyMatches.find((m) => m?.[1])?.[1]?.trim();
-
-              if (!name && brandPattern) {
-                const brandMatch = evidenceText.match(brandPattern);
-                if (brandMatch && /(supplier|distributor|manufacturer|official|sales|products?|supply|sells|temperature|sensor|power station|energy)/i.test(evidenceText)) {
-                  name = brandMatch[0].trim();
-                }
-              }
+              // Do not turn product descriptions ("The repeater power supply")
+              // into company names. AI handles general names; deterministic
+              // recovery requires an explicit legal company name in the title.
+              if (discoveryCandidates.has(`${item.source_url}::${productRequirement.id}`)) continue;
+              const identityTitle = String(item.source_name ?? item.structured_data?.title ?? '');
+              const legalName = identityTitle.split(/[|\n]/).map(part => part.trim()).find(part =>
+                part.length <= 120 && /\b(?:Ltd\.?|Limited|Inc\.?|LLC|GmbH|Corporation|Corp\.?)$/i.test(part));
+              const name = legalName;
               if (!name) continue;
 
               const key = productRequirement.id + '::' + name.toLowerCase();
@@ -2444,11 +2440,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const focusedAi = await runAgent(
               { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
               {
-                target_product: productRequirement,
+                target_product: { ...productRequirement, models: productModels.get(productRequirement.id) ?? [] },
                 research_results: productResults.map((item) => ({
                   source_name: item.source_name,
                   source_url: item.source_url,
-                  finding: item.finding,
+                  finding: item.finding?.slice(0, 4000),
                   structured_data: item.structured_data,
                   relevance: item.relevance,
                   confidence: item.confidence,
@@ -2514,7 +2510,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                 research_results: strongResults.map((item) => ({
                   source_name: item.source_name,
                   source_url: item.source_url,
-                  finding: item.finding,
+                  finding: item.finding?.slice(0, 4000),
                   structured_data: item.structured_data,
                   confidence: item.confidence,
                   evidence: item.evidence,
@@ -2940,7 +2936,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
                   ...contactResults.map((item) => ({
                     source_name: item.sourceName,
                     source_url: item.sourceUrl,
-                    finding: item.finding,
+                    finding: item.finding?.slice(0, 4000),
                     structured_data: item.structuredData,
                     evidence: item.evidence,
                   })),
