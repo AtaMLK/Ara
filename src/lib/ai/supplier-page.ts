@@ -22,7 +22,7 @@ export function isPublicAddress(address: string) {
 }
 
 /** Pin each connection to a public address; follow only bounded same-site redirects. */
-export async function readSupplierHtml(rawUrl: string, redirectsRemaining = 2): Promise<string> {
+export async function readSupplierHtml(rawUrl: string, redirectsRemaining = 2, allowXml = false): Promise<string> {
   const url = new URL(rawUrl);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port) return '';
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
@@ -42,10 +42,11 @@ export async function readSupplierHtml(rawUrl: string, redirectsRemaining = 2): 
         response.resume();
         const nextUrl = new URL(response.headers.location, url).toString();
         if (!sameWebsiteHost(nextUrl, hostname)) { resolve(''); return; }
-        void readSupplierHtml(nextUrl, redirectsRemaining - 1).then(resolve, reject);
+        void readSupplierHtml(nextUrl, redirectsRemaining - 1, allowXml).then(resolve, reject);
         return;
       }
-      if (response.statusCode !== 200 || !/text\/html|application\/xhtml\+xml/i.test(response.headers['content-type'] ?? '')) {
+      const contentType = response.headers['content-type'] ?? '';
+      if (response.statusCode !== 200 || !(/text\/html|application\/xhtml\+xml/i.test(contentType) || (allowXml && /(?:text|application)\/xml/i.test(contentType)))) {
         response.resume(); resolve(''); return;
       }
       const chunks: Buffer[] = [];

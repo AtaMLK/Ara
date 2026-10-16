@@ -483,13 +483,14 @@ test('a changed supplier request cannot be sent using an old preview',async()=>{
 });
 
 // No search credits, database writes, email sends, or production credentials are used.
-function fixture({ unreadable = false, protectedQuantity = false, noContacts = false, researchFailure = false } = {}) {
+function fixture({ unreadable = false, protectedQuantity = false, noContacts = false, researchFailure = false, commonSupplier = false } = {}) {
   const inquiryId = randomUUID();
   const tables = { inquiries: [{ id: inquiryId, status: 'processing', reference:'AO-20261015-ABCDEF',created_at:'2026-10-15T10:00:00Z',current_version: 1, original_customer_text: 'Alpha TS-100 sensor 2 pcs; Beta BM-200 motor 2 pcs' }] };
   if (unreadable) tables.inquiry_files = [{ id: randomUUID(), inquiry_id: inquiryId, status: 'uploaded', mime_type: 'application/pdf', original_name: 'request.pdf', storage_path: 'test.pdf' }];
   if (protectedQuantity) tables.requirements = [{ id: randomUUID(), inquiry_id: inquiryId, type: 'quantity', value: '9 pcs', source: 'customer_text', source_ref: 'intake:item:0', status: 'confirmed', admin_edited: true }];
   let searches = 0;
   let sends = 0;
+  const contactCandidateCounts = [];
   class Query {
     constructor(table) { this.table = table; this.filters = []; this.op = 'read'; }
     select(columns, options) { this.selectOptions = options; return this; }
@@ -533,8 +534,8 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
     searches++;
     if (researchFailure) throw new Error('Provider temporarily unavailable');
     const beta = /beta|bm-200/i.test(query);
-    const domain = beta ? 'beta.example.com' : 'alpha.example.com';
-    const company = beta ? 'Beta Motors Ltd' : 'Alpha Sensors Ltd';
+    const domain = commonSupplier ? 'shared.example.com' : beta ? 'beta.example.com' : 'alpha.example.com';
+    const company = commonSupplier ? 'Shared Supply Ltd' : beta ? 'Beta Motors Ltd' : 'Alpha Sensors Ltd';
     return [{ sourceType: 'web', sourceName: company, sourceUrl: `https://${domain}/products`, finding: `${company} manufacturer ${beta ? 'BM-200 Beta motor' : 'TS-100 Alpha temperature sensor'} ${noContacts ? '' : `sales contact sales@${domain} 123 Industrial Road +90 212 555 1234 Turkey`}`, structuredData: { title: company }, evidence: {} }];
   } };
   const cache = new Map();
@@ -564,6 +565,7 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
         const source = input.research_results[0];
         output = { candidates: [{ name: source.source_name, website: new URL(source.source_url).origin, country: 'Turkey', sourceUrl: source.source_url, requirementId: input.target_product.id, matchType: 'exact_product', matchScore: 95, evidence: [source.finding] }] };
       } else if (ctx.agentId === 'contact_research') {
+        contactCandidateCounts.push(tables.supplier_candidates?.length ?? 0);
         if (noContacts) return { output: schema.parse({}), provider: 'test', model: 'test', executionId: ctx.executionId };
         const domain = new URL(input.supplier.website).hostname;
         output = { emails: [{ email: `sales@${domain}`, evidence: 'Published on official page' }, { email: 'invented@unknown.example', evidence: 'Unsupported' }], addresses: [{ address: '123 Industrial Road', country: 'Turkey', evidence: 'Published address' }], phones: [{ phone: '+90 212 555 1234', evidence: 'Published phone' }], contacts: [{ name: 'Invented Person', email: 'guess@unknown.example', evidence: ['Unsupported'] }] };
@@ -592,7 +594,7 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
     new Function('require', 'module', 'exports', 'process', js)(child => load(child, path.dirname(file)), module, module.exports, { env: { OPENAI_API_KEY: 'test', SERPAPI_API_KEY: 'test' } });
     return module.exports;
   }
-  return { inquiryId, tables, load, mock: (spec, value) => mocks[spec] = value, unmock: spec => delete mocks[spec], searchCount: () => searches, sendCount: () => sends };
+  return { inquiryId, tables, load, contactCandidateCounts, mock: (spec, value) => mocks[spec] = value, unmock: spec => delete mocks[spec], searchCount: () => searches, sendCount: () => sends };
 }
 
 test('two-product workflow preserves equal quantities and delivers evidence-backed contacts without sending email', async () => {
@@ -794,4 +796,30 @@ test('new replies reopen completed extraction; RFQ state processes pending respo
   assert.notEqual(result.outcome,'rfq_waiting_for_supplier_response');
   assert.ok(result.execution.task_key.endsWith(':quote_extraction'));
   assert.equal(f.tables.ai_executions.find(row => row.id === execution.id).output_ref.skipped_count,1);
+});
+
+
+test('all item matches are visible before contacts and shared supplier contacts are researched once', async () => {
+ const f=fixture({commonSupplier:true});
+ await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId,'document');
+ const result=await f.load('@/lib/ai/workflow').processQueuedWorkflow(6,f.inquiryId);
+ assert.equal(result.results.some(row=>row.error),false,JSON.stringify(result.results));
+ assert.equal(f.tables.supplier_candidates.length,2);
+ assert.equal(new Set(f.tables.supplier_candidates.map(row=>row.supplier_id)).size,1);
+ assert.deepEqual(f.contactCandidateCounts,[2]);
+ assert.ok(f.tables.supplier_candidates.every(row=>row.match_evidence.coverage_count===2));
+ assert.equal(f.tables.supplier_emails.length,1);
+ assert.equal(f.sendCount(),0);
+});
+
+test('multi-model catalog evidence is reused by exact code without inventing coverage',()=>{
+ const {exactModelResults}=fixture().load('@/lib/ai/research/model-evidence');
+ const results=[{id:'catalog',source_url:'https://supplier.example/catalog',finding:'Manufacturer TS-100 and BM-200 products',structured_data:{arat_requirement_id:'first'}},{id:'wrong',source_url:'https://other.example/TS-1000',finding:'TS-1000 only'}];
+ const matching=exactModelResults(results,['TS-100'],'second');
+ assert.deepEqual(matching.map(row=>row.id),['catalog']);
+ assert.equal(matching[0].structured_data.arat_requirement_id,'second');
+ assert.equal(results[0].structured_data.arat_requirement_id,'first');
+ assert.equal(exactModelResults(results,['BM-200'],'third').length,1);
+ assert.equal(exactModelResults(results,['D5040S'],'fourth').length,0);
+ assert.equal(exactModelResults(results,[],'fifth').length,0);
 });

@@ -13,6 +13,8 @@ import { documentOutputSchema, intakeOutputSchema, intakeRepairOutputSchema, cla
 import { downloadInquiryFile, parseInquiryFile } from './document-processor';
 import {normalizeDocumentRequirements} from './document-items';
 import {supplierSearchQueries,mapResearchQueries} from './research/queries';
+import { exactModelResults } from './research/model-evidence';
+import { supplierCatalogModels } from './research/supplier-catalog';
 import {
   enqueueWorkflow,
   markExecutionRunning,
@@ -2132,6 +2134,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       const productModels = new Map<string, string[]>();
       const discoveryCandidates = new Map<string, { name: string; country?: string; website?: string; evidence: string[]; requirementId?: string; matchType?: 'exact_product' | 'same_brand_distributor' | 'same_brand_similar' | 'related_alternative'; matchScore?: number; matchNote?: string }>();
 
+      const enrichmentJobs = new Map<string, Array<() => Promise<void>>>();
+      const contactCache = new Map<string, { research: ReturnType<typeof supplierContactResearchOutputSchema.parse>; results: ResearchResult[]; pages: Array<{url: string; text: string}> }>();
       let selectedResults = results ?? [];
       if (results?.length) {
         const confirmedRequirements = await supabase
@@ -2147,6 +2151,44 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             .map((item) => item.value));
         }
 
+        // Search indexes often omit catalog pages. Check the discovered suppliers'
+        // own sitemaps for the other requested codes, then fetch each matched page.
+        // A sitemap URL alone never establishes a supplier or availability.
+        const catalogLeads = await supplierCatalogModels(
+          (results ?? []).map(row => row.source_url).filter((url): url is string => Boolean(url)),
+          [...productModels.values()].flat(),
+        );
+        // Give every supplier/model one page before reading language variants or
+        // blog duplicates; a large manufacturer's sitemap must not starve others.
+        const preferredCatalogLeads = [...new Set(catalogLeads.flatMap(lead => {
+          return [...productModels.values()].flatMap(models => {
+            const first = catalogLeads.find(candidate => candidate.origin === lead.origin &&
+              exactModelResults([{source_url: candidate.url}], models, '').length);
+            return first ? [first] : [];
+          });
+        }))];
+        const catalogPages = await mapResearchQueries(preferredCatalogLeads, async lead => ({
+          ...lead, text: await fetchSupplierPage(lead.url),
+        }));
+        for (const page of catalogPages) {
+          if (!page.text) continue;
+          const seed = (results ?? []).find(row => row.source_url && sameWebsiteHost(row.source_url, new URL(page.origin).hostname));
+          for (const product of productRequirements) {
+            const models = productModels.get(product.id) ?? [];
+            if (!exactModelResults([{source_url: '', finding: page.text}], models, product.id).length) continue;
+            if ((results ?? []).some(row => row.source_url === page.url && row.structured_data?.arat_requirement_id === product.id)) continue;
+            const {data: added, error: catalogError} = await supabase.from('research_results').insert({
+              research_case_id: research.id, source_type: 'web', source_name: seed?.source_name,
+              source_url: page.url, finding: page.text.slice(0, 16000),
+              structured_data: {arat_requirement_id: product.id, arat_catalog_discovery: true, availability_confirmed: false},
+              relevance: '1', confidence: 0.95,
+              evidence: {catalog_origin: page.origin, fetched_page: true},
+            }).select('id,source_name,source_url,finding,structured_data,relevance,confidence,evidence').single();
+            if (catalogError) throw new ToolError('TRANSIENT', catalogError.message);
+            if (added) results!.push(added);
+          }
+        }
+
         // Research results normally carry arat_requirement_id. Older/partial
         // research rows may not, so scope them by source_ref and product identity
         // before giving up. Supplier discovery must never silently skip a product.
@@ -2154,12 +2196,15 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           const byId = (results ?? []).filter((item) =>
             String(item.structured_data?.arat_requirement_id ?? '') === requirement.id
           );
-          if (byId.length) return byId;
+          // Catalog evidence may arrive through another item's search query.
+          const modelResults = exactModelResults(results ?? [], productModels.get(requirement.id) ?? [], requirement.id);
+          const mergeModels = (scoped: typeof byId) => [...scoped, ...modelResults].filter((item, index, all) => index === all.findIndex(other => other.source_url === item.source_url));
+          if (byId.length) return mergeModels(byId);
 
           const sameSource = (results ?? []).filter((item) =>
             Boolean(requirement.source_ref) && String(item.structured_data?.source_ref ?? item.structured_data?.arat_source_ref ?? '') === String(requirement.source_ref ?? '')
           );
-          if (sameSource.length) return sameSource;
+          if (sameSource.length) return mergeModels(sameSource);
 
           const relatedRequirements = (confirmedRequirements.data ?? []).filter(
             (item) => item.source_ref === requirement.source_ref,
@@ -2174,7 +2219,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             .filter((value) => value.length >= 3);
           const productTokens = requirement.value.toLowerCase().split(/\s+/).filter((token) => token.length >= 4);
 
-          return (results ?? []).filter((item) => {
+          return mergeModels((results ?? []).filter((item) => {
             const haystack = [
               item.source_name ?? '',
               item.source_url ?? '',
@@ -2188,7 +2233,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const strongIdentity = identityValues.some((value) => value && haystack.includes(value));
             const productMatch = productTokens.length > 0 && productTokens.some((token) => haystack.includes(token));
             return strongIdentity || productMatch;
-          });
+          }));
         };
 
         for (const productRequirement of productRequirements) {
@@ -2271,7 +2316,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const currentCount = [...discoveryCandidates.values()].filter(
               (candidate) => candidate.requirementId === productRequirement.id,
             ).length;
-            if (!productResults.length || currentCount >= 50) continue;
+            if (!productResults.length || currentCount >= 3) continue;
 
             const extractionAi = await runAgent(
               { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
@@ -2787,6 +2832,25 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           })
           .eq('id', supplierId);
 
+        // Publish every evidence-backed item/company match before slow contact
+        // enrichment. Sending still requires the later verification stage.
+        const { error: preparedError } = await supabase.from('supplier_candidates').upsert({
+          inquiry_id: inquiryId, requirement_id: aiCandidate.requirementId ?? null,
+          supplier_id: supplierId, proposed_name: proposedName,
+          proposed_country: country, proposed_website: website,
+          match_evidence: {
+            research_result_id: result.id, finding: result.finding,
+            relevance: result.relevance, confidence: result.confidence,
+            match_type: aiCandidate.matchType ?? 'same_brand_distributor',
+            match_score: aiCandidate.matchScore ?? 75, match_note: aiCandidate.matchNote ?? null,
+          },
+          verification_evidence: { source_url: result.source_url, contact_research_pending: true },
+          status: 'proposed',
+        }, { onConflict: 'inquiry_id,proposed_name,requirement_id', ignoreDuplicates: true });
+        if (preparedError) throw new ToolError('CONFLICT', preparedError.message);
+        const enrichmentKey = supplierId!;
+        const jobs = enrichmentJobs.get(enrichmentKey) ?? [];
+        jobs.push(async () => {
         // Before a supplier can be used for RFQ, research its real contact channels.
         // Search specifically for the supplier's own domain and let the AI extract only
         // contact facts supported by the returned evidence.
@@ -2794,6 +2858,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         let contactResults: ResearchResult[] = [];
         let fetchedPages: Array<{ url: string; text: string }> = [];
+        const cachedContact = contactCache.get(hostname);
+        if (cachedContact) {
+          contactResearch = cachedContact.research;
+          contactResults = cachedContact.results;
+          fetchedPages = cachedContact.pages;
+        } else {
         if (discoveryProvider) {
           try {
             const contactQueries = [
@@ -2905,6 +2975,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             }
           }
 
+        contactCache.set(hostname, {research: contactResearch, results: contactResults, pages: fetchedPages});
+        }
         const contactEvidenceText = [
           ...contactResults.map((item) => [item.finding, ...normalizeEvidence(item.evidence)].join(' ')),
           ...fetchedPages.map((page) => page.text),
@@ -3123,7 +3195,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         if (error) throw new ToolError('CONFLICT', `Failed to save supplier candidate ${proposedName}: ${error.message}`);
         createdCount++;
+        });
+        enrichmentJobs.set(enrichmentKey, jobs);
       }
+      // Keep a supplier's item jobs sequential to reuse contacts safely.
+      await mapResearchQueries([...enrichmentJobs.values()], async jobs => {
+        for (const enrich of jobs) await enrich();
+      }, 3);
 
       // Rank suppliers higher when the same supplier can cover multiple requested products.
       // Each product still keeps its own candidate row, so separate suppliers are fully valid.
