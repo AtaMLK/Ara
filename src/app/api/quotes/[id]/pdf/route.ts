@@ -5,7 +5,7 @@ import {createQuotePdf} from '@/lib/quotes/document';
 import {createSupabaseAdminClient} from '@/lib/supabase/admin';
 import {getQuoteReadiness} from '@/lib/quotes/readiness';
 export const runtime='nodejs';
-export async function GET(_request:Request,{params}:{params:Promise<{id:string}>}){
+export async function GET(request:Request,{params}:{params:Promise<{id:string}>}){
   const {id}=await params,db=await createSupabaseServerClient();
   const {data:{user}}=await db.auth.getUser();
   if(!user)return Response.json({error:'Sign in to download this quotation.'},{status:401});
@@ -18,7 +18,8 @@ export async function GET(_request:Request,{params}:{params:Promise<{id:string}>
   const admin=createSupabaseAdminClient();
   const {data:sent}=await admin.from('communications').select('metadata').eq('quote_id',id).eq('direction','outgoing').contains('metadata',{type:'customer_quote'}).order('sent_at',{ascending:false}).limit(1).maybeSingle();
   const path=sent?.metadata?.quotation_pdf_path;
-  if(typeof path==='string'&&path.startsWith('customer-quotes/'+id+'/')){
+  const currentPreview=profile.role==='admin'&&new URL(request.url).searchParams.get('preview')==='current';
+  if(!currentPreview&&typeof path==='string'&&path.startsWith('customer-quotes/'+id+'/')){
     const {data:stored,error}=await admin.storage.from('supplier-email-attachments').download(path);
     if(error||!stored)return Response.json({error:'The sent quotation attachment could not be loaded.'},{status:503});
     return new Response(await stored.arrayBuffer(),{headers:{'Content-Type':'application/pdf','Content-Disposition':'inline; filename="Quotation.pdf"','Cache-Control':'private, no-store'}});

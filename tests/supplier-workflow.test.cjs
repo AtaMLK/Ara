@@ -15,7 +15,7 @@ test('supplier correspondence keeps its language until a clear unquoted reply ch
  await language.recordSupplierReplyLanguage(supplierId,'Hello, please confirm the required quantity.');assert.equal(await language.getSupplierLanguage(supplierId),'en');
  await language.recordSupplierReplyLanguage(supplierId,'Merhaba, teslim süresi ve fiyat bilgisi rica ederiz.\nOn Tuesday wrote:\nHello please confirm.');assert.equal(await language.getSupplierLanguage(supplierId),'tr');
  const {renderSupplierOrder}=f.load('@/lib/quotes/supplier-orders');
- const order=renderSupplierOrder({supplierId,supplierName:'Tedarikçi',recipient:'sales@example.test',reference:'AO-TEST-PO1',language:'tr',instructions:'',lines:[]},{name:'Arya',address:'',phone:'',website:'',email:'',taxDetails:''});assert.match(order.subject,/Satın alma siparişi/);assert.match(order.body,/Sipariş kabulünü/);assert.doesNotMatch(order.body,/Dear|Purchase order|Please supply/);
+ const order=renderSupplierOrder({supplierId,supplierName:'Tedarikçi',recipient:'sales@example.test',reference:'AO-TEST-PO1',language:'tr',instructions:'',lines:[]},{name:'Arya',address:'',phone:'',website:'',email:'',taxDetails:''});assert.match(order.subject,/Sipariş teyidi/);assert.match(order.body,/ekte yer almaktadır/);assert.doesNotMatch(order.body,/Dear|Purchase order|Please supply/);
 });
 
 test('missing details are requested privately and a clear new customer specification continues automatically in Turkish',async()=>{
@@ -102,8 +102,8 @@ function supplierOrderFixture(){
   f.tables.supplier_responses.push({id:responseId,supplier_id:supplierId,inquiry_id:f.inquiryId});f.tables.supplier_quotes.push({id:offerId,supplier_response_id:responseId});
   f.tables.customer_quote_items.push({id:randomUUID(),customer_quote_id:quoteId,is_selected:true,supplier_quote_id:offerId,description:'Requested item '+i,model:'MODEL-'+i,quantity:i+2,supplier_currency:i===1?'USD':'EUR',supplier_cost:100,unit_price:9999,price_calculation:{commercial:{net:100,gross:120,taxRate:20,taxMode:'excluded',delivery:{original:'two weeks'}},markup_percent:500,payment_terms:'Transfer'}});
  }
- const db=f.load('@/lib/supabase/admin').createSupabaseAdminClient();let denied=false,fail=false;
- const load=require('./helpers/load-ts.cjs')({'@/lib/supabase/admin':{createSupabaseAdminClient:()=>db},'@/lib/ai/guards':{requireAdmin:async()=>{if(denied)throw Error('Admin access required');return {supabase:db,user:{id:adminId}};}},'next/cache':{revalidatePath(){}},'@/lib/quotes/company':{getCompanyProfile:async()=>({name:'Arya Automation',address:'Company address',phone:'Phone',website:'Website',taxDetails:'Tax',email:'purchase@example.test'})},'@/lib/email/provider':{getEmailProvider:()=>({send:async input=>{sent.push(input);if(fail)throw Error('SMTP timeout');return {providerMessageId:'mock-'+sent.length,sentAt:new Date().toISOString()};}})}});
+ const db=f.load('@/lib/supabase/admin').createSupabaseAdminClient();const files=new Map();db.storage={from:()=>({upload:async(path,bytes)=>{files.set(path,new Uint8Array(bytes));return {error:null};},download:async path=>({data:files.has(path)?new Blob([files.get(path)]):null,error:null})})};let denied=false,fail=false;
+ const load=require('./helpers/load-ts.cjs')({'@/lib/supabase/admin':{createSupabaseAdminClient:()=>db},'@/lib/ai/guards':{requireAdmin:async()=>{if(denied)throw Error('Admin access required');return {supabase:db,user:{id:adminId}};}},'next/cache':{revalidatePath(){}},'@/lib/quotes/company':{getQuoteCompany:async()=>({name:'Arya Automation',email:'purchase@example.test',address:'Company address'}),getCompanyProfile:async()=>({name:'Arya Automation',address:'Company address',phone:'Phone',website:'Website',taxDetails:'Tax',email:'purchase@example.test'})},'@/lib/email/provider':{getEmailProvider:()=>({send:async input=>{sent.push(input);if(fail)throw Error('SMTP timeout');return {providerMessageId:'mock-'+sent.length,sentAt:new Date().toISOString()};}})}});
  return {f,db,quoteId,sent,load,deny:()=>denied=true,fail:()=>fail=true};
 }
 
@@ -111,9 +111,10 @@ test('accepted quote creates separate exact supplier orders with no customer mar
  const x=supplierOrderFixture(),actions=x.load('@/app/quotes/supplier-order-actions'),old=process.env.EMAIL_FROM;process.env.EMAIL_FROM='purchase@example.test';
  try{
   const previews=await actions.prepareSupplierOrdersAction(x.quoteId,'Deliver to our warehouse');assert.equal(previews.length,3);assert.equal(x.sent.length,0);
-  for(let i=0;i<3;i++){assert.equal(previews[i].recipient_email,'sales'+i+'@example.test');assert.match(previews[i].body,new RegExp('MODEL-'+i));assert.doesNotMatch(previews[i].body,/9999|markup|500/);for(let j=0;j<3;j++)if(i!==j)assert.doesNotMatch(previews[i].body,new RegExp('MODEL-'+j));}
+  for(let i=0;i<3;i++){assert.equal(previews[i].recipient_email,'sales'+i+'@example.test');assert.doesNotMatch(previews[i].body,/MODEL-|Company address|Phone|Website|Tax/);const record=x.f.tables.supplier_order_confirmations.find(row=>row.id===previews[i].id);const stored=await x.db.storage.from('supplier-email-attachments').download(record.snapshot.pdf_path);const extracted=await require('unpdf').extractText(new Uint8Array(await stored.data.arrayBuffer()),{mergePages:true});assert.match(extracted.text,new RegExp('MODEL-'+i));assert.doesNotMatch(previews[i].body,/9999|markup|500/);for(let j=0;j<3;j++)if(i!==j)assert.doesNotMatch(extracted.text,new RegExp('MODEL-'+j));}
   await actions.sendSupplierOrderAction(previews[0].id,previews[0].fingerprint);await actions.sendSupplierOrderAction(previews[0].id,previews[0].fingerprint);
-  assert.equal(x.sent.length,1);assert.equal(x.sent[0].text,previews[0].body);assert.equal(x.sent[0].html,previews[0].html);assert.equal(x.sent[0].subject,previews[0].subject);assert.equal(x.f.tables.communications.length,1);
+  assert.equal(x.sent.length,1);assert.equal(x.sent[0].text,previews[0].body);assert.equal(x.sent[0].html,previews[0].html);assert.equal(x.sent[0].subject,previews[0].subject);assert.equal(x.f.tables.communications.length,1);assert.equal(x.sent[0].generatedAttachments[0].mimeType,'application/pdf');assert.equal(x.sent[0].generatedAttachments[0].fileName,previews[0].reference+'.pdf');
+  const approved=x.f.tables.supplier_order_confirmations.find(row=>row.id===previews[0].id);assert.equal(require('node:crypto').createHash('sha256').update(x.sent[0].generatedAttachments[0].content).digest('hex'),approved.snapshot.pdf_sha256);
   const refreshed=await actions.prepareSupplierOrdersAction(x.quoteId,'Changed instructions');assert.equal(refreshed[0].status,'sent');assert.equal(refreshed[0].body,previews[0].body);
   await assert.rejects(actions.sendSupplierOrderAction(previews[1].id,previews[1].fingerprint),/preview changed/);
   await Promise.allSettled([actions.sendSupplierOrderAction(refreshed[1].id,refreshed[1].fingerprint),actions.sendSupplierOrderAction(refreshed[1].id,refreshed[1].fingerprint)]);assert.equal(x.sent.length,2);
@@ -127,6 +128,7 @@ test('supplier ordering requires acceptance, valid source and approved contact; 
   q.status='sent';await assert.rejects(actions.prepareSupplierOrdersAction(x.quoteId),/acceptance/);q.status='accepted';
   const source=x.f.tables.customer_quote_items[0].supplier_quote_id;x.f.tables.customer_quote_items[0].supplier_quote_id=null;await assert.rejects(actions.prepareSupplierOrdersAction(x.quoteId),/no supplier source/);x.f.tables.customer_quote_items[0].supplier_quote_id=source;
   x.f.tables.rfqs[0].status='draft';await assert.rejects(actions.prepareSupplierOrdersAction(x.quoteId),/approved RFQ/);x.f.tables.rfqs[0].status='sent';
+  x.f.tables.supplier_quotes[0].original_data={quantity_unit:'kg'};x.f.tables.customer_quote_items[0].price_calculation.quantity_unit='pcs';await assert.rejects(actions.prepareSupplierOrdersAction(x.quoteId),/units differ/);delete x.f.tables.supplier_quotes[0].original_data;delete x.f.tables.customer_quote_items[0].price_calculation.quantity_unit;
   const p=await actions.prepareSupplierOrdersAction(x.quoteId);x.fail();await assert.rejects(actions.sendSupplierOrderAction(p[0].id,p[0].fingerprint),/delivery is uncertain/);
   assert.equal(x.f.tables.supplier_order_confirmations[0].status,'delivery_uncertain');await assert.rejects(actions.sendSupplierOrderAction(p[0].id,p[0].fingerprint),/delivery needs checking/);assert.equal(x.sent.length,1);
  }finally{if(old==null)delete process.env.EMAIL_FROM;else process.env.EMAIL_FROM=old;}
@@ -193,11 +195,11 @@ test('Admin-approved quote send attaches a customer-safe PDF and records it with
   try{
     await load('@/app/actions').approveCustomerQuoteAction(quoteId);
     assert.equal(sent.length,1);assert.equal(uploads.length,1);
-    assert.match(sent[0].subject,/TC-20261010-Q1/);assert.match(sent[0].html,/>Delivery<\/th>/);
+    assert.match(sent[0].subject,/TC-20261010-Q1/);assert.match(sent[0].html,/attached our quotation/);assert.doesNotMatch(sent[0].html,/<table|62527506564/);
     assert.equal((sent[0].text.match(/Dear Test Customer/g)||[]).length,1);
     assert.equal((sent[0].text.match(/Purchase Department/g)||[]).length,1);
     assert.doesNotMatch(sent[0].text,/175|markup|localhost/);
-    assert.equal(sent[0].generatedAttachments[0].mimeType,'application/pdf');
+    assert.equal(sent[0].generatedAttachments.length,1);assert.equal(sent[0].generatedAttachments[0].mimeType,'application/pdf');
     assert.ok(sent[0].generatedAttachments[0].content.byteLength>1000);
     assert.equal(f.tables.customer_quotes[0].status,'sent');assert.equal(f.tables.inquiries[0].status,'quoting');
     assert.ok(f.tables.communications[0].metadata.quotation_pdf_path.startsWith('customer-quotes/'+quoteId+'/'));

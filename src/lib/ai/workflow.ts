@@ -1458,7 +1458,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           delivery_text:null,
           price_calculation: {
             source: 'supplier_evidence_admin_pricing_required', commercial,
-            requirement_ids:line.requirementIds,source_ref:requestItem?.sourceRef??null,
+            requirement_ids:line.requirementIds,source_ref:requestItem?.sourceRef??null,quantity_unit:requestItem?.unit||original.quantity_unit||'',
+            loading_date:original.loading_date??null,delivery_date:original.delivery_date??null,
             product_label: [original.requestedProduct,original.requestedModelPartNumber].filter(value=>typeof value==='string').join(' · ') || line.reason,
             source_supplier_quote_id: supplierQuote.id,
             selected_price_tier_id: selectedTier?.id ?? null,
@@ -1662,6 +1663,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               additional_conditions: quote.conditions,
               original_data: {
                 ...quote.originalData,
+                quantity_unit:quote.quantityUnit??null,loading_date:quote.loadingDate??null,delivery_date:quote.deliveryDate??null,
                 discount_type: quote.discountType ?? null,
                 commercial: { taxRate: quote.taxRate ?? null, taxMode: quote.taxMode, taxText: quote.taxText ?? null },
                 extraction: {

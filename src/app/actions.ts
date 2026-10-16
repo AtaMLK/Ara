@@ -1995,8 +1995,7 @@ export async function approveCustomerQuoteAction(quoteId: string) {
       html,
       text,
       idempotencyKey,
-      generatedAttachments:[{fileName:'Quotation-'+loaded.document.reference+'.pdf',mimeType:'application/pdf',content:pdf},
-        ...(company.logo?[{fileName:'company-logo'+(company.logoType==='image/jpeg'?'.jpg':'.png'),mimeType:company.logoType||'image/png',content:company.logo,cid:'quote-company-logo'}]:[])],
+      generatedAttachments:[{fileName:'Quotation-'+loaded.document.reference+'.pdf',mimeType:'application/pdf',content:pdf}],
     });
 
     const { error: communicationError } = await adminSupabase.from('communications').insert({

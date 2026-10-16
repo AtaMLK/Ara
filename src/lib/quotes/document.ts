@@ -1,54 +1,19 @@
-import {PDFDocument,rgb} from 'pdf-lib';
-import fontkit from '@pdf-lib/fontkit';
-import {readFile} from 'node:fs/promises';
-import {join} from 'node:path';
-
+import {createCommercialPdf} from './commercial-pdf';
 export type QuoteCompany={name:string;email:string;address?:string;phone?:string;website?:string;taxDetails?:string;logo?:Uint8Array;logoType?:string};
 export type QuoteDocument={reference:string;inquiryReference:string;customerName:string;currency:string;date:string;validUntil?:string|null;message?:string|null;portalUrl?:string;
-  lines:Array<{description:string;model?:string|null;brand?:string|null;delivery?:string|null;quantity:number;unitPrice:number;total:number}>};
-const escape=(s:unknown)=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
-const money=(n:number)=>Number(n).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
-export function quoteMessage(message?:string|null) {
-  return (message??'').trim().replace(/^(?:hello|dear)\s+[^\n,]+,?\s*/i,'')
-    .replace(/\n\s*(?:kind\s+regards|regards|best\s+regards)[,\s\S]*$/i,'').trim()
-    .replace(/^Please find our quotation (?:below|regarding inquiry [^.]+)\.\s*/i,'').trim();
-}
-export function quotationSubject(reference:string,model?:string|null){return `Quotation ${reference}${model?' | '+model:''}`;}
-export function renderQuoteEmail(doc:QuoteDocument,company:QuoteCompany) {
-  const intro=quoteMessage(doc.message)||'Please find our quotation below. The quotation PDF is attached for your review.';
-  const details=[company.address,company.phone,company.email,company.website,company.taxDetails].filter(Boolean);
-  const total=doc.lines.reduce((sum,line)=>sum+line.total,0);
-  const rows=doc.lines.map((line,index)=>`<tr><td style="padding:14px 10px;border-bottom:1px solid #e2e8f0"><strong>${escape(line.description)}</strong><div style="font-size:12px;color:#64748b;margin-top:5px">${[line.model,line.brand].filter(Boolean).map(escape).join(' · ')}</div></td><td style="padding:14px 10px;border-bottom:1px solid #e2e8f0;font-size:12px"><span class="quote-mobile-label" style="display:none">Delivery</span>${escape(line.delivery||'To be confirmed')}</td><td style="padding:14px 10px;border-bottom:1px solid #e2e8f0;text-align:right"><span class="quote-mobile-label" style="display:none">Quantity</span>${line.quantity}</td><td style="padding:14px 10px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap"><span class="quote-mobile-label" style="display:none">Unit price</span>${money(line.unitPrice)}</td><td style="padding:14px 10px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap"><span class="quote-mobile-label" style="display:none">Amount</span>${money(line.total)}</td></tr>`).join('');
-  const mobileStyles='@media(max-width:600px){.quote-table,.quote-table tbody,.quote-table tfoot{display:block!important;width:100%!important}.quote-table thead{display:none!important}.quote-table tbody tr{display:block!important;border:1px solid #dbe4ef;border-radius:8px;margin:12px 0;overflow:hidden}.quote-table tbody td{display:flex!important;justify-content:space-between;gap:14px;text-align:right!important;white-space:normal!important}.quote-table tbody td:first-child{display:block!important;text-align:left!important}.quote-mobile-label{display:block!important;text-align:left;color:#64748b;font-size:11px}.quote-table tfoot tr{display:flex!important;justify-content:space-between}.quote-table tfoot td{display:block!important;padding:14px 8px!important}.quote-email-content{padding:20px!important}}';
-  const html=`<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"/><style>${mobileStyles}</style></head><body style="margin:0;background:#f3f6fa;color:#172b45;font-family:Arial,sans-serif;line-height:1.6"><div style="max-width:880px;padding:28px 16px;margin:auto"><div style="background:#fff;border:1px solid #dbe4ef;border-radius:12px;overflow:hidden"><div style="padding:24px 28px;border-top:5px solid #285f8f;border-bottom:1px solid #dbe4ef">${company.logo?'<img src="cid:quote-company-logo" alt="'+escape(company.name)+'" style="max-width:180px;max-height:65px;margin-bottom:12px" />':'<strong style="font-size:22px">'+escape(company.name)+'</strong>'}<h1 style="font-size:20px;margin:12px 0 3px">Quotation ${escape(doc.reference)}</h1><span style="font-size:12px;color:#64748b">Inquiry ${escape(doc.inquiryReference)} · ${escape(doc.date)} · ${escape(doc.currency)}</span></div><div class="quote-email-content" style="padding:24px 28px"><p>Dear ${escape(doc.customerName)},</p><p>${escape(intro).replaceAll('\n','<br />')}</p><div style="overflow-x:auto"><table class="quote-table" style="width:100%;border-collapse:collapse;font-size:13px;margin:22px 0"><thead style="background:#eef4fa"><tr>${['Item / Description','Delivery','Qty','Unit price','Amount'].map((name,i)=>'<th style="padding:11px 10px;text-align:'+(i>1?'right':'left')+';border-bottom:2px solid #cad9e8">'+name+'</th>').join('')}</tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="4" style="padding:16px 10px;text-align:right;font-weight:bold">Total · ${escape(doc.currency)}</td><td style="padding:16px 10px;text-align:right;font-weight:bold;white-space:nowrap">${money(total)}</td></tr></tfoot></table></div>${doc.validUntil?'<p style="font-size:12px">Valid until: '+escape(doc.validUntil)+'</p>':''}${doc.portalUrl?'<p><a href="'+escape(doc.portalUrl)+'" style="display:inline-block;background:#285f8f;color:white;padding:10px 18px;border-radius:6px;text-decoration:none">View quotation in ARAT</a></p><p style="font-size:11px;color:#64748b">Sign in with your authorized customer account to view or respond.</p>':''}<p>Kind regards,<br />Purchase Department<br /><strong>${escape(company.name)}</strong></p></div><div style="padding:14px 28px;background:#f8fafc;font-size:11px;color:#64748b">${details.map(escape).join(' · ')}</div></div></div></body></html>`;
-  const text=`Dear ${doc.customerName},\n\n${intro}\n\nQuotation ${doc.reference}\nInquiry ${doc.inquiryReference}\n\n${doc.lines.map(line=>[line.description,line.model,line.brand,'Delivery: '+(line.delivery||'To be confirmed'),'Qty: '+line.quantity,'Unit: '+money(line.unitPrice)+' '+doc.currency,'Amount: '+money(line.total)+' '+doc.currency].filter(Boolean).join(' | ')).join('\n')}\n\nTotal: ${money(total)} ${doc.currency}${doc.validUntil?'\nValid until: '+doc.validUntil:''}${doc.portalUrl?'\n\nView quotation (customer sign-in required): '+doc.portalUrl:''}\n\nKind regards,\nPurchase Department\n${company.name}\n${details.join(' · ')}`;
+  lines:Array<{description:string;model?:string|null;brand?:string|null;delivery?:string|null;quantity:number;unit?:string|null;unitPrice:number;total:number}>};
+const escape=(value:unknown)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
+export function quoteMessage(message?:string|null){return (message??'').trim().replace(/^(?:hello|dear)\s+[^\n,]+,?\s*/i,'').replace(/\n\s*(?:kind\s+regards|regards|best\s+regards)[,\s\S]*$/i,'').trim().replace(/^Please find our quotation (?:below|regarding inquiry [^.]+)\.\s*/i,'').trim();}
+export function quotationSubject(reference:string,model?:string|null){return 'Quotation '+reference+(model?' | '+model:'');}
+export function renderQuoteEmail(doc:QuoteDocument,company:QuoteCompany){
+  const intro='Please find attached our quotation '+doc.reference+' for your review.';
+  const next=doc.portalUrl?'Please use the customer portal to accept the quotation or request any changes.':'Please reply to this email to confirm acceptance or request any changes.';
+  const text='Dear '+doc.customerName+',\n\n'+intro+'\n\n'+next+(doc.portalUrl?'\n'+doc.portalUrl:'')+'\n\nKind regards,\nPurchase Department\n'+company.name;
+  const html='<!doctype html><html lang="en"><head><meta charset="utf-8" /></head><body style="margin:0;font-family:Arial,sans-serif;font-size:14px;color:#172b45;line-height:1.6"><div style="max-width:720px;padding:24px"><p style="margin:0 0 18px">Dear '+escape(doc.customerName)+',</p><p style="margin:0 0 18px">'+escape(intro)+'</p><p style="margin:0 0 18px">'+escape(next)+'</p>'+(doc.portalUrl?'<p style="margin:0 0 18px"><a href="'+escape(doc.portalUrl)+'">Review quotation</a></p>':'')+'<p style="margin:0">Kind regards,<br />Purchase Department<br />'+escape(company.name)+'</p></div></body></html>';
   return {html,text};
 }
-
-export async function createQuotePdf(doc:QuoteDocument,company:QuoteCompany) {
-  const pdf=await PDFDocument.create();pdf.registerFontkit(fontkit);
-  const [regularBytes,boldBytes]=await Promise.all([readFile(join(process.cwd(),'public/fonts/quotation-regular.woff')),readFile(join(process.cwd(),'public/fonts/quotation-bold.woff'))]);
-  const font=await pdf.embedFont(regularBytes,{subset:true}),bold=await pdf.embedFont(boldBytes,{subset:true});
-  pdf.setTitle('Quotation '+doc.reference);pdf.setAuthor(company.name);
-  const ink=rgb(.09,.17,.27),muted=rgb(.38,.44,.52),blue=rgb(.16,.37,.56),lineColor=rgb(.84,.89,.94);
-  const extended=await Promise.all(['regular','bold'].map(async weight=>pdf.embedFont(await readFile(join(process.cwd(),`public/fonts/quotation-extended-${weight}.woff`)),{subset:true})));
-  const regularCharacters=new Set(font.getCharacterSet());
-  const safe=(s:string)=>s.replace(/[\r\n\t]/g,' ');
-  const runs=(text:string,strong=false)=>Array.from(safe(text)).map(text=>({text,font:regularCharacters.has(text.codePointAt(0)!)?(strong?bold:font):extended[strong?1:0]}));
-  const widthOf=(text:string,size:number)=>runs(text).reduce((width,run)=>width+run.font.widthOfTextAtSize(run.text,size),0);
-  let page=pdf.addPage([595.28,841.89]),y=790;
-  const draw=(text:string,x:number,at:number,size=10,strong=false,color=ink)=>{for(const run of runs(text,strong)){page.drawText(run.text,{x,y:at,size,font:run.font,color});x+=run.font.widthOfTextAtSize(run.text,size);}};
-  const wrap=(text:string,width:number,size=10)=>{const lines:string[]=[];let row='';for(const word of safe(text).split(/\s+/)){const next=row?row+' '+word:word;if(widthOf(next,size)>width&&row){lines.push(row);row=word;}else row=next;}if(row)lines.push(row);return lines;};
-  const footer=()=>{page.drawLine({start:{x:42,y:62},end:{x:553,y:62},color:lineColor});const lines=wrap([company.name,company.address,company.phone,company.email,company.website,company.taxDetails].filter(Boolean).join(' | '),510,8);lines.slice(0,3).forEach((text,i)=>draw(text,42,47-i*11,8,false,muted));};
-  const newPage=()=>{footer();page=pdf.addPage([595.28,841.89]);y=790;draw(company.name,42,y,13,true);draw(doc.reference,385,y,10,true);y-=32;};
-  page.drawRectangle({x:0,y:830,width:596,height:12,color:blue});
-  if(company.logo){const logo=company.logoType==='image/jpeg'?await pdf.embedJpg(company.logo):await pdf.embedPng(company.logo);const scale=Math.min(150/logo.width,48/logo.height);page.drawImage(logo,{x:42,y:750,width:logo.width*scale,height:logo.height*scale});y=725;}else{draw(company.name,42,y,21,true,blue);y-=34;}
-  draw('QUOTATION',42,y,12,true,muted);draw(doc.reference,42,y-26,19,true);draw('Date: '+doc.date,385,y,9);draw('Currency: '+doc.currency,385,y-15,9);y-=64;
-  draw('PREPARED FOR',42,y,8,true,muted);draw(doc.customerName,42,y-18,12,true);draw('Inquiry: '+doc.inquiryReference,42,y-35,9,false,muted);if(doc.validUntil)draw('Valid until: '+doc.validUntil,385,y-18,9);y-=62;
-  const headers=()=>{page.drawRectangle({x:42,y:y-25,width:511,height:26,color:rgb(.93,.96,.98)});[['ITEM / DESCRIPTION',50],['DELIVERY',268],['QTY',382],['UNIT PRICE',420],['AMOUNT',495]].forEach(([text,x])=>draw(String(text),Number(x),y-16,8,true));y-=36;};
-  headers();
-  for(const item of doc.lines){const name=wrap(item.description,205,10),spec=wrap([item.model,item.brand].filter(Boolean).join(' | '),205,8),delivery=wrap(item.delivery||'To be confirmed',103,9);const height=Math.max((name.length*14+spec.length*11)+18,delivery.length*13+18,46);if(y-height<115){newPage();headers();}name.forEach((text,i)=>draw(text,50,y-i*14,10,true));spec.forEach((text,i)=>draw(text,50,y-name.length*14-i*11,8,false,muted));delivery.forEach((text,i)=>draw(text,268,y-i*13,9));draw(String(item.quantity),382,y,9);const unit=money(item.unitPrice),total=money(item.total);draw(unit,475-font.widthOfTextAtSize(unit,9),y,9);draw(total,545-bold.widthOfTextAtSize(total,9),y,9,true);y-=height;page.drawLine({start:{x:42,y:y+8},end:{x:553,y:y+8},color:lineColor});}
-  if(y<165)newPage();y-=22;draw('TOTAL ('+doc.currency+')',350,y,11,true);const total=money(doc.lines.reduce((sum,item)=>sum+item.total,0));draw(total,545-bold.widthOfTextAtSize(total,13),y,13,true,blue);y-=35;
-  const message=quoteMessage(doc.message);if(message){for(const text of wrap(message,500,9)){if(y<105)newPage();draw(text,42,y,9,false,muted);y-=13;}}
-  footer();return pdf.save();
+export async function createQuotePdf(doc:QuoteDocument,company:QuoteCompany){
+  const notes=quoteMessage(doc.message).replace(/^Delivery and pricing are listed separately for each item\.?$/i,'');
+  return createCommercialPdf({kind:'quotation',language:'en',reference:doc.reference,date:doc.date,recipient:doc.customerName,relatedReference:doc.inquiryReference,validUntil:doc.validUntil,notes,
+    lines:doc.lines.map(line=>({description:line.description,model:line.model,brand:line.brand,quantity:line.quantity,unit:line.unit,delivery:line.delivery,unitPrice:line.unitPrice,amount:line.total,total:line.total,currency:doc.currency}))},company);
 }

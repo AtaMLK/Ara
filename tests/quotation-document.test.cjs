@@ -34,10 +34,10 @@ test('sent quote overrides stale RFQ status and exposes exactly one current stag
  const p=inquiryProgress({status:'rfq',aiComplete:false,researchComplete:false,verified:false,rfqSent:true,responseReceived:true,clarificationPending:false,quoteStatuses:['sent']});
  assert.equal(p.label,'Awaiting Customer Decision');assert.equal(p.steps.filter(s=>s.state==='current').length,1);assert.equal(p.steps.find(s=>s.key==='quotation').state,'completed');assert.equal(p.steps.find(s=>s.key==='decision').state,'current');
 });
-test('quotation email contains one greeting/signature, item identity and a distinct delivery column',()=>{
+test('quotation email is a short attachment note without company details or line tables',()=>{
  const {html,text}=renderQuoteEmail(doc,company);
  assert.equal((text.match(/Dear ATA MOLKARA/g)||[]).length,1);assert.equal((text.match(/Purchase Department/g)||[]).length,1);
- assert.match(html,/>Delivery<\/th>/);assert.match(html,/HS-421T/);assert.match(html,/Dual-output accelerometer/);assert.doesNotMatch(html,/Quoted item|CUS-OLD|localhost/);
+ assert.match(html,/attached our quotation/);assert.doesNotMatch(html,/<table|HS-421T|Dual-output accelerometer|62527506564|Quoted item|CUS-OLD|localhost/);
  assert.match(quotationSubject(doc.reference,'HS-421T'),/^Quotation AM-20261010-Q1 \| HS-421T$/);
 });
 test('PDF has readable item/model, delivery, customer prices and no supplier cost',async()=>{

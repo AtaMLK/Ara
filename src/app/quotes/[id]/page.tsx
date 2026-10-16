@@ -34,7 +34,8 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         <div className="topbar-actions">
           <span className="badge">{label(quote.status)}</span>
           <QuoteActions id={quote.id} status={quote.status} />
-          {selectedItems.length>0&&quote.confirmedItemCount===selectedItems.length&&(!readiness||!readiness.problems.length)&&<a className="secondary-button" href={'/api/quotes/'+quote.id+'/pdf'} target="_blank" rel="noreferrer">Preview / Download PDF</a>}
+          {selectedItems.length>0&&quote.confirmedItemCount===selectedItems.length&&(!readiness||!readiness.problems.length)&&<a className="secondary-button" href={'/api/quotes/'+quote.id+'/pdf?preview=current'} target="_blank" rel="noreferrer">Preview / Download PDF</a>}
+          {['sent','accepted','rejected','revision_requested','superseded'].includes(quote.status)&&<a className="secondary-button" href={'/api/quotes/'+quote.id+'/pdf'} target="_blank" rel="noreferrer">Originally sent PDF</a>}
         </div>
       </header>
 
@@ -58,7 +59,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         </div>
       </section>
 
-      {quote.status==='accepted'&&<SupplierOrders quoteId={id} orders={(orders??[]).map(order=>({...order,supplier_name:oneRelated(order.suppliers)?.legal_name,html:typeof order.snapshot?.email_html==='string'?order.snapshot.email_html:undefined,instructions:typeof order.snapshot?.instructions==='string'?order.snapshot.instructions:''}))}/>}
+      {quote.status==='accepted'&&<SupplierOrders quoteId={id} orders={(orders??[]).map(order=>({...order,supplier_name:oneRelated(order.suppliers)?.legal_name,pdf_url:order.snapshot?.pdf_path?'/api/supplier-orders/'+order.id+'/pdf?v='+order.snapshot.pdf_sha256:order.status==='sent'?'/api/supplier-orders/'+order.id+'/pdf?copy=current':undefined,pdf_is_copy:!order.snapshot?.pdf_path&&order.status==='sent',html:typeof order.snapshot?.email_html==='string'?order.snapshot.email_html:undefined,instructions:typeof order.snapshot?.instructions==='string'?order.snapshot.instructions:''}))}/>}
       {readiness&&<section className="section"><div className="detail-card"><h2>Consolidated quotation</h2><p>{selectedItems.length} selected offer(s) for {readiness.requestedCount} requested item(s). Alternative supplier offers remain in the Admin review.</p>{readiness.problems.map(problem=><p className="muted" key={problem}>{problem}</p>)}</div></section>}
       {quote.revisionRequest && (
         <section className="section">

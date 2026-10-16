@@ -1,3 +1,4 @@
+import {quantityUnit} from '@/lib/quotes/quantity-unit';
 export type RequestRequirement={id?:string;type:string;value:string;source_ref?:string|null;admin_edited?:boolean;status?:string};
 export function readableRequest(text:string|null|undefined) {
   return (text??'').replace(/\\+r\\+n|\\+n|\\+r/g,'\n');
@@ -20,7 +21,7 @@ export function inquiryItems(normalized:unknown, requirements:RequestRequirement
     const quantity=rows.find(r=>r.type==='quantity'&&r.admin_edited)?.value??(submitted?.quantity!=null?String(submitted.quantity):field('quantity')??String(item.quantity??''));
     const compact=(value:string)=>value.toLowerCase().replace(/[^a-z0-9]/g,'');
     const fullDescription=[description,...specifications.filter(spec=>!compact(description).includes(compact(spec)))].filter(Boolean).join(' · ');
-    return {index:i+1,sourceRef:ref,description,fullDescription,model,brand,quantity,specifications,serialNumber:String(submitted?.serialNumber??''),additionalDetails:String(submitted?.details??''),
+    return {index:i+1,sourceRef:ref,description,fullDescription,model,brand,quantity,unit:quantityUnit(submitted?.unit,item.unit,field('quantity')),specifications,serialNumber:String(submitted?.serialNumber??''),additionalDetails:String(submitted?.details??''),
       label:[model,description].filter(Boolean).join(' — ')};
   });
 }

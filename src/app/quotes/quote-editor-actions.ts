@@ -20,7 +20,7 @@ export async function selectQuoteOfferAction(itemId:string) {
 }
 
 const controlsSchema = z.object({
-  itemId: z.string().uuid(), quantity: z.number().positive().finite(),
+  itemId: z.string().uuid(), quantity: z.number().positive().finite(),quantityUnit:z.string().trim().max(40).optional(),
   description:z.string().trim().min(1).max(2000).optional(),model:z.string().trim().max(300).optional(),brand:z.string().trim().max(300).optional(),
   basis: z.enum(['net','gross']), markupPercent: z.number().min(0).max(10000).nullable(),
   deliveryCost: z.number().nonnegative().finite(), deliveryAllocation: z.enum(['per_unit','per_line']),
@@ -66,7 +66,7 @@ export async function saveQuoteCommercialAction(input: z.infer<typeof controlsSc
   if (value.confirm && value.priceMode === 'formula' && commercial.warnings.some(warning => warning.includes('conflict'))) throw new Error('Resolve the supplier tax conflict or enter an explicit manual customer price.');
   const delivery = value.deliveryUnit === 'stock' ? 'In stock' : value.deliveryMin == null || value.deliveryUnit === 'unknown' ? value.deliveryNote :
     `${value.deliveryMin}${value.deliveryMax != null && value.deliveryMax !== value.deliveryMin ? '–'+value.deliveryMax : ''} ${value.businessDays && value.deliveryUnit === 'days' ? 'business ' : ''}${value.deliveryUnit}${value.deliveryNote ? ' — '+value.deliveryNote : ''}`;
-  const nextCalculation = { ...snapshot, admin_controls: value, admin_commercial: commercial,
+  const nextCalculation = { ...snapshot, quantity_unit:value.quantityUnit??snapshot.quantity_unit??'',admin_controls: value, admin_commercial: commercial,
     customer_delivery: delivery, exchange_rate: exchangeRate, markup_percent: value.markupPercent,
     formula: value.markupOn === 'landed' ? '(converted cost + delivery per unit) × (1 + markup / 100)' : 'converted cost × (1 + markup / 100) + delivery per unit',
     confirmed_by: value.confirm ? user.id : null, confirmed_at: value.confirm ? new Date().toISOString() : null };

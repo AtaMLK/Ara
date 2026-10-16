@@ -3,6 +3,7 @@ import {createSupabaseAdminClient} from '@/lib/supabase/admin';
 import {inquiryItems} from '@/lib/ui/inquiry-items';
 import {getInquiryDisplayReference,getQuoteReference} from '@/lib/ui/inquiry-reference';
 import {quotationSubject,type QuoteDocument} from './document';
+import {quantityUnit} from './quantity-unit';
 // Authorization is enforced by the page, download endpoint or send action.
 export async function loadQuoteDocument(quoteId:string) {
   const db=createSupabaseAdminClient();
@@ -30,7 +31,7 @@ export async function loadQuoteDocument(quoteId:string) {
     const matching=requested.find(request=>request.sourceRef===calc.source_ref)??(requested.length===1?requested[0]:undefined);
     const description=item.description||matching?.fullDescription;
     if(!description)throw new Error('A quote item is missing its inquiry description. Edit the item before preparing the customer document.');
-    return {description,model:item.model||matching?.model||'',brand:item.brand||matching?.brand||'',delivery:item.delivery_text||String(calc.customer_delivery||''),quantity:Number(item.quantity),unitPrice:Number(item.unit_price??0),total:Number(item.total??0)};
+    return {description,model:item.model||matching?.model||'',brand:item.brand||matching?.brand||'',delivery:item.delivery_text||String(calc.customer_delivery||''),quantity:Number(item.quantity),unit:quantityUnit(calc.quantity_unit,matching?.unit,matching?.quantity),unitPrice:Number(item.unit_price??0),total:Number(item.total??0)};
   });
   const date=new Date(q.sent_at||q.created_at).toLocaleDateString('en-GB',{timeZone:'Europe/Istanbul'});
   const baseUrl=(process.env.NEXT_PUBLIC_APP_URL||'').replace(/\/$/,'');
