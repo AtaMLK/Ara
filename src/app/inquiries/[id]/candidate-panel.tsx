@@ -5,6 +5,8 @@ import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { getSupplierRfqPreviewAction, sendSupplierRfqAction, verifySupplierCandidateAction } from './supplier-rfq-actions';
+import { loadMoreSupplierCandidatesAction } from './supplier-discovery-actions';
+import {productBrand,isExclusiveBrand,isAryaWebsite,SUPPLIER_BATCH_SIZE} from '@/lib/ai/supplier-policy';
 
 type Requirement = {
   id: string;
@@ -194,14 +196,23 @@ function representationStatus(candidate: Candidate): { label: string; kind: 'off
 export function CandidatePanel({
   inquiryId,
   requirements,
-  candidates,
+  candidates:allCandidates,
+  reviewProgress = {},
 }: {
   inquiryId: string;
   requirements: Requirement[];
   candidates: Candidate[];
+  reviewProgress?:Record<string,{limit:number;hasMore:boolean}>;
 }) {
   const {t}=useI18n();
   const products = requirements.filter((item) => item.type === 'product');
+  const candidates=allCandidates.filter(candidate=>{
+    const product=products.find(row=>row.id===candidate.requirement_id);
+    return product && !['admin_removed','admin_rejected'].includes(candidate.status) && (!isExclusiveBrand(productBrand(product,requirements)) || isAryaWebsite(candidate.proposed_website));
+  });
+  const [visibleLimits,setVisibleLimits]=useState<Record<string,number>>({});
+  const [moreAvailable,setMoreAvailable]=useState<Record<string,boolean>>({});
+  const [loadingMore,setLoadingMore]=useState(false);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState('');
@@ -219,6 +230,10 @@ export function CandidatePanel({
       const key = candidate.requirement_id;
       if (key && map.has(key)) map.get(key)!.push(candidate);
     }
+    for(const rows of map.values()) rows.sort((a,b)=>{
+      const preferred=(row:Candidate)=>Boolean((row.match_evidence as Record<string,unknown>)?.preferred_brand_supplier);
+      return Number(preferred(b))-Number(preferred(a)) || Number(b.suppliers?.verification_status==='verified')-Number(a.suppliers?.verification_status==='verified') || a.id.localeCompare(b.id);
+    });
     return map;
   }, [candidates, products]);
 
@@ -228,10 +243,7 @@ export function CandidatePanel({
 }
 
 function isVerified(candidate: Candidate) {
-    const evidence = (candidate.verification_evidence ?? {}) as Record<string, unknown>;
     return candidate.suppliers?.verification_status === 'verified'
-      || evidence.verification_status === 'verified'
-      || verifiedIds.includes(candidate.id);
   }
 
   function valid(candidate: Candidate) {
@@ -248,10 +260,32 @@ function isVerified(candidate: Candidate) {
   }
 
   function toggle(id: string) {
-    setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+    const candidate=candidates.find(row=>row.id===id);
+    const related=candidates.filter(row=>row.supplier_id===candidate?.supplier_id && valid(row) && !isRfqSent(row) && !sentIds.includes(row.id)).map(row=>row.id);
+    setSelected(current=>current.includes(id)?current.filter(item=>!related.includes(item)):[...new Set([...current,...related])]);
   }
 
-  const modalCandidates = selectedProductId ? (grouped.get(selectedProductId) ?? []) : [];
+  const allModalCandidates=selectedProductId ? (grouped.get(selectedProductId) ?? []) : [];
+  const visibleLimit=selectedProductId ? (visibleLimits[selectedProductId] ?? SUPPLIER_BATCH_SIZE) : SUPPLIER_BATCH_SIZE;
+  const modalCandidates = allModalCandidates.slice(0,visibleLimit);
+  const preferred=modalCandidates.find(row=>(row.match_evidence as Record<string,unknown>)?.preferred_brand_supplier);
+  const preferredRegion=preferred ? region(normalizedCountry(preferred)) : '';
+  const preferredGroup=['Turkey','Europe','Asia'].includes(preferredRegion)?preferredRegion:'International';
+  const displayGroups=[...(['Turkey','Europe','Asia','International'] as const)].sort((a,b)=>preferred?Number(b===preferredGroup)-Number(a===preferredGroup):0);
+  const modalProduct=products.find(row=>row.id===selectedProductId);
+  const canReviewMore=Boolean(modalProduct && !isExclusiveBrand(productBrand(modalProduct,requirements)) && !allModalCandidates.some(row=>(row.match_evidence as Record<string,unknown>)?.preferred_brand_supplier) && (moreAvailable[modalProduct.id] ?? reviewProgress[modalProduct.id]?.hasMore ?? false));
+  async function showMore() {
+    if(!selectedProductId) return;
+    setLoadingMore(true);setError('');
+    try {
+      if(visibleLimit>=allModalCandidates.length && canReviewMore) {
+        const progress=await loadMoreSupplierCandidatesAction({inquiryId,requirementId:selectedProductId});
+        setMoreAvailable(current=>({...current,[selectedProductId]:progress.hasMore}));
+      }
+      setVisibleLimits(current=>({...current,[selectedProductId]:visibleLimit+SUPPLIER_BATCH_SIZE}));
+    }catch(e){setError(e instanceof Error?e.message:'Could not review more suppliers');}
+    finally{setLoadingMore(false);}
+  }
   const selectedCandidates = candidates.filter((candidate) => selected.includes(candidate.id));
 
   async function openPreview() {
@@ -284,7 +318,7 @@ function isVerified(candidate: Candidate) {
     try {
       const result = await sendSupplierRfqAction({ inquiryId, candidateIds: selected,previews:preview??undefined });
       setSelected([]);
-      setSentIds((current) => [...new Set([...current, ...result.results.map((item) => item.candidateId)])]);
+      setSentIds((current) => [...new Set([...current, ...result.results.flatMap((item) => item.candidateIds)])]);
       toast.success(
         t(result.results.length === 1 ? 'RFQ email sent' : 'RFQ emails sent'),
         {
@@ -317,6 +351,7 @@ function isVerified(candidate: Candidate) {
 
       {error && <div className="error-inline"><T>{error}</T></div>}
       {sendConfirmation && <div className="success-inline">{sendConfirmation}</div>}
+      {selected.length>0 && <button type="button" className="primary-button" disabled={busy} onClick={()=>void openPreview()}>Review {new Set(selectedCandidates.map(row=>row.supplier_id)).size} supplier email(s) for {selected.length} selected items</button>}
 
       {products.length === 0 ? (
         <div className="detail-card"><div className="empty"><T>No product requirements are confirmed yet.</T></div></div>
@@ -333,7 +368,7 @@ function isVerified(candidate: Candidate) {
                 <div><strong>{product.value}</strong></div>
                 <div>{brand || '—'}{model ? <><span className="muted"> / </span>{model}</> : ''}</div>
                 <div>
-                  <button className="supplier-count-button" onClick={() => { setSelectedProductId(product.id); setSelected([]); setPreview(null); setError(''); }}>
+                  <button className="supplier-count-button" onClick={() => { setSelectedProductId(product.id); setPreview(null); setError(''); }}>
                     {validCount}
                   </button>
                 </div>
@@ -356,7 +391,7 @@ function isVerified(candidate: Candidate) {
               <button className="text-button" onClick={() => setSelectedProductId(null)}><T>Close</T></button>
             </div>
 
-            {(['Turkey', 'Europe', 'Asia', 'International'] as const).map((group) => {
+            {displayGroups.map((group) => {
               const rows = modalCandidates.filter((candidate) => {
                 const country = normalizedCountry(candidate);
                 const candidateRegion = region(country);
@@ -497,6 +532,8 @@ function isVerified(candidate: Candidate) {
                 </div>
               );
             })}
+            {(allModalCandidates.length>visibleLimit || canReviewMore) && <button type="button" className="secondary-button" disabled={loadingMore} onClick={()=>void showMore()}>{loadingMore?'Reviewing next suppliers…':'Show 5 more suppliers'}</button>}
+            <div className="muted">Showing {modalCandidates.length} suppliers. {selected.length} items selected across {new Set(selectedCandidates.map(row=>row.supplier_id)).size} suppliers. One email per supplier.</div>
           </div>
         </div>,
         document.body,

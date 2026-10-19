@@ -9,6 +9,8 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getEmailProvider } from '@/lib/email/provider';
 import { ToolError } from '@/lib/errors';
 import { oneRelated } from '@/lib/data/relations';
+import { recordVerifiedSupplierBrands } from '@/lib/ai/supplier-brand-routes';
+import { productBrand,isExclusiveBrand,isAryaWebsite } from '@/lib/ai/supplier-policy';
 
 
 
@@ -137,6 +139,7 @@ export async function verifySupplierCandidateAction(input: { inquiryId: string; 
     reason: 'Admin verified the supplier candidate', changed_by: user.id,
   });
   if (historyError) throw new ToolError('TRANSIENT', historyError.message);
+  await recordVerifiedSupplierBrands(admin,input.inquiryId);
 
   await admin.from('timeline_events').insert({
     inquiry_id: input.inquiryId,
@@ -206,7 +209,7 @@ export async function getSupplierRfqRecipientsAction(input: { inquiryId: string;
   return { recipients };
 }
 
-type RfqPreview={candidateId:string;recipient:string;subject:string;html:string;language:'tr'|'en';rfqCode:string;fingerprint:string};
+type RfqPreview={candidateId:string;candidateIds:string[];recipient:string;subject:string;html:string;language:'tr'|'en';rfqCode:string;fingerprint:string};
 export async function getSupplierRfqPreviewAction(input:{inquiryId:string;candidateIds:string[]}) {return executeSupplierRfq(input,true);}
 export async function sendSupplierRfqAction(input:{inquiryId:string;candidateIds:string[];previews?:RfqPreview[]}) {return executeSupplierRfq(input,false);}
 async function executeSupplierRfq(input: {
@@ -231,7 +234,7 @@ async function executeSupplierRfq(input: {
 
   const { data: candidates, error: candidateError } = await admin
     .from('supplier_candidates')
-    .select('id,requirement_id,status,supplier_id,proposed_name,proposed_country,match_evidence,verification_evidence,suppliers(id,legal_name,primary_country,supplier_type,verification_status)')
+    .select('id,requirement_id,status,supplier_id,proposed_name,proposed_country,proposed_website,match_evidence,verification_evidence,suppliers(id,legal_name,primary_country,supplier_type,verification_status)')
     .eq('inquiry_id', input.inquiryId)
     .in('id', input.candidateIds);
 
@@ -264,17 +267,26 @@ async function executeSupplierRfq(input: {
     admin.from('supplier_contacts').select('id,supplier_id,name,email,phone,job_title,department,status,is_primary').in('supplier_id', supplierIds).eq('status','active'),
     admin.from('requirements').select('id,type,value,status,source_ref').eq('inquiry_id', input.inquiryId).eq('status','confirmed').order('created_at',{ascending:true}),
   ]);
+  for(const candidate of selected) {
+    const product=(requirements ?? []).find(row=>row.id===candidate.requirement_id);
+    if(product && isExclusiveBrand(productBrand(product,requirements ?? [])) && !isAryaWebsite(candidate.proposed_website)) throw new ToolError('CONFLICT','Only Arya Automation can supply this brand under the exclusive distributor rule.');
+  }
+  const supplierGroups=new Map<string,typeof selected>();
+  for(const candidate of selected) {const group=supplierGroups.get(candidate.supplier_id!) ?? [];group.push(candidate);supplierGroups.set(candidate.supplier_id!,group);}
 
   if(!previewOnly){
-    if(input.previews?.length!==selected.length)throw new ToolError('APPROVAL_REQUIRED','Review every selected supplier message before sending.');
+    if(input.previews?.length!==supplierGroups.size)throw new ToolError('APPROVAL_REQUIRED','Review every selected supplier message before sending.');
     const current=await executeSupplierRfq(input,true);
     if(current.previews.some(message=>input.previews?.find(reviewed=>reviewed.candidateId===message.candidateId)?.fingerprint!==message.fingerprint))throw new ToolError('CONFLICT','Supplier details or request requirements changed. Open the message preview again before sending.');
   }
   const provider = previewOnly?null:getEmailProvider();
   const previews:RfqPreview[]=[];
-  const results: Array<{ candidateId: string; supplierId: string; email: string; rfqId: string; providerMessageId?: string }> = [];
+  const results: Array<{ candidateId: string; candidateIds:string[]; supplierId: string; email: string; rfqId: string; providerMessageId?: string }> = [];
 
-  for (const candidate of selected) {
+  for (const unsortedGroup of supplierGroups.values()) {
+    const group=[...unsortedGroup].sort((a,b)=>(requirements ?? []).findIndex(row=>row.id===a.requirement_id)-(requirements ?? []).findIndex(row=>row.id===b.requirement_id) || String(a.id).localeCompare(String(b.id)));
+    const candidate=group[0];
+    const candidateIds=group.map(row=>row.id);
     const supplierId = candidate.supplier_id!;
     const supplier = candidate.suppliers!;
     const contact = (contacts ?? []).find((item) => item.supplier_id === supplierId && item.email) ??
@@ -306,7 +318,8 @@ async function executeSupplierRfq(input: {
       }
     }
 
-    const productRequirementId = candidate.requirement_id;
+    const productLines=group.map(item=>{
+    const productRequirementId = item.requirement_id;
     const productRequirement = (requirements ?? []).find((item) => item.id === productRequirementId && item.type === 'product');
 
     if (!productRequirement) {
@@ -321,14 +334,12 @@ async function executeSupplierRfq(input: {
     const model = itemRequirements.filter((item) => item.type === 'model_part_number').map((item) => item.value).join(' / ');
     const quantityRow = itemRequirements.find((item) => item.type === 'quantity')?.value ?? '';
     const specifications = itemRequirements.filter((item) => item.type === 'specification' || item.type === 'delivery' || item.type === 'other').map((item) => item.value);
+    return {requirementId:productRequirement.id,product,model,quantity:quantityRow,specifications};
+    }).filter((line,index,rows)=>rows.findIndex(other=>other.requirementId===line.requirementId)===index);
+    const firstLine=productLines[0];
 
     const language = await getSupplierLanguage(supplier.id);
-    const email = buildEmail(language, getInquiryDisplayReference(inquiry.reference,null,inquiry.created_at), [{
-      product,
-      model,
-      quantity: quantityRow,
-      specifications,
-    }]);
+    const email = buildEmail(language, getInquiryDisplayReference(inquiry.reference,null,inquiry.created_at), productLines);
 
     const reviewed=input.previews?.find(preview=>preview.candidateId===candidate.id);
     const rfqCode = reviewed?.rfqCode??`RFQ-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()}`;
@@ -337,8 +348,8 @@ async function executeSupplierRfq(input: {
       : `RFQ | ${getInquiryDisplayReference(inquiry.reference,null,inquiry.created_at)} | ${rfqCode}`;
 
     if(!/^RFQ-\d{8}-[A-Z0-9]{6}$/.test(rfqCode))throw new ToolError('VALIDATION','Invalid RFQ preview reference.');
-    const fingerprint=createHash('sha256').update(JSON.stringify([candidate.id,recipient,subject,email.html])).digest('hex');
-    previews.push({candidateId:candidate.id,recipient,subject,html:email.html,language,rfqCode,fingerprint});
+    const fingerprint=createHash('sha256').update(JSON.stringify([candidateIds,recipient,subject,email.html])).digest('hex');
+    previews.push({candidateId:candidate.id,candidateIds,recipient,subject,html:email.html,language,rfqCode,fingerprint});
     if(previewOnly)continue;
     if(!reviewed||reviewed.fingerprint!==fingerprint)throw new ToolError('CONFLICT','Supplier details or request requirements changed. Open the message preview again before sending.');
 
@@ -356,19 +367,19 @@ async function executeSupplierRfq(input: {
 
     if (rfqError || !rfq) throw new ToolError('TRANSIENT', rfqError?.message ?? 'Could not create RFQ');
 
-    const { error: itemError } = await admin.from('rfq_items').insert({
+    const { error: itemError } = await admin.from('rfq_items').insert(productLines.map(line=>({
       rfq_id: rfq.id,
-      requirement_id: productRequirement.id,
-      requested_quantity: quantityRow ? Number.parseFloat(quantityRow) || null : null,
+      requirement_id: line.requirementId,
+      requested_quantity: line.quantity ? Number.parseFloat(line.quantity) || null : null,
       requested_data: {
-        product,
-        model,
-        specifications,
+        product:line.product,
+        model:line.model,
+        specifications:line.specifications,
         language,
         contact_id: contact?.id ?? null,
         department: contact?.department ?? null,
       },
-    });
+    })));
     if (itemError) throw new ToolError('TRANSIENT', itemError.message);
 
     const { data: communication, error: communicationError } = await admin.from('communications').insert({
@@ -382,7 +393,9 @@ async function executeSupplierRfq(input: {
       metadata: {
         language,
         candidate_id: candidate.id,
-        requirement_id: productRequirement.id,
+        requirement_id: firstLine.requirementId,
+        requirement_ids: productLines.map(line=>line.requirementId),
+        candidate_ids:candidateIds,
         contact_id: contact?.id ?? null,
       },
     }).select('id').single();
@@ -406,7 +419,7 @@ async function executeSupplierRfq(input: {
         metadata: {
           language,
           candidate_id: candidate.id,
-          requirement_id: productRequirement.id,
+          requirement_id: firstLine.requirementId,
           contact_id: contact?.id ?? null,
           send_failed: true,
           send_error: message.slice(0, 2000),
@@ -434,7 +447,8 @@ async function executeSupplierRfq(input: {
     // Persist the successful send on the candidate itself. This makes the UI
     // authoritative after refresh and prevents the same candidate from being
     // accidentally emailed twice.
-    const currentEvidence = (candidate.verification_evidence ?? {}) as Record<string, unknown>;
+    for(const item of group) {
+    const currentEvidence = (item.verification_evidence ?? {}) as Record<string, unknown>;
     await admin.from('supplier_candidates').update({
       verification_evidence: {
         ...currentEvidence,
@@ -444,7 +458,8 @@ async function executeSupplierRfq(input: {
         rfq_recipient: recipient,
       },
       updated_at: sentAt,
-    }).eq('id', candidate.id);
+    }).eq('id', item.id);
+    }
 
     await admin.from('timeline_events').insert({
       inquiry_id: inquiry.id,
@@ -456,7 +471,8 @@ async function executeSupplierRfq(input: {
         rfq_id: rfq.id,
         candidate_id: candidate.id,
         supplier_id: supplierId,
-        requirement_id: productRequirement.id,
+        requirement_ids: productLines.map(line=>line.requirementId),
+        candidate_ids:candidateIds,
         language,
         recipient,
       },
@@ -466,6 +482,7 @@ async function executeSupplierRfq(input: {
 
     results.push({
       candidateId: candidate.id,
+      candidateIds,
       supplierId,
       email: recipient,
       rfqId: rfq.id,

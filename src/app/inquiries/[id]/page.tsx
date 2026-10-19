@@ -14,6 +14,7 @@ import { requireAdminPage } from '@/lib/data/admin';
 import { InquiryEditForm } from './edit-form';
 import { RequirementEdit } from './requirement-edit';
 import { CandidatePanel } from './candidate-panel';
+import { getSupplierReviewProgress } from '@/lib/ai/supplier-review';
 import InquiryProcess, { type InquiryProcessStep } from '@/components/inquiry-process';
 import { approveSupplierClarificationReplyAction } from './supplier-clarification-actions';
 
@@ -45,6 +46,7 @@ export default async function InquiryDetailPage({ params }: Props) {
   if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error || candidatesResult.error || rfqsResult.error || communicationsResult.error) throw new Error('Failed to load inquiry details');
 
   const inquiry = inquiryResult.data;
+  const supplierReviewProgress=await getSupplierReviewProgress(id);
   const customer = oneRelated(inquiry.customers);
   const customerName = customer?.company_name || customer?.name || 'Customer';
   const displayReference = getInquiryDisplayReference(inquiry.reference, customerName, inquiry.created_at, inquiry.current_version, inquiry.updated_at);
@@ -95,7 +97,7 @@ export default async function InquiryDetailPage({ params }: Props) {
       {!['converted','closed','no_suitable_supplier'].includes(inquiry.status)&&<AutomationIssues inquiryId={id} failures={(executionsResult.data??[]).filter(execution=>execution.status==='failed')}
         warnings={(alertsResult.data??[]).filter(alert=>['ATTACHMENT_REQUIRES_OCR','DOCUMENT_PROCESSING_FAILED','WORKFLOW_START_FAILED'].includes(alert.alert_type))}/>}
 
-      <CandidatePanel inquiryId={inquiry.id} requirements={requirementsResult.data ?? []} candidates={(candidatesResult.data ?? []).map((row) => ({ ...row, suppliers: oneRelated(row.suppliers) }))} />
+      <CandidatePanel inquiryId={inquiry.id} requirements={requirementsResult.data ?? []} candidates={(candidatesResult.data ?? []).map((row) => ({ ...row, suppliers: oneRelated(row.suppliers) }))} reviewProgress={supplierReviewProgress} />
 
       <section className="section">
         <div className="section-head">

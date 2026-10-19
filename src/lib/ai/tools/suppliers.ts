@@ -31,6 +31,7 @@ export async function verifySupplier(ctx:AIContext,input:unknown){
   if(value.status==='verified' && Object.keys(value.evidence).length===0) throw new ToolError('VALIDATION','Verified supplier requires evidence');
   const {data:current,error:readError}=await supabase.from('suppliers').select('verification_status').eq('id',value.supplierId).single();
   if(readError||!current) throw new ToolError('NOT_FOUND','Supplier not found');
+  if(current.verification_status==='verified' && value.status!=='verified') throw new ToolError('AUTHORIZATION','Only an Admin may change a previously verified supplier status');
   const {data,error}=await supabase.from('suppliers').update({verification_status:value.status,last_verified_at:value.status==='verified'?new Date().toISOString():null}).eq('id',value.supplierId).select('*').single();
   if(error||!data) throw new ToolError('CONFLICT','Supplier verification update failed');
   await supabase.from('supplier_verification_history').insert({

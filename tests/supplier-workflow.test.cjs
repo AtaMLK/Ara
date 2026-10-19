@@ -523,7 +523,7 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
       if (this.count) matches = matches.slice(0, this.count);
       const result = matches.map(row => {
         const copy = structuredClone(row);
-        if (this.table === 'supplier_candidates') copy.suppliers = tables.suppliers?.find(supplier => supplier.id === copy.supplier_id) ?? null;
+        if (['supplier_candidates','supplier_brands','supplier_websites'].includes(this.table)) copy.suppliers = tables.suppliers?.find(supplier => supplier.id === copy.supplier_id) ?? null;
         return copy;
       });
       return { data: this.selectOptions?.head ? null : this.one ? result[0] ?? null : result, count: this.selectOptions?.count ? matches.length : undefined, error: null };
@@ -627,9 +627,9 @@ test('two-product workflow preserves equal quantities and delivers evidence-back
   f.tables.ai_executions.find(row => row.task_key.endsWith(':research')).status = 'queued';
   await workflow.processQueuedWorkflow(1, f.inquiryId);
   assert.equal(f.tables.research_cases.length, oldCaseCount + 1);
-  assert.ok(f.searchCount() > searches);
-  assert.ok(f.tables.supplier_candidates.every(row => row.status === 'proposed'));
-  assert.equal(f.tables.ai_executions.find(row => row.task_key.endsWith(':supplier_discovery')).status, 'queued');
+  assert.equal(f.searchCount(),searches,'A changed model from a verified brand reuses the existing supplier');
+  assert.ok(f.tables.supplier_candidates.every(row => row.status === 'finalized'));
+  assert.ok(f.tables.supplier_candidates.every(row => row.match_evidence.preferred_brand_supplier));
 });
 
 test('OCR-deferred attachment preserves the original and does not block readable customer text', async () => {
@@ -822,4 +822,90 @@ test('multi-model catalog evidence is reused by exact code without inventing cov
  assert.equal(exactModelResults(results,['BM-200'],'third').length,1);
  assert.equal(exactModelResults(results,['D5040S'],'fourth').length,0);
  assert.equal(exactModelResults(results,[],'fifth').length,0);
+});
+
+test('brand aliases and five-company evidence batches are deterministic and skip reviewed domains',()=>{
+ const policy=fixture().load('@/lib/ai/supplier-policy');
+ for(const name of ['GMI','G.M INTERNATIONAL','GMI (G.M INTERNATIONAL)','CTC','CTC connection technology ccenter','HANSFORD SENSORS EXCELLENCE İN VİBRATİON MONİTORİNG'])assert.equal(policy.isExclusiveBrand(name),true,name);
+ assert.equal(policy.isExclusiveBrand('Other Manufacturer'),false);
+ const rows=Array.from({length:12},(_,index)=>({source_url:`https://supplier${index}.example/products`,structured_data:{arat_requirement_id:'item'}}));
+ assert.equal(policy.supplierEvidenceBatch(rows,[]).length,5);
+ const reviewed={item:rows.slice(0,5).map(row=>new URL(row.source_url).hostname)};
+ assert.deepEqual(policy.supplierEvidenceBatch(rows,[],{item:10},reviewed),rows.slice(5,10));
+ assert.deepEqual(policy.supplierEvidenceBatch(rows,[],{item:15},{item:rows.slice(0,10).map(row=>new URL(row.source_url).hostname)}),rows.slice(10));
+});
+
+test('all three exclusive brands use only Arya without any search or AI verification',async()=>{
+ const f=fixture();const brands=['G.M INTERNATIONAL','CTC connection technology ccenter','HANSFORD SENSORS EXCELLENCE İN VİBRATİON MONİTORİNG'];
+ f.tables.requirements=brands.flatMap((brand,index)=>[{id:randomUUID(),inquiry_id:f.inquiryId,type:'product',value:`Product ${index}`,source_ref:`item:${index}`,status:'confirmed'},{id:randomUUID(),inquiry_id:f.inquiryId,type:'specification',value:`Brand: ${brand}`,source_ref:`item:${index}`,status:'confirmed'}]);
+ f.mock('@/lib/ai/agent-runner',{runAgent:async()=>{throw Error('Exclusive routes must not consume AI tokens');}});
+ const queue=f.load('@/lib/ai/orchestrator');await queue.enqueueWorkflow(f.inquiryId,'research');
+ const result=await f.load('@/lib/ai/workflow').processQueuedWorkflow(4,f.inquiryId);
+ assert.equal(result.results.some(row=>row.error),false,JSON.stringify(result.results));
+ assert.equal(f.searchCount(),0);assert.equal(f.tables.supplier_candidates.length,3);
+ assert.ok(f.tables.supplier_candidates.every(row=>row.proposed_website==='https://aryaautomation.com' && row.match_evidence.exclusive_distributor));
+ assert.equal(new Set(f.tables.supplier_candidates.map(row=>row.supplier_id)).size,1);
+ assert.equal(f.tables.suppliers[0].verification_status,'verified');assert.equal(f.sendCount(),0);
+});
+
+test('verified brand suppliers are reused across inquiries and an Admin downgrade is respected',async()=>{
+ const f=fixture(),supplierId=randomUUID(),otherInquiry=randomUUID();
+ f.tables.suppliers=[{id:supplierId,legal_name:'Established Acme Supplier',primary_country:'Germany',verification_status:'verified',status:'active'}];
+ f.tables.supplier_brands=[{supplier_id:supplierId,name:'Acme Instruments',is_suggested:false,is_unknown:false,approved_at:new Date().toISOString()}];
+ f.tables.requirements=[{id:randomUUID(),inquiry_id:otherInquiry,type:'product',value:'New sensor model',source_ref:'item:0',status:'confirmed'},{id:randomUUID(),inquiry_id:otherInquiry,type:'specification',value:'Brand: ACME INSTRUMENTS',source_ref:'item:0',status:'confirmed'}];
+ const routes=f.load('@/lib/ai/supplier-brand-routes'),db=f.load('@/lib/supabase/admin').createSupabaseAdminClient();
+ const handled=await routes.reuseVerifiedBrandSuppliers(db,otherInquiry,f.tables.requirements);
+ assert.ok(handled.has(f.tables.requirements[0].id));assert.equal(f.tables.supplier_candidates[0].supplier_id,supplierId);assert.equal(f.searchCount(),0);
+ f.tables.suppliers[0].verification_status='pending';
+ const nextInquiry=randomUUID(),next=f.tables.requirements.map(row=>({...row,id:randomUUID(),inquiry_id:nextInquiry}));
+ assert.equal((await routes.reuseVerifiedBrandSuppliers(db,nextInquiry,next)).size,0);
+ f.tables.supplier_verification_history=[{supplier_id:supplierId,new_status:'pending',changed_by:randomUUID()}];
+ f.tables.inquiries[0].status='researching';f.tables.supplier_candidates[0].inquiry_id=f.inquiryId;
+ f.mock('@/lib/ai/agent-runner',{runAgent:async()=>{throw Error('Admin override must not be automatically verified again');}});
+ await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId,'verification');
+ const result=await f.load('@/lib/ai/workflow').processQueuedWorkflow(1,f.inquiryId);
+ assert.equal(result.results.some(row=>row.error),false);assert.equal(f.tables.suppliers[0].verification_status,'pending');
+});
+
+test('shared supplier receives one reviewed RFQ with every selected item and one send flag per candidate',async()=>{
+ const f=fixture({commonSupplier:true}),sent=[];
+ await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId,'document');
+ await f.load('@/lib/ai/workflow').processQueuedWorkflow(6,f.inquiryId);
+ f.mock('@/lib/email/provider',{getEmailProvider:()=>({send:async message=>{sent.push(message);return {providerMessageId:'combined-rfq',sentAt:new Date().toISOString()};}})});
+ const actions=f.load('@/app/inquiries/[id]/supplier-rfq-actions'),candidateIds=f.tables.supplier_candidates.map(row=>row.id);
+ assert.equal(candidateIds.length,2);
+ const {previews}=await actions.getSupplierRfqPreviewAction({inquiryId:f.inquiryId,candidateIds});
+ assert.equal(previews.length,1);assert.deepEqual(new Set(previews[0].candidateIds),new Set(candidateIds));
+ assert.match(previews[0].html,/TS-100/);assert.match(previews[0].html,/BM-200/);
+ const result=await actions.sendSupplierRfqAction({inquiryId:f.inquiryId,candidateIds:[...candidateIds].reverse(),previews});
+ assert.equal(sent.length,1);assert.equal(result.results.length,1);assert.equal(f.tables.rfqs.length,1);assert.equal(f.tables.rfq_items.length,2);
+ assert.ok(f.tables.supplier_candidates.every(row=>row.verification_evidence.rfq_sent && row.verification_evidence.rfq_id===f.tables.rfqs[0].id));
+ assert.equal(sent[0].html,previews[0].html);
+});
+
+test('Show 5 more reviews only the next five companies and finishes without revisiting earlier AI work',async()=>{
+ const f=fixture(),productId=randomUUID(),caseId=randomUUID(),reviewed=[];
+ f.tables.requirements=[{id:productId,inquiry_id:f.inquiryId,type:'product',value:'Temperature sensor',source_ref:'item:0',status:'confirmed'},{id:randomUUID(),inquiry_id:f.inquiryId,type:'model_part_number',value:'TS-100',source_ref:'item:0',status:'confirmed'},{id:randomUUID(),inquiry_id:f.inquiryId,type:'specification',value:'Brand: Alpha',source_ref:'item:0',status:'confirmed'}];
+ f.tables.research_cases=[{id:caseId,inquiry_id:f.inquiryId,status:'completed',scope:{handled_brand_requirement_ids:[]}}];
+ f.tables.research_results=Array.from({length:12},(_,index)=>({id:randomUUID(),research_case_id:caseId,source_url:`https://company${index}.example/products`,source_name:`Company ${index} Ltd`,finding:`Company ${index} Ltd manufacturer Alpha TS-100 temperature sensor supplier sales contact`,structured_data:{arat_requirement_id:productId},evidence:{}}));
+ const base=f.load('@/lib/ai/agent-runner');
+ f.mock('@/lib/ai/research/supplier-catalog',{supplierCatalogModels:async()=>[]});
+ f.mock('@/lib/ai/agent-runner',{runAgent:async(ctx,input,schema)=>{
+  if(ctx.agentId==='supplier_discovery'){
+   reviewed.push(...input.research_results.map(row=>row.source_url));
+   return {output:schema.parse({candidates:input.research_results.map(row=>({name:row.source_name,sourceUrl:row.source_url,website:new URL(row.source_url).origin,country:'Turkey',requirementId:productId,matchType:'exact_product',matchScore:95,evidence:[row.finding]}))}),provider:'test',model:'test'};
+  }
+  return base.runAgent(ctx,input,schema);
+ }});
+ const queue=f.load('@/lib/ai/orchestrator'),workflow=f.load('@/lib/ai/workflow'),progress=f.load('@/lib/ai/supplier-review');
+ await queue.enqueueWorkflow(f.inquiryId,'supplier_discovery');
+ const initial=await workflow.processQueuedWorkflow(2,f.inquiryId);
+ assert.equal(initial.results.some(row=>row.error),false,JSON.stringify(initial.results));assert.equal(f.tables.supplier_candidates.length,5);assert.equal(new Set(reviewed).size,5);
+ assert.equal((await progress.getSupplierReviewProgress(f.inquiryId))[productId].hasMore,true);
+ await workflow.reviewNextSupplierBatch(f.inquiryId,productId);
+ assert.equal(f.tables.supplier_candidates.length,10);assert.equal(new Set(reviewed).size,10);
+ await workflow.reviewNextSupplierBatch(f.inquiryId,productId);
+ assert.equal(f.tables.supplier_candidates.length,12);assert.equal(new Set(reviewed).size,12);
+ assert.equal((await progress.getSupplierReviewProgress(f.inquiryId))[productId].hasMore,false);
+ assert.equal(reviewed.length,12,'Already reviewed supplier domains must not be sent through AI again');
 });

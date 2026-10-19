@@ -1,4 +1,6 @@
 import 'server-only';
+import { reuseVerifiedBrandSuppliers, recordVerifiedSupplierBrands } from './supplier-brand-routes';
+import { supplierEvidenceBatch,productBrand,isExclusiveBrand } from './supplier-policy';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
@@ -1058,10 +1060,13 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         if (checkedSuppliers.has(candidate.supplier_id)) continue;
         checkedSuppliers.add(candidate.supplier_id);
         const { data: supplier, error: supplierError } = await supabase.from('suppliers')
-          .select('legal_name,primary_country,verification_status').eq('id', candidate.supplier_id).single();
+          .select('legal_name,primary_country,verification_status,updated_at').eq('id', candidate.supplier_id).single();
         if (supplierError || !supplier) throw new ToolError('TRANSIENT', supplierError?.message ?? 'Supplier not found');
         if (supplier.verification_status === 'verified') { verified++; continue; }
         if (supplier.verification_status === 'rejected') { pending++; continue; }
+        const decision=await supabase.from('supplier_verification_history').select('changed_by,new_status').eq('supplier_id',candidate.supplier_id).order('created_at',{ascending:false}).limit(1).maybeSingle();
+        if(decision.error) throw new ToolError('TRANSIENT',decision.error.message);
+        if(decision.data?.changed_by) {pending++;continue;}
 
         const evidence = {
           candidate_id: candidate.id,
@@ -1097,15 +1102,18 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
 
         if (assessment.status === 'verified') {
-          const { error: updateError } = await supabase
+          let verificationUpdate = supabase
             .from('suppliers')
             .update({
               verification_status: 'verified',
               last_verified_at: new Date().toISOString(),
             })
-            .eq('id', candidate.supplier_id);
+            .eq('id', candidate.supplier_id).eq('verification_status',supplier.verification_status);
+          if(supplier.updated_at) verificationUpdate=verificationUpdate.eq('updated_at',supplier.updated_at);
+          const {data:updatedSupplier,error:updateError}=await verificationUpdate.select('id').maybeSingle();
 
           if (updateError) throw new ToolError('CONFLICT', updateError.message);
+          if(!updatedSupplier) {pending++;continue;}
 
           await supabase.from('supplier_sources').insert({
             supplier_id: candidate.supplier_id,
@@ -1126,11 +1134,14 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
           verified++;
         } else {
-          const { error: pendingError } = await supabase
+          let pendingUpdate = supabase
             .from('suppliers')
             .update({ verification_status: assessment.status, last_verified_at: null })
-            .eq('id', candidate.supplier_id);
+            .eq('id', candidate.supplier_id).eq('verification_status',supplier.verification_status);
+          if(supplier.updated_at) pendingUpdate=pendingUpdate.eq('updated_at',supplier.updated_at);
+          const {data:pendingSupplier,error:pendingError}=await pendingUpdate.select('id').maybeSingle();
           if (pendingError) throw new ToolError('TRANSIENT', pendingError.message);
+          if(!pendingSupplier) {pending++;continue;}
 
           await supabase.from('supplier_verification_history').insert({
             supplier_id: candidate.supplier_id,
@@ -1149,6 +1160,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       }
 
       const outcome = pending > 0 && verified === 0 ? 'verification_pending' : 'verification_completed';
+      await recordVerifiedSupplierBrands(supabase,inquiryId);
 
       await markExecutionSuccess(running.id, {
         verified_count: verified,
@@ -2090,7 +2102,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
     if (stage === 'supplier_discovery') {
       const { data: research } = await supabase
         .from('research_cases')
-        .select('id,status')
+        .select('id,status,scope')
         .eq('inquiry_id', inquiryId)
         .order('created_at', { ascending: false })
         .limit(1)
@@ -2100,13 +2112,21 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         throw new ToolError('CONFLICT', 'Supplier discovery requires completed research');
       }
 
-      const { data: results, error: resultsError } = await supabase
+      const { data: allResults, error: resultsError } = await supabase
         .from('research_results')
         .select('id,source_name,source_url,finding,structured_data,relevance,confidence,evidence')
         .eq('research_case_id', research.id)
         .order('confidence', { ascending: false, nullsFirst: false });
 
       if (resultsError) throw new ToolError('TRANSIENT', resultsError.message);
+      const routeRequirements=await supabase.from('requirements').select('id,type,value,source_ref').eq('inquiry_id',inquiryId).eq('status','confirmed');
+      if(routeRequirements.error) throw new ToolError('TRANSIENT',routeRequirements.error.message);
+      const fixedRoutes=new Set<string>((research.scope?.handled_brand_requirement_ids ?? []) as string[]);
+      const routedRequirements=(routeRequirements.data ?? []).filter(row=>row.type!=='product' || fixedRoutes.has(row.id) || isExclusiveBrand(productBrand(row,routeRequirements.data ?? [])));
+      const handledRoutes=await reuseVerifiedBrandSuppliers(supabase,inquiryId,routedRequirements);
+      const existingForBatch=await supabase.from('supplier_candidates').select('requirement_id,proposed_website,status').eq('inquiry_id',inquiryId);
+      if(existingForBatch.error) throw new ToolError('TRANSIENT',existingForBatch.error.message);
+      const results=supplierEvidenceBatch((allResults ?? []).filter(row=>!handledRoutes.has(String(row.structured_data?.arat_requirement_id ?? ''))),existingForBatch.data ?? [],(research.scope?.supplier_review_limits ?? {}) as Record<string,number>,(research.scope?.supplier_reviewed_domains ?? {}) as Record<string,string[]>);
 
       console.log('[ARAT][supplier-discovery] RESEARCH INPUT', {
         research_case_id: research.id,
@@ -2130,7 +2150,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       );
 
       const seen = new Set<string>();
-      let createdCount = 0;
+      const seenSupplierDomains=new Set<string>();
+      let createdCount = (existingForBatch.data ?? []).filter(row=>row.status==='finalized').length;
       const productModels = new Map<string, string[]>();
       const discoveryCandidates = new Map<string, { name: string; country?: string; website?: string; evidence: string[]; requirementId?: string; matchType?: 'exact_product' | 'same_brand_distributor' | 'same_brand_similar' | 'related_alternative'; matchScore?: number; matchNote?: string }>();
 
@@ -2144,7 +2165,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .eq('inquiry_id', inquiryId)
           .eq('status', 'confirmed');
 
-        const productRequirements = (confirmedRequirements.data ?? []).filter((item) => item.type === 'product');
+        const productRequirements = (confirmedRequirements.data ?? []).filter((item) => item.type === 'product' && !handledRoutes.has(item.id));
         for (const product of productRequirements) {
           productModels.set(product.id, (confirmedRequirements.data ?? [])
             .filter((item) => Boolean(product.source_ref) && item.source_ref === product.source_ref && item.type === 'model_part_number')
@@ -2316,7 +2337,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const currentCount = [...discoveryCandidates.values()].filter(
               (candidate) => candidate.requirementId === productRequirement.id,
             ).length;
-            if (!productResults.length || currentCount >= 3) continue;
+            const availableCompanies=new Set(productResults.map(row=>{try{return new URL(row.source_url).hostname.replace(/^www\./,'');}catch{return row.source_url;}})).size;
+            if (!productResults.length || currentCount >= Math.min(3,availableCompanies)) continue;
 
             const extractionAi = await runAgent(
               { agentId: 'supplier_discovery', executionId: running.id, inquiryId },
@@ -2742,6 +2764,9 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           if (!['http:', 'https:'].includes(supplierUrl.protocol)) continue;
           hostname = supplierUrl.hostname.replace(/^www\./, '');
         } catch { continue; }
+        const supplierDomainKey=`${requirementId}::${hostname}`;
+        if(seenSupplierDomains.has(supplierDomainKey)) continue;
+        seenSupplierDomains.add(supplierDomainKey);
         const country = aiCandidate.country ||
           (result.structured_data?.country as string | undefined)?.trim() ||
           null;
@@ -3277,6 +3302,12 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           .eq('id', candidate.id);
       }
 
+      const reviewedDomains={...((research.scope?.supplier_reviewed_domains ?? {}) as Record<string,string[]>)};
+      for(const result of results) {
+        try {const id=String(result.structured_data?.arat_requirement_id ?? '');const host=new URL(result.source_url).hostname.replace(/^www\./,'').toLowerCase();reviewedDomains[id]=[...new Set([...(reviewedDomains[id] ?? []),host])];}catch{}
+      }
+      const reviewSaved=await supabase.from('research_cases').update({scope:{...research.scope,supplier_reviewed_domains:reviewedDomains}}).eq('id',research.id);
+      if(reviewSaved.error) throw new ToolError('TRANSIENT',reviewSaved.error.message);
       if (createdCount === 0) {
         await markExecutionSuccess(running.id, {
           research_case_id: research.id,
@@ -3344,6 +3375,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       const { data: confirmedRows, error: requirementsError } = await supabase.from('requirements')
         .select('id,type,value,source_ref').eq('inquiry_id', inquiryId).eq('status', 'confirmed').order('created_at', { ascending: true });
       if (requirementsError) throw new ToolError('TRANSIENT', requirementsError.message);
+      const handledRoutes=await reuseVerifiedBrandSuppliers(supabase,inquiryId,confirmedRows ?? []);
       const requirementsKey = JSON.stringify((confirmedRows ?? []).map((row) => [row.id, row.type, row.value, row.source_ref]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
       const { data: existing } = await supabase
         .from('research_cases')
@@ -3352,6 +3384,21 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+
+      const allProducts=(confirmedRows ?? []).filter(row=>row.type==='product');
+      if(allProducts.length && allProducts.every(row=>handledRoutes.has(row.id))) {
+        let routedCase=existing?.status==='completed' && existing.scope?.requirements_key===requirementsKey ? existing : null;
+        if(!routedCase) {
+          const saved=await supabase.from('research_cases').insert({inquiry_id:inquiryId,status:'completed',completed_at:new Date().toISOString(),scope:{requirements_key:requirementsKey,run_reason:'verified_brand_routes_only',handled_brand_requirement_ids:[...handledRoutes]}}).select('id,status,scope,created_at').single();
+          if(saved.error || !saved.data) throw new ToolError('TRANSIENT',saved.error?.message ?? 'Could not save brand routing');
+          routedCase=saved.data;
+        }
+        const routedScope=await supabase.from('research_cases').update({scope:{...routedCase!.scope,handled_brand_requirement_ids:[...handledRoutes]}}).eq('id',routedCase!.id);
+        if(routedScope.error) throw new ToolError('TRANSIENT',routedScope.error.message);
+        await enqueueWorkflow(inquiryId,'supplier_discovery');
+        await markExecutionSuccess(running.id,{research_case_id:routedCase!.id,next_stage:'supplier_discovery',reused_verified_brands:true});
+        return {execution:running,outcome:'verified_brand_suppliers_reused' as const};
+      }
 
       // Reuse a completed case only when it actually contains persisted evidence.
       // Earlier provider-quota failures could incorrectly mark an empty case
@@ -3396,6 +3443,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               source_types: ['web', 'public_specialized_sources'],
               run_reason: runReason,
               requirements_key: requirementsKey,
+              handled_brand_requirement_ids:[...handledRoutes],
             },
           })
           .select('id,status,created_at,scope')
@@ -3416,7 +3464,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       if (provider && researchCase.status !== 'completed') {
         const confirmedRequirements = confirmedRows ?? [];
         const productItems = confirmedRequirements
-          .filter((item) => item.type === 'product')
+          .filter((item) => item.type === 'product' && !handledRoutes.has(item.id))
           .map((product) => {
             const relatedRows = confirmedRequirements
               .filter((item) =>
@@ -3743,6 +3791,27 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
     );
     throw error;
   }
+}
+
+export async function reviewNextSupplierBatch(inquiryId:string,requirementId:string) {
+  const db=createSupabaseAdminClient();
+  const research=await db.from('research_cases').select('id,scope').eq('inquiry_id',inquiryId).eq('status','completed').order('created_at',{ascending:false}).limit(1).maybeSingle();
+  if(research.error || !research.data) throw new ToolError('CONFLICT','Completed supplier research is required');
+  const product=await db.from('requirements').select('id').eq('id',requirementId).eq('inquiry_id',inquiryId).eq('type','product').single();
+  if(product.error || !product.data) throw new ToolError('NOT_FOUND','Product requirement not found');
+  const execution=await enqueueWorkflow(inquiryId,'supplier_discovery');
+  if(execution.status==='running') throw new ToolError('CONFLICT','Supplier review is already running. Please wait for it to finish.');
+  const limits=(research.data.scope?.supplier_review_limits ?? {}) as Record<string,number>;
+  const limit=(limits[requirementId] ?? 5)+5;
+  const saved=await db.from('research_cases').update({scope:{...research.data.scope,supplier_review_limits:{...limits,[requirementId]:limit}}}).eq('id',research.data.id);
+  if(saved.error) throw new ToolError('TRANSIENT',saved.error.message);
+  if(execution.status==='succeeded') {
+    const reopened=await db.from('ai_executions').update({status:'queued',output_ref:{},started_at:null,completed_at:null}).eq('id',execution.id).eq('status','succeeded');
+    if(reopened.error) throw new ToolError('TRANSIENT',reopened.error.message);
+  }
+  await runStage(inquiryId,'supplier_discovery');
+  await runStage(inquiryId,'verification');
+  return {limit};
 }
 
 export async function startInquiryWorkflow(
