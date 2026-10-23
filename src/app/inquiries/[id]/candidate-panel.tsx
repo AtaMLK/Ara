@@ -2,6 +2,7 @@
 
 import {T,Localized,useI18n} from '@/components/language';
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { getSupplierRfqPreviewAction, sendSupplierRfqAction, verifySupplierCandidateAction } from './supplier-rfq-actions';
@@ -205,6 +206,7 @@ export function CandidatePanel({
   reviewProgress?:Record<string,{limit:number;hasMore:boolean}>;
 }) {
   const {t}=useI18n();
+  const router=useRouter();
   const products = requirements.filter((item) => item.type === 'product');
   const candidates=allCandidates.filter(candidate=>{
     const product=products.find(row=>row.id===candidate.requirement_id);
@@ -221,6 +223,7 @@ export function CandidatePanel({
   const [busy, setBusy] = useState(false);
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifiedIds, setVerifiedIds] = useState<string[]>([]);
+  const [localVerification,setLocalVerification]=useState<{source:Candidate[];supplierIds:string[]}|null>(null);
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof getSupplierRfqPreviewAction>>['previews'] | null>(null);
 
   const grouped = useMemo(() => {
@@ -244,6 +247,7 @@ export function CandidatePanel({
 
 function isVerified(candidate: Candidate) {
     return candidate.suppliers?.verification_status === 'verified'
+      || (localVerification?.source===allCandidates && localVerification.supplierIds.includes(candidate.supplier_id ?? ''));
   }
 
   function valid(candidate: Candidate) {
@@ -296,8 +300,10 @@ function isVerified(candidate: Candidate) {
     setVerifying(candidateId);
     setError('');
     try {
-      await verifySupplierCandidateAction({ inquiryId, candidateId });
+      const result=await verifySupplierCandidateAction({ inquiryId, candidateId });
+      setLocalVerification(current=>({source:allCandidates,supplierIds:[...new Set([...(current?.source===allCandidates?current.supplierIds:[]),result.supplierId])]}));
       setVerifiedIds((current) => current.includes(candidateId) ? current : [...current, candidateId]);
+      router.refresh();
       toast.success(t('Supplier verified'), { description: t('The supplier is now ready for RFQ selection.') });
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not verify supplier';
