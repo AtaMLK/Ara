@@ -40,6 +40,12 @@ docs/
   golden-tests/         # AI evaluation cases
 ```
 
+## Research configuration
+
+Set `SERPER_API_KEY` in `.env.local` for local development and in your deployment environment for production. Get the key from your [Serper account](https://serper.dev/). Restart the development server or redeploy after changing it.
+
+Product and supplier research uses Serper's Google Search API. The key is server-only and must never use a `NEXT_PUBLIC_` prefix.
+
 ## Status
 
 Project initialized. Application implementation follows the approved ARAT specification.
