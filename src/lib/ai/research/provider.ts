@@ -24,23 +24,23 @@ export interface ResearchProvider {
   search(input: ResearchQuery): Promise<ResearchResult[]>;
 }
 
-class SerpApiResearchProvider implements ResearchProvider {
+class SerperResearchProvider implements ResearchProvider {
   async search(input: ResearchQuery): Promise<ResearchResult[]> {
-    const apiKey = process.env.SERPAPI_API_KEY;
-    if (!apiKey) throw new ToolError('TRANSIENT', 'SERPAPI_API_KEY is not configured');
+    const apiKey = process.env.SERPER_API_KEY;
+    if (!apiKey) throw new ToolError('TRANSIENT', 'SERPER_API_KEY is not configured');
 
-    const params = new URLSearchParams({
-      engine: 'google',
+    const limit = Math.max(1, Math.min(input.limit ?? 10, 20));
+    const params = {
       q: input.query,
-      api_key: apiKey,
-      output: 'json',
       hl: 'en',
-    });
+      num: limit,
+      ...(input.country ? { location: input.country } : {}),
+    };
 
-    if (input.country) params.set('location', input.country);
-
-    const response = await fetch(`https://serpapi.com/search.json?${params.toString()}`, {
-      method: 'GET',
+    const response = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
+      body: JSON.stringify(params),
       cache: 'no-store',
     });
 
@@ -62,23 +62,22 @@ class SerpApiResearchProvider implements ResearchProvider {
       throw new ToolError(
         'TRANSIENT',
         authFailure
-          ? 'Research provider authentication failed: SERPAPI_API_KEY was rejected.'
+          ? 'Research provider authentication failed: SERPER_API_KEY was rejected.'
           : `Research provider returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
       );
     }
 
     const payload = await response.json() as {
       error?: string;
-      organic_results?: Array<{
+      organic?: Array<{
         position?: number;
         title?: string;
         link?: string;
         snippet?: string;
-        displayed_link?: string;
       }>;
     };
 
-    // SerpApi/Google can return a provider-level "no results" message for a
+    // The search provider can return a provider-level "no results" message for a
     // perfectly valid query. That is an empty evidence set, not a workflow
     // failure. The Research stage must continue with its other queries.
     if (payload.error) {
@@ -89,12 +88,12 @@ class SerpApiResearchProvider implements ResearchProvider {
       throw new ToolError('TRANSIENT', payload.error);
     }
 
-    return (payload.organic_results ?? [])
+    return (payload.organic ?? [])
       .filter((item) => Boolean(item.link && item.title))
-      .slice(0, Math.min(input.limit ?? 10, 20))
+      .slice(0, limit)
       .map((item) => ({
         sourceType: 'web' as const,
-        sourceName: item.displayed_link || item.title || 'Google result',
+        sourceName: item.title || 'Google result',
         sourceUrl: item.link!,
         finding: item.snippet || item.title!,
         structuredData: {
@@ -103,7 +102,7 @@ class SerpApiResearchProvider implements ResearchProvider {
         },
         relevance: 'search_result',
         evidence: {
-          provider: 'serpapi',
+          provider: 'serper',
           query: input.query,
           position: item.position,
           title: item.title,
@@ -115,6 +114,6 @@ class SerpApiResearchProvider implements ResearchProvider {
 }
 
 export function getResearchProvider(): ResearchProvider | null {
-  if (process.env.SERPAPI_API_KEY) return new SerpApiResearchProvider();
+  if (process.env.SERPER_API_KEY) return new SerperResearchProvider();
   return null;
 }
