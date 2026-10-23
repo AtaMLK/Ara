@@ -909,3 +909,35 @@ test('Show 5 more reviews only the next five companies and finishes without revi
  assert.equal((await progress.getSupplierReviewProgress(f.inquiryId))[productId].hasMore,false);
  assert.equal(reviewed.length,12,'Already reviewed supplier domains must not be sent through AI again');
 });
+
+
+test('Siemens prefers Arya without excluding external suppliers or bypassing research',async()=>{
+ const f=fixture(),productId=randomUUID();
+ const rows=[{id:productId,inquiry_id:f.inquiryId,type:'product',value:'Siemens PLC CPU',source_ref:'item:0',status:'confirmed'},{id:randomUUID(),inquiry_id:f.inquiryId,type:'specification',value:'Brand: Siemens',source_ref:'item:0',status:'confirmed'}];
+ const db=f.load('@/lib/supabase/admin').createSupabaseAdminClient();
+ const routes=f.load('@/lib/ai/supplier-brand-routes');
+ const other={id:randomUUID(),inquiry_id:f.inquiryId,requirement_id:productId,proposed_name:'Turkish supplier',status:'proposed'};
+ f.tables.supplier_candidates=[other];
+ const handled=await routes.reuseVerifiedBrandSuppliers(db,f.inquiryId,rows);
+ assert.equal(handled.has(productId),false,'External research must continue for Siemens');
+ assert.equal(other.status,'proposed','Other suppliers remain available');
+ const arya=f.tables.supplier_candidates.find(row=>row.proposed_website==='https://aryaautomation.com');
+ assert.ok(arya);assert.equal(arya.match_evidence.preferred_brand_supplier,true);assert.equal(arya.match_evidence.exclusive_distributor,false);
+ await routes.reuseVerifiedBrandSuppliers(db,f.inquiryId,rows);
+ assert.equal(f.tables.supplier_candidates.length,2,'Preferred route must be idempotent');
+ arya.status='admin_rejected';await routes.reuseVerifiedBrandSuppliers(db,f.inquiryId,rows);assert.equal(arya.status,'admin_rejected');
+});
+
+test('Turkish suppliers reach the first evidence page before international results and retain pagination',()=>{
+ const policy=fixture().load('@/lib/ai/supplier-policy');
+ const row=url=>({source_url:url,structured_data:{arat_requirement_id:'item'}});
+ const foreign=Array.from({length:6},(_,i)=>row(`https://foreign${i}.example/product`));
+ const local=['timonline.com.tr','automation.com.tr','sindustry.com.tr','vekmar.com.tr'].map(host=>row(`https://${host}/product`));
+ const rows=[...foreign,...local];
+ const first=policy.supplierEvidenceBatch(rows,[]);
+ assert.deepEqual(first.slice(0,4),local);
+ const reviewed={item:first.map(item=>new URL(item.source_url).hostname)};
+ const next=policy.supplierEvidenceBatch(rows,[],{item:10},reviewed);
+ assert.equal(next.length,5);assert.equal(new Set([...first,...next]).size,10);
+ assert.equal(policy.isExclusiveBrand('Siemens'),false);assert.equal(policy.isAryaPreferredBrand('Siemens'),true);
+});

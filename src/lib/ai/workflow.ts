@@ -1,6 +1,6 @@
 import 'server-only';
 import { reuseVerifiedBrandSuppliers, recordVerifiedSupplierBrands } from './supplier-brand-routes';
-import { supplierEvidenceBatch,productBrand,isExclusiveBrand } from './supplier-policy';
+import { supplierEvidenceBatch,productBrand,isExclusiveBrand,isAryaPreferredBrand } from './supplier-policy';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
@@ -2122,7 +2122,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       const routeRequirements=await supabase.from('requirements').select('id,type,value,source_ref').eq('inquiry_id',inquiryId).eq('status','confirmed');
       if(routeRequirements.error) throw new ToolError('TRANSIENT',routeRequirements.error.message);
       const fixedRoutes=new Set<string>((research.scope?.handled_brand_requirement_ids ?? []) as string[]);
-      const routedRequirements=(routeRequirements.data ?? []).filter(row=>row.type!=='product' || fixedRoutes.has(row.id) || isExclusiveBrand(productBrand(row,routeRequirements.data ?? [])));
+      const routedRequirements=(routeRequirements.data ?? []).filter(row=>row.type!=='product' || fixedRoutes.has(row.id) || isAryaPreferredBrand(productBrand(row,routeRequirements.data ?? [])));
       const handledRoutes=await reuseVerifiedBrandSuppliers(supabase,inquiryId,routedRequirements);
       const existingForBatch=await supabase.from('supplier_candidates').select('requirement_id,proposed_website,status').eq('inquiry_id',inquiryId);
       if(existingForBatch.error) throw new ToolError('TRANSIENT',existingForBatch.error.message);
@@ -3610,7 +3610,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             inquiryId,
             'product_research',
             'RESEARCH_PROVIDER_AUTH_FAILED',
-            'Supplier research could not run because the configured SERPAPI API key was rejected. No supplier candidates were fabricated.',
+            'Supplier research could not run because the configured Serper API key was rejected. No supplier candidates were fabricated.',
             'urgent',
           );
           await timeline(inquiryId, 'workflow_research_failed_provider_auth', {
@@ -3620,7 +3620,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
           throw new ToolError(
             'TRANSIENT',
-            'Supplier research provider authentication failed. Check SERPAPI_API_KEY.',
+            'Supplier research provider authentication failed. Check SERPER_API_KEY.',
           );
         }
         if (failedQueries > 0 && successfulQueries === 0) {

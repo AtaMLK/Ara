@@ -232,7 +232,7 @@ export function CandidatePanel({
     }
     for(const rows of map.values()) rows.sort((a,b)=>{
       const preferred=(row:Candidate)=>Boolean((row.match_evidence as Record<string,unknown>)?.preferred_brand_supplier);
-      return Number(preferred(b))-Number(preferred(a)) || Number(b.suppliers?.verification_status==='verified')-Number(a.suppliers?.verification_status==='verified') || a.id.localeCompare(b.id);
+      return Number(isAryaWebsite(b.proposed_website))-Number(isAryaWebsite(a.proposed_website)) || Number(domestic(normalizedCountry(b)))-Number(domestic(normalizedCountry(a))) || Number(preferred(b))-Number(preferred(a)) || Number(b.suppliers?.verification_status==='verified')-Number(a.suppliers?.verification_status==='verified') || a.id.localeCompare(b.id);
     });
     return map;
   }, [candidates, products]);
@@ -268,12 +268,9 @@ function isVerified(candidate: Candidate) {
   const allModalCandidates=selectedProductId ? (grouped.get(selectedProductId) ?? []) : [];
   const visibleLimit=selectedProductId ? (visibleLimits[selectedProductId] ?? SUPPLIER_BATCH_SIZE) : SUPPLIER_BATCH_SIZE;
   const modalCandidates = allModalCandidates.slice(0,visibleLimit);
-  const preferred=modalCandidates.find(row=>(row.match_evidence as Record<string,unknown>)?.preferred_brand_supplier);
-  const preferredRegion=preferred ? region(normalizedCountry(preferred)) : '';
-  const preferredGroup=['Turkey','Europe','Asia'].includes(preferredRegion)?preferredRegion:'International';
-  const displayGroups=[...(['Turkey','Europe','Asia','International'] as const)].sort((a,b)=>preferred?Number(b===preferredGroup)-Number(a===preferredGroup):0);
+  const displayGroups=['Turkey','Europe','Asia','International'] as const;
   const modalProduct=products.find(row=>row.id===selectedProductId);
-  const canReviewMore=Boolean(modalProduct && !isExclusiveBrand(productBrand(modalProduct,requirements)) && !allModalCandidates.some(row=>(row.match_evidence as Record<string,unknown>)?.preferred_brand_supplier) && (moreAvailable[modalProduct.id] ?? reviewProgress[modalProduct.id]?.hasMore ?? false));
+  const canReviewMore=Boolean(modalProduct && !isExclusiveBrand(productBrand(modalProduct,requirements)) && (moreAvailable[modalProduct.id] ?? reviewProgress[modalProduct.id]?.hasMore ?? false));
   async function showMore() {
     if(!selectedProductId) return;
     setLoadingMore(true);setError('');

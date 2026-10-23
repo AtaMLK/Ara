@@ -2,7 +2,7 @@ import 'server-only';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { oneRelated } from '@/lib/data/relations';
 import { ToolError } from '@/lib/errors';
-import { canonicalBrand, isExclusiveBrand, isAryaWebsite, productBrand, type BrandRequirement } from './supplier-policy';
+import { canonicalBrand, isExclusiveBrand, isAryaPreferredBrand, isAryaWebsite, productBrand, type BrandRequirement } from './supplier-policy';
 type Database = ReturnType<typeof createSupabaseAdminClient>;
 type Supplier = {id:string;legal_name:string;primary_country:string;verification_status:string;status?:string};
 function check(error: {message:string}|null) {if(error) throw new ToolError('TRANSIENT',error.message);}
@@ -27,7 +27,7 @@ export async function recordVerifiedSupplierBrands(db:Database,inquiryId:string)
 }
 
 async function aryaSupplier(db:Database):Promise<Supplier> {
-  const sites=await db.from('supplier_websites').select('supplier_id,url,suppliers(id,legal_name,primary_country,verification_status,status)').ilike('url','%aryaautomation.com%');check(sites.error);
+  const sites=await db.from('supplier_websites').select('supplier_id,url,suppliers!supplier_websites_supplier_id_fkey(id,legal_name,primary_country,verification_status,status)').ilike('url','%aryaautomation.com%');check(sites.error);
   const existing=(sites.data ?? []).find(row=>isAryaWebsite(row.url));
   let supplier=existing ? oneRelated(existing.suppliers) : null;
   if(!supplier) {
@@ -55,7 +55,7 @@ async function aryaSupplier(db:Database):Promise<Supplier> {
     const email=await db.from('supplier_emails').insert({supplier_id:created.data.id,email:configuredEmail.toLowerCase(),is_primary:true,status:'active'}).select('id').single();check(email.error);
     if(email.data) {const result=await db.from('suppliers').update({primary_email_id:email.data.id}).eq('id',created.data.id);check(result.error);}
   }
-  const history=await db.from('supplier_verification_history').insert({supplier_id:created.data.id,new_status:'verified',reason:'Admin business rule: certified distributor for GMI, CTC and Hansford Sensors',agent_id:'supplier_discovery'});check(history.error);
+  const history=await db.from('supplier_verification_history').insert({supplier_id:created.data.id,new_status:'verified',reason:'Admin business rule: Arya supplies GMI, CTC, Hansford Sensors and Siemens',agent_id:'supplier_discovery'});check(history.error);
   return created.data;
 }
 
@@ -90,10 +90,12 @@ export async function reuseVerifiedBrandSuppliers(db:Database,inquiryId:string,r
   for(const product of products) {
     const brand=productBrand(product,requirements);if(!brand) continue;
     const exclusive=isExclusiveBrand(brand);
-    if(exclusive && !arya) arya=await aryaSupplier(db);
-    const suppliers=exclusive ? [arya!] : [...(routes.get(brand)?.values() ?? [])];
+    const preferred=isAryaPreferredBrand(brand);
+    if(preferred && !arya) arya=await aryaSupplier(db);
+    const suppliers=exclusive ? [arya!] : [...(preferred ? [arya!] : []),...(routes.get(brand)?.values() ?? [])].filter((supplier,index,all)=>all.findIndex(other=>other.id===supplier.id)===index);
     if(!suppliers.length) continue;
-    handled.add(product.id);
+    // Siemens keeps external research available after the preferred Arya route.
+    if (!preferred || exclusive) handled.add(product.id);
     if(exclusive) {
       const prior=await db.from('supplier_candidates').select('id,supplier_id,match_evidence,status').eq('inquiry_id',inquiryId).eq('requirement_id',product.id);check(prior.error);
       for(const other of prior.data ?? []) {
@@ -102,12 +104,13 @@ export async function reuseVerifiedBrandSuppliers(db:Database,inquiryId:string,r
       }
     }
     for(const supplier of suppliers) {
-      const website=exclusive?'https://aryaautomation.com':null;
+      const isArya=preferred && supplier.id===arya?.id;
+      const website=isArya?'https://aryaautomation.com':null;
       const existing=await db.from('supplier_candidates').select('id,status,verification_evidence').eq('inquiry_id',inquiryId).eq('requirement_id',product.id).eq('supplier_id',supplier.id).maybeSingle();check(existing.error);
       if(existing.data && ['admin_removed','admin_rejected'].includes(existing.data.status)) continue;
       const payload={inquiry_id:inquiryId,requirement_id:product.id,supplier_id:supplier.id,proposed_name:supplier.legal_name,proposed_country:supplier.primary_country,proposed_website:website,
-        status:'finalized',match_evidence:{brand,preferred_brand_supplier:true,exclusive_distributor:exclusive,match_type:'same_brand_distributor',match_score:100,match_note:exclusive?'Admin-designated exclusive certified distributor.':'Previously verified supplier for this brand; confirm availability of the requested model.'},
-        verification_evidence:{...(existing.data?.verification_evidence ?? {}),source_url:website,verification_basis:exclusive?'admin_exclusive_distributor_rule':'existing_verified_brand_supplier'}};
+        status:'finalized',match_evidence:{brand,preferred_brand_supplier:true,exclusive_distributor:exclusive,match_type:'same_brand_distributor',match_score:100,match_note:exclusive?'Admin-designated exclusive certified distributor.':isArya?'Admin-designated preferred supplier; confirm availability of the requested model.':'Previously verified supplier for this brand; confirm availability of the requested model.'},
+        verification_evidence:{...(existing.data?.verification_evidence ?? {}),source_url:website,verification_basis:exclusive?'admin_exclusive_distributor_rule':isArya?'admin_preferred_supplier_rule':'existing_verified_brand_supplier'}};
       const result=existing.data ? await db.from('supplier_candidates').update(payload).eq('id',existing.data.id) : await db.from('supplier_candidates').insert(payload);check(result.error);
     }
   }
