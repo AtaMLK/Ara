@@ -106,8 +106,13 @@ export async function reuseVerifiedBrandSuppliers(db:Database,inquiryId:string,r
     for(const supplier of suppliers) {
       const isArya=preferred && supplier.id===arya?.id;
       const website=isArya?'https://aryaautomation.com':null;
-      const existing=await db.from('supplier_candidates').select('id,status,verification_evidence').eq('inquiry_id',inquiryId).eq('requirement_id',product.id).eq('supplier_id',supplier.id).maybeSingle();check(existing.error);
+      const existing=await db.from('supplier_candidates').select('id,status,match_evidence,verification_evidence').eq('inquiry_id',inquiryId).eq('requirement_id',product.id).eq('supplier_id',supplier.id).maybeSingle();check(existing.error);
       if(existing.data && ['admin_removed','admin_rejected'].includes(existing.data.status)) continue;
+      // Reusing a brand must not replace an existing external candidate's sourced details.
+      if(existing.data && !isArya && !exclusive) {
+        const result=await db.from('supplier_candidates').update({match_evidence:{...existing.data.match_evidence,preferred_brand_supplier:true}}).eq('id',existing.data.id);check(result.error);
+        continue;
+      }
       const payload={inquiry_id:inquiryId,requirement_id:product.id,supplier_id:supplier.id,proposed_name:supplier.legal_name,proposed_country:supplier.primary_country,proposed_website:website,
         status:'finalized',match_evidence:{brand,preferred_brand_supplier:true,exclusive_distributor:exclusive,match_type:'same_brand_distributor',match_score:100,match_note:exclusive?'Admin-designated exclusive certified distributor.':isArya?'Admin-designated preferred supplier; confirm availability of the requested model.':'Previously verified supplier for this brand; confirm availability of the requested model.'},
         verification_evidence:{...(existing.data?.verification_evidence ?? {}),source_url:website,verification_basis:exclusive?'admin_exclusive_distributor_rule':isArya?'admin_preferred_supplier_rule':'existing_verified_brand_supplier'}};

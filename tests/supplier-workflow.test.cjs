@@ -941,3 +941,15 @@ test('Turkish suppliers reach the first evidence page before international resul
  assert.equal(next.length,5);assert.equal(new Set([...first,...next]).size,10);
  assert.equal(policy.isExclusiveBrand('Siemens'),false);assert.equal(policy.isAryaPreferredBrand('Siemens'),true);
 });
+
+
+test('preferred Siemens routing preserves existing external supplier website and product evidence',async()=>{
+ const f=fixture(),productId=randomUUID(),supplierId=randomUUID();
+ f.tables.suppliers=[{id:supplierId,legal_name:'Local Supplier',primary_country:'Turkey',verification_status:'verified',status:'active'}];
+ f.tables.supplier_brands=[{supplier_id:supplierId,name:'Siemens',is_suggested:false,is_unknown:false}];
+ const candidate={id:randomUUID(),inquiry_id:f.inquiryId,requirement_id:productId,supplier_id:supplierId,proposed_name:'Local Supplier',proposed_website:'https://local.example/product',status:'finalized',match_evidence:{match_type:'exact_product',match_score:98},verification_evidence:{source_url:'https://local.example/product'}};
+ f.tables.supplier_candidates=[candidate];const before=JSON.stringify(candidate);
+ const requirements=[{id:productId,type:'product',value:'Siemens PLC',source_ref:'item:0'}];
+ await f.load('@/lib/ai/supplier-brand-routes').reuseVerifiedBrandSuppliers(f.load('@/lib/supabase/admin').createSupabaseAdminClient(),f.inquiryId,requirements);
+ assert.equal(JSON.stringify({...candidate,match_evidence:{...candidate.match_evidence,preferred_brand_supplier:undefined}}),before);
+});
