@@ -107,6 +107,17 @@ function supplierOrderFixture(){
  return {f,db,quoteId,sent,load,deny:()=>denied=true,fail:()=>fail=true};
 }
 
+test('supplier orders preserve the Admin reviewed amount and currency',async()=>{
+ const x=supplierOrderFixture(),item=x.f.tables.customer_quote_items[0];
+ item.supplier_currency=null;
+ item.price_calculation.admin_controls={supplierReview:{amount:695,basis:'net',currency:'GBP'}};
+ item.price_calculation.admin_commercial={net:695,gross:834,taxRate:20,taxMode:'excluded'};
+ const result=await x.load('@/lib/quotes/supplier-orders').loadOrderGroups(x.quoteId);
+ const line=result.groups.flatMap(g=>g.lines).find(l=>l.itemId===item.id);
+ assert.equal(line.currency,'GBP');assert.equal(line.net,695);assert.equal(line.gross,834);
+ assert.equal(item.supplier_currency,null);assert.equal(x.sent.length,0);
+});
+
 test('accepted quote creates separate exact supplier orders with no customer margins; repeated sends are safe',async()=>{
  const x=supplierOrderFixture(),actions=x.load('@/app/quotes/supplier-order-actions'),old=process.env.EMAIL_FROM;process.env.EMAIL_FROM='purchase@example.test';
  try{
@@ -255,6 +266,31 @@ test('markup preview allocates delivery, converts with provided rate and applies
   assert.equal(pricePreview(c,{...controls,exchangeRate:null}),null);
 });
 
+test('Admin completes ambiguous supplier cost without overwriting extraction or bypassing rates', async () => {
+  const f=fixture(),itemId=randomUUID(),quoteId=randomUUID();
+  const {supplierCommercial}=f.load('@/lib/quotes/commercial');
+  const original=supplierCommercial({taxMode:'excluded',taxText:'Birim fiyat 695€ + KDV'});
+  f.tables.customer_quotes=[{id:quoteId,status:'draft',currency:'EUR'}];
+  f.tables.customer_quote_items=[{id:itemId,customer_quote_id:quoteId,quantity:2,unit_price:null,price_status:'suggested',supplier_currency:null,supplier_cost:null,price_calculation:{commercial:original}}];
+  const action=f.load('@/app/quotes/quote-editor-actions').saveQuoteCommercialAction;
+  const input={itemId,quantity:2,basis:'gross',markupPercent:10,deliveryCost:0,deliveryAllocation:'per_line',markupOn:'goods',rounding:0,exchangeRateId:null,taxMode:'excluded',taxRate:20,deliveryMin:null,deliveryMax:null,deliveryUnit:'unknown',businessDays:false,deliveryNote:'',priceMode:'formula',manualPrice:null,confirm:true};
+  await assert.rejects(action(input),/Enter a customer price/);
+  await assert.rejects(action({...input,supplierReview:{amount:695,basis:'net',currency:'USD'}}),/approved exchange rate/);
+  await action({...input,supplierReview:{amount:695,basis:'net',currency:'EUR'}});
+  const item=f.tables.customer_quote_items[0];
+  assert.equal(item.unit_price,917.4);assert.equal(item.price_status,'admin_confirmed');
+  assert.deepEqual(item.price_calculation.commercial,original);
+  assert.equal(item.supplier_cost,null);assert.equal(item.supplier_currency,null);
+  assert.equal(item.price_calculation.admin_commercial.net,695);
+  assert.ok(f.tables.audit_logs.some(a=>a.after_data?.price_calculation?.admin_controls?.supplierReview?.amount===695));
+  await action({...input,confirm:false,supplierReview:{amount:700,basis:'gross',currency:'EUR'}});
+  assert.equal(item.unit_price,null);assert.equal(item.price_status,'suggested');
+  assert.equal(item.price_calculation.admin_commercial.gross,700);
+  f.tables.customer_quotes[0].status='sent';
+  await assert.rejects(action({...input,supplierReview:{amount:695,basis:'net',currency:'EUR'}}),/Only editable/);
+  assert.equal(f.sendCount(),0);
+});
+
 test('Admin confirms formula prices on the server and editable saves remove confirmation', async () => {
   const f=fixture(),itemId=randomUUID(),quoteId=randomUUID();
   const {supplierCommercial}=f.load('@/lib/quotes/commercial');
@@ -339,6 +375,29 @@ test('AI provider rejects persistently invalid output after one repair attempt',
     await assert.rejects(getAIProvider().generate([{ role: 'user', content: 'Supplier reply' }], supplierEmailAnalysisOutputSchema), /schema validation/);
     assert.equal(calls, 2);
   } finally { global.fetch = originalFetch; }
+});
+
+test('symbol-only quote preserves numeric cost and raises missing commercial fact alerts', async () => {
+  for (const price of [695,undefined]) {
+    const f=fixture(),supplierId=randomUUID(),responseId=randomUUID(),communicationId=randomUUID();
+    f.tables.communications=[{id:communicationId,inquiry_id:f.inquiryId,supplier_id:supplierId,body:'Birim fiyat 695€ + KDV'}];
+    f.tables.supplier_responses=[{id:responseId,communication_id:communicationId,inquiry_id:f.inquiryId,supplier_id:supplierId,status:'received'}];
+    f.mock('@/lib/ai/agent-runner',{runAgent:async(ctx,input,schema)=>{
+      assert.equal(ctx.agentId,'quote_extraction');
+      assert.ok(input.instructions.some(s=>s.includes('independently of currency')));
+      return {output:schema.parse({quotes:[{matchStatus:'unknown',netPrice:price,taxMode:'excluded',originalData:{priceText:'Birim fiyat 695€ + KDV'}}]}),provider:'test',model:'test'};
+    }});
+    await f.load('@/lib/ai/orchestrator').enqueueSupplierQuoteExtraction(f.inquiryId);
+    const result=await f.load('@/lib/ai/workflow').processQueuedWorkflow(1,f.inquiryId);
+    assert.ok(!result.results.some(r=>r.error),JSON.stringify(result));
+    const quote=f.tables.supplier_quotes[0];
+    assert.equal(quote.net_price,price);assert.equal(quote.currency,undefined);
+    assert.equal(quote.original_data.priceText,'Birim fiyat 695€ + KDV');
+    assert.ok(quote.original_data.extraction.uncertainties.some(s=>s.includes('currency')));
+    if(price==null)assert.ok(quote.original_data.extraction.uncertainties.some(s=>s.includes('unit price')));
+    assert.ok(f.tables.ai_alerts.some(a=>a.alert_type==='QUOTE_EXTRACTION_UNCERTAINTY'));
+    assert.equal(f.sendCount(),0);
+  }
 });
 
 test('received supplier quote advances to an unpriced admin draft without pricing rules', async () => {

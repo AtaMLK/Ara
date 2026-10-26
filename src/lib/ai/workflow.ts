@@ -1488,7 +1488,8 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             availability: supplierQuote.availability, payment_terms: supplierQuote.payment_terms,
             incoterm: supplierQuote.incoterm, delivery_method: supplierQuote.delivery_method,
             conditions: supplierQuote.additional_conditions,
-            warnings: ai.output.warnings, ai_provider: ai.provider, ai_model: ai.model,
+            source_price_text:typeof original.priceText==='string'?original.priceText:null,
+            warnings: [...ai.output.warnings,...(Array.isArray((original.extraction as Record<string,unknown>|undefined)?.uncertainties)?(original.extraction as {uncertainties:string[]}).uncertainties:[])], ai_provider: ai.provider, ai_model: ai.model,
           },
         });
         if (itemError) throw new ToolError('CONFLICT', itemError.message);
@@ -1614,6 +1615,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             instructions: [
               'Extract only values explicitly present in the supplier response or supplied attachment text.',
               'Do not infer currency from supplier country, symbol alone, prior quotes, or general knowledge.',
+              'Extract an explicitly stated numeric unit price independently of currency. For example, Birim fiyat 695€ + KDV has netPrice=695 and taxMode=excluded; currency stays blank when only a symbol is provided. Preserve the exact price wording in originalData.priceText. An unlabeled amount must not be assumed to be a pre-tax unit price or converted from a line total.',
               'Do not calculate net/gross/list prices, discounts, VAT, or conversions unless the response explicitly states the resulting value. Exception: if list price and an explicitly stated percentage discount are present but net price is absent, return discountType=percent so the system can calculate the net price and flag it as AI Calculated. If the discount is a fixed amount, return discountType=amount and do not calculate the net price.',
               'Match each quoted product independently against the inquiry requirements, RFQ items, and supplied supplier product records.',
               'Use productId only when the supplied supplier product record is clearly the quoted product.',
@@ -1644,6 +1646,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
         }
 
         for (const quote of ai.output.quotes) {
+          // Missing commercial facts require review even if the model forgets to
+          // report them. Never fill them from country or another supplier offer.
+          if (!quote.currency) quote.uncertainties.push('Supplier currency is missing or ambiguous; Admin review required.');
+          if (quote.netPrice == null && quote.grossPrice == null && quote.listPrice == null && quote.priceTiers.length===0) quote.uncertainties.push('Supplier unit price is missing or ambiguous; Admin review required.');
           if (quote.productId && !supplierProducts?.some((p) => p.id === quote.productId)) {
             throw new ToolError('AI_PROCESSING', 'Quote extraction returned a productId outside the supplier product set');
           }

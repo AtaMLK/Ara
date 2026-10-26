@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/ai/guards';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
-import { pricePreview, reviewSupplierTax, supplierCommercial, type SupplierCommercial } from '@/lib/quotes/commercial';
+import { pricePreview, reviewSupplierTax, reviewSupplierAmount, supplierCommercial, type SupplierCommercial } from '@/lib/quotes/commercial';
 
 export async function selectQuoteOfferAction(itemId:string) {
   z.string().uuid().parse(itemId);
@@ -20,6 +20,7 @@ export async function selectQuoteOfferAction(itemId:string) {
 }
 
 const controlsSchema = z.object({
+  supplierReview:z.object({amount:z.number().nonnegative().finite(),basis:z.enum(['net','gross']),currency:z.string().regex(/^[A-Z]{3}$/)}).nullable().optional(),
   itemId: z.string().uuid(), quantity: z.number().positive().finite(),quantityUnit:z.string().trim().max(40).optional(),
   description:z.string().trim().min(1).max(2000).optional(),model:z.string().trim().max(300).optional(),brand:z.string().trim().max(300).optional(),
   basis: z.enum(['net','gross']), markupPercent: z.number().min(0).max(10000).nullable(),
@@ -49,13 +50,15 @@ export async function saveQuoteCommercialAction(input: z.infer<typeof controlsSc
   const defaults=supplierCommercial({netPrice:item.supplier_cost});
   const source={...defaults,...saved,delivery:saved.delivery??defaults.delivery,warnings:saved.warnings??defaults.warnings};
   if (value.deliveryMin != null && value.deliveryMax != null && value.deliveryMax < value.deliveryMin) throw new Error('Maximum delivery must be at least the minimum.');
-  const commercial = reviewSupplierTax(source,value.taxMode,value.taxRate);
-  let exchangeRate: number | null = item.supplier_currency === quote.currency ? 1 : null;
+  const reviewedTax = reviewSupplierTax(source,value.taxMode,value.taxRate);
+  const commercial = value.supplierReview ? reviewSupplierAmount(reviewedTax,value.supplierReview) : reviewedTax;
+  const supplierCurrency=value.supplierReview?.currency??item.supplier_currency;
+  let exchangeRate: number | null = supplierCurrency === quote.currency ? 1 : null;
   let rateId: string | null = null;
   if (exchangeRate == null && value.exchangeRateId) {
     const today = new Date().toISOString().slice(0,10);
     const { data: rate, error: rateError } = await supabase.from('exchange_rates').select('id,rate,valid_from,valid_until')
-      .eq('id',value.exchangeRateId).eq('from_currency',item.supplier_currency).eq('to_currency',quote.currency)
+      .eq('id',value.exchangeRateId).eq('from_currency',supplierCurrency).eq('to_currency',quote.currency)
       .eq('status','approved').lte('valid_from',today).or('valid_until.is.null,valid_until.gte.'+today).single();
     if (rateError || !rate || !Number.isFinite(Number(rate.rate)) || Number(rate.rate) <= 0) throw new Error('Choose a valid approved exchange rate for this currency pair.');
     exchangeRate = Number(rate.rate); rateId = rate.id;
@@ -80,7 +83,7 @@ export async function saveQuoteCommercialAction(input: z.infer<typeof controlsSc
   if (updateError) throw new Error(updateError.message);
   const { error: auditError } = await createSupabaseAdminClient().from('audit_logs').insert({ actor_type:'admin',actor_user_id:user.id,
     action:value.confirm ? 'customer_quote_commercial_confirmed' : 'customer_quote_commercial_saved',record_type:'customer_quote_item',record_id:item.id,
-    before_data:item,after_data:{unit_price:value.confirm?unitPrice:null,price_calculation:nextCalculation},metadata:{customer_quote_id:quote.id} });
+    before_data:item,after_data:{unit_price:value.confirm?unitPrice:null,price_calculation:nextCalculation,supplier_currency:supplierCurrency,supplier_cost:value.supplierReview?commercial.net:item.supplier_cost},metadata:{customer_quote_id:quote.id} });
   if (auditError) throw new Error('Changes saved, but audit logging failed: '+auditError.message);
   revalidatePath('/quotes/'+quote.id); revalidatePath('/quotes');
   return { ok:true };

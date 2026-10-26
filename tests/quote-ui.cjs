@@ -37,6 +37,13 @@ createRoot(document.getElementById('root')).render(<QuoteWorkbench items={items}
     await page.getByRole('button',{name:'Confirm line & price'}).click();
     const saved=await page.evaluate(()=>window.__saved);
     assert.equal(saved.taxRate,20);assert.equal(saved.markupPercent,10);assert.equal(saved.deliveryCost,150);assert.equal(saved.confirm,true);
+    await page.getByRole('checkbox',{name:'Correct or complete supplier amount and currency'}).check();
+    await page.getByLabel('Supplier amount',{exact:true}).fill('695');
+    await page.getByLabel('Supplier currency',{exact:true}).fill('EUR');
+    await page.getByRole('button',{name:'Confirm line & price'}).click();
+    const reviewed=await page.evaluate(()=>window.__saved);
+    assert.deepEqual(reviewed.supplierReview,{amount:695,basis:'net',currency:'EUR'});
+    assert.match(await page.getByRole('dialog').innerText(),/918\.40 EUR/);
     await page.setViewportSize({width:390,height:844});
     await page.screenshot({path:path.join(dir,'mobile.png'),fullPage:true});
     assert.equal(await page.getByRole('dialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1),true,'Dialog should not overflow horizontally');

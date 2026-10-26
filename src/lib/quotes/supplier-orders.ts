@@ -63,7 +63,9 @@ export async function loadOrderGroups(quoteId:string,instructions='') {
       if(tierError||!tier||tier.supplier_quote_id!==item.supplier_quote_id||tier.min_quantity!=null&&Number(item.quantity)<Number(tier.min_quantity)||tier.max_quantity!=null&&Number(item.quantity)>Number(tier.max_quantity))throw new Error('Order quantity does not match the reviewed supplier price tier. Obtain updated supplier terms.');
     }
     const commercial=(calc.admin_commercial??calc.commercial??{}) as {net?:number|null;gross?:number|null;taxText?:string;taxRate?:number|null;taxMode?:string;delivery?:{original?:string}};
-    if(!item.description||!item.supplier_currency||!Number.isFinite(Number(item.quantity))||Number(item.quantity)<=0)throw new Error('Complete the accepted item description, quantity and supplier currency before ordering.');
+    const controls=calc.admin_controls as {supplierReview?:{currency?:string}}|undefined;
+    const supplierCurrency=controls?.supplierReview?.currency??item.supplier_currency;
+    if(!item.description||!supplierCurrency||!Number.isFinite(Number(item.quantity))||Number(item.quantity)<=0)throw new Error('Complete the accepted item description, quantity and supplier currency before ordering.');
     const net=commercial.net==null?null:Number(commercial.net),gross=commercial.gross==null?null:Number(commercial.gross);
     if(net==null&&gross==null)throw new Error('Review the original supplier cost before placing this order.');
     const original=(offer?.original_data??{}) as Record<string,unknown>;
@@ -71,7 +73,7 @@ export async function loadOrderGroups(quoteId:string,instructions='') {
     const unit=quantityUnit(calc.quantity_unit,original.quantity_unit,matching?.unit,matching?.quantity);
     const supplierUnit=quantityUnit(original.quantity_unit);
     if(supplierUnit&&unit&&supplierUnit.toLowerCase()!==unit.toLowerCase())throw new Error('Supplier and accepted item units differ. Review the supplier quantity and price basis before placing this order.');
-    group.lines.push({itemId:item.id,supplierQuoteId:item.supplier_quote_id!,description:item.description,model:item.model||'',brand:item.brand||'',quantity:Number(item.quantity),currency:item.supplier_currency,
+    group.lines.push({itemId:item.id,supplierQuoteId:item.supplier_quote_id!,description:item.description,model:item.model||'',brand:item.brand||'',quantity:Number(item.quantity),currency:supplierCurrency,
       unit,taxRate:commercial.taxRate??null,taxMode:commercial.taxMode,loadingDate:String(calc.loading_date||original.loading_date||''),deliveryDate:String(calc.delivery_date||original.delivery_date||''),
       net,gross,taxText:commercial.taxRate!=null?commercial.taxRate+'% ('+(commercial.taxMode||'reviewed')+')':commercial.taxText||'',delivery:commercial.delivery?.original||'',
       terms:[calc.payment_terms,calc.incoterm,calc.delivery_method,...(Array.isArray(calc.conditions)?calc.conditions.map(condition=>typeof condition==='string'?condition:condition?.text):[])].filter(Boolean).map(String).join(' · ')});

@@ -90,6 +90,17 @@ export function reviewSupplierTax(source: SupplierCommercial, taxMode: TaxMode, 
   });
 }
 
+// An explicit Admin interpretation of an ambiguous supplier amount. Keep the
+// extraction snapshot untouched so corrections remain distinguishable from facts.
+export function reviewSupplierAmount(source: SupplierCommercial, review: {amount:number;basis:'net'|'gross'}) {
+  if (!Number.isFinite(review.amount) || review.amount < 0) throw new Error('Enter a valid supplier amount.');
+  return supplierCommercial({
+    netPrice:review.basis==='net'?review.amount:undefined,
+    grossPrice:review.basis==='gross'?review.amount:undefined,
+    taxMode:source.taxMode,taxRate:source.taxRate,taxText:source.taxText,leadTimeText:source.delivery.original,
+  });
+}
+
 export type PriceControls = {
   quantity: number; basis: 'net' | 'gross'; markupPercent: number | null;
   deliveryCost: number; deliveryAllocation: 'per_unit' | 'per_line';
