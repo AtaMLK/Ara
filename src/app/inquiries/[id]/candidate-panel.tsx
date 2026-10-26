@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { getSupplierRfqPreviewAction, sendSupplierRfqAction, verifySupplierCandidateAction } from './supplier-rfq-actions';
 import { loadMoreSupplierCandidatesAction } from './supplier-discovery-actions';
-import {productBrand,isExclusiveBrand,isAryaWebsite,SUPPLIER_BATCH_SIZE} from '@/lib/ai/supplier-policy';
+import {productBrand,isExclusiveBrand,isAryaWebsite,isTurkishCountry,uniqueSupplierCandidates,SUPPLIER_BATCH_SIZE} from '@/lib/ai/supplier-policy';
 
 type Requirement = {
   id: string;
@@ -74,12 +74,11 @@ type Candidate = {
 };
 
 function normalizedCountry(candidate: Candidate) {
-  return (candidate.proposed_country || candidate.suppliers?.primary_country || '').trim();
+  return [candidate.suppliers?.verification_status==='verified'?candidate.suppliers.primary_country:null,candidate.proposed_country,candidate.suppliers?.primary_country].find(value=>value?.trim()&&!/^(unknown|n\/a)$/i.test(value.trim()))?.trim()??'';
 }
 
 function domestic(country: string | null | undefined) {
-  const value = (country ?? '').trim().toLowerCase();
-  return value === 'turkey' || value === 'türkiye' || value === 'tr' || value.includes('turkey');
+  return isTurkishCountry(country);
 }
 
 function region(country: string | null | undefined) {
@@ -203,15 +202,15 @@ export function CandidatePanel({
   inquiryId: string;
   requirements: Requirement[];
   candidates: Candidate[];
-  reviewProgress?:Record<string,{limit:number;hasMore:boolean}>;
+  reviewProgress?:Record<string,{limit:number;hasMore:boolean;reviewing?:boolean}>;
 }) {
   const {t}=useI18n();
   const router=useRouter();
   const products = requirements.filter((item) => item.type === 'product');
-  const candidates=allCandidates.filter(candidate=>{
+  const candidates=uniqueSupplierCandidates(allCandidates.filter(candidate=>{
     const product=products.find(row=>row.id===candidate.requirement_id);
     return product && !['admin_removed','admin_rejected'].includes(candidate.status) && (!isExclusiveBrand(productBrand(product,requirements)) || isAryaWebsite(candidate.proposed_website));
-  });
+  }));
   const [visibleLimits,setVisibleLimits]=useState<Record<string,number>>({});
   const [moreAvailable,setMoreAvailable]=useState<Record<string,boolean>>({});
   const [loadingMore,setLoadingMore]=useState(false);
@@ -375,7 +374,7 @@ function isVerified(candidate: Candidate) {
                     {validCount}
                   </button>
                 </div>
-                <div>{validCount ? <span className="badge status-approved"><T>Candidates found</T></span> : <span className="badge"><T>Researching</T></span>}</div>
+                <div>{reviewProgress[product.id]?.reviewing?<span className="badge"><T>Reviewing supplier evidence…</T></span>:validCount ? <span className="badge status-approved"><T>Candidates found</T></span> : <span className="badge"><T>Researching</T></span>}</div>
               </div>
             );
           })}
@@ -535,7 +534,7 @@ function isVerified(candidate: Candidate) {
                 </div>
               );
             })}
-            {(allModalCandidates.length>visibleLimit || canReviewMore) && <button type="button" className="secondary-button" disabled={loadingMore} onClick={()=>void showMore()}>{loadingMore?'Reviewing next suppliers…':'Show 5 more suppliers'}</button>}
+            {(allModalCandidates.length>visibleLimit || canReviewMore) && <button type="button" className="secondary-button" disabled={loadingMore||Boolean(reviewProgress[selectedProductId??'']?.reviewing)} onClick={()=>void showMore()}>{loadingMore||reviewProgress[selectedProductId??'']?.reviewing?'Reviewing next suppliers…':'Show 5 more suppliers'}</button>}
             <div className="muted">Showing {modalCandidates.length} suppliers. {selected.length} items selected across {new Set(selectedCandidates.map(row=>row.supplier_id)).size} suppliers. One email per supplier.</div>
           </div>
         </div>,

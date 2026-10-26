@@ -1010,6 +1010,33 @@ test('Show 5 more reviews only the next five companies and finishes without revi
 });
 
 
+test('discovery backfills rejected domains toward five choices and preserves a real exhausted remainder',async()=>{
+ const f=fixture(),productId=randomUUID(),caseId=randomUUID(),reviewed=[];
+ f.tables.requirements=[{id:productId,inquiry_id:f.inquiryId,type:'product',value:'Alpha sensor',source_ref:'item:0',status:'confirmed'},{id:randomUUID(),inquiry_id:f.inquiryId,type:'model_part_number',value:'TS-100',source_ref:'item:0',status:'confirmed'},{id:randomUUID(),inquiry_id:f.inquiryId,type:'specification',value:'Brand: Alpha',source_ref:'item:0',status:'confirmed'}];
+ f.tables.research_cases=[{id:caseId,inquiry_id:f.inquiryId,status:'completed',scope:{}}];
+ f.tables.research_results=Array.from({length:12},(_,i)=>({id:randomUUID(),research_case_id:caseId,source_url:'https://company'+i+'.example/products',source_name:'Company '+i+' Ltd',finding:i<3?'Industrial products and generic contact information':'Alpha TS-100 manufacturer catalog sales contact',structured_data:{arat_requirement_id:productId},evidence:{query:'Alpha TS-100 Turkey'}}));
+ const base=f.load('@/lib/ai/agent-runner');
+ f.mock('@/lib/ai/research/provider',{getResearchProvider:()=>null});
+ f.mock('@/lib/ai/research/supplier-catalog',{supplierCatalogModels:async()=>[]});
+ f.mock('@/lib/ai/agent-runner',{runAgent:async(ctx,input,schema)=>{
+   if(ctx.agentId!=='supplier_discovery')return base.runAgent(ctx,input,schema);
+   reviewed.push(...input.research_results.map(r=>r.source_url));
+   return {output:schema.parse({candidates:input.research_results.map(r=>({name:r.source_name,sourceUrl:r.source_url,website:new URL(r.source_url).origin,country:'Turkey',requirementId:productId,matchType:'exact_product',evidence:[r.finding]}))}),provider:'test',model:'test'};
+ }});
+ const queue=f.load('@/lib/ai/orchestrator'),workflow=f.load('@/lib/ai/workflow'),progress=f.load('@/lib/ai/supplier-review');
+ await queue.enqueueWorkflow(f.inquiryId,'supplier_discovery');
+ const first=await workflow.processQueuedWorkflow(2,f.inquiryId);
+ assert.equal(first.results[0].outcome,'supplier_backfill_queued');assert.equal(f.tables.supplier_candidates.length,2);
+ const checkpoint=reviewed.length;
+ await workflow.processQueuedWorkflow(2,f.inquiryId);
+ assert.equal(f.tables.supplier_candidates.length,7);
+ assert.ok(reviewed.slice(checkpoint).every(url=>!url.match(/company[0-4]\.example/)),'Rejected first-page domains must not be reviewed again');
+ assert.equal((await progress.getSupplierReviewProgress(f.inquiryId))[productId].limit,5,'Raw domain cursor is not the display target');
+ await workflow.reviewNextSupplierBatch(f.inquiryId,productId);
+ assert.equal(f.tables.supplier_candidates.length,9,'Only nine supported suppliers exist; do not fabricate a tenth');
+ assert.equal((await progress.getSupplierReviewProgress(f.inquiryId))[productId].hasMore,false);
+});
+
 test('Siemens prefers Arya without excluding external suppliers or bypassing research',async()=>{
  const f=fixture(),productId=randomUUID();
  const rows=[{id:productId,inquiry_id:f.inquiryId,type:'product',value:'Siemens PLC CPU',source_ref:'item:0',status:'confirmed'},{id:randomUUID(),inquiry_id:f.inquiryId,type:'specification',value:'Brand: Siemens',source_ref:'item:0',status:'confirmed'}];

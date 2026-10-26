@@ -6,6 +6,7 @@ export function supplierSearchQueries(item:{product:string;brand?:string;model?:
   const queries:string[]=[];
   if(identity){
     queries.push(identity+' official product',identity+' manufacturer',identity+' supplier Turkey',identity+' distributor Europe',identity+' supplier');
+    queries.push(identity+' Türkiye tedarikçi distribütör',identity+' Türkiye stok satış');
   }
   if(brand)queries.push(brand+' authorized distributor Turkey',brand+' official distributor Europe',brand+' worldwide distributor locator official');
   if(description)queries.push([identity,description,'supplier'].filter(Boolean).join(' '),[brand,description,'supplier Turkey'].filter(Boolean).join(' '));
