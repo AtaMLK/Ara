@@ -1,8 +1,10 @@
 import {T} from '@/components/language';
 import Link from 'next/link';
 import CustomerInquiryForm from './customer-inquiry-form';
+import { requireNewCustomerInquiryPageAccess } from '@/lib/ai/guards';
 
-export default function NewCustomerInquiryPage() {
+export default async function NewCustomerInquiryPage() {
+  await requireNewCustomerInquiryPageAccess();
   return (
     <main className="portal-shell">
       <header className="topbar">

@@ -48,4 +48,10 @@ Product and supplier research uses Serper's Google Search API. The key is server
 
 ## Status
 
-Project initialized. Application implementation follows the approved ARAT specification.
+The procurement workflow is implemented and under supervised delivery review.
+See [delivery readiness, verification and remaining release gates](docs/stage7-delivery-readiness.md).
+
+Run `npm ci` then `npm run check:delivery` for lint, TypeScript, integration tests,
+component browser checks and production build. Browser checks currently use
+Microsoft Edge on Windows. See the handoff document for database checks and the
+separate controlled live acceptance required before production rollout.

@@ -118,7 +118,7 @@ export function RfqActions(props: Props) {
             {props.supplierReply && (
               <div className="rfq-notification-email">
                 <div className="rfq-notification-summary-head"><Mail size={15} /><strong><T>Supplier email</T></strong></div>
-                <div className="muted"><DateText value={props.supplierReply.received_at ?? props.supplierNotification?.created_at ?? Date.now()} format="datetime"/></div>
+                <div className="muted"><DateText value={props.supplierReply.received_at ?? props.supplierNotification?.created_at ?? props.createdAt} format="datetime"/></div>
                 <div className="rfq-notification-email-subject">{props.supplierReply.subject ||<T>{'(No subject)'}</T>}</div>
                 <div className="rfq-notification-email-body">{props.supplierReply.body ||<T>{'No message body recorded.'}</T>}</div>
               </div>

@@ -1,25 +1,24 @@
 'use client';
 
 import {T,Localized} from '@/components/language';
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
+
+function subscribeToTheme(onChange: () => void) {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  return () => observer.disconnect();
+}
+const themeSnapshot = () => document.documentElement.dataset.theme === 'dark';
+const serverThemeSnapshot = () => false;
 
 export default function ThemeToggle() {
-  const [dark, setDark] = useState(false);
-
-  useEffect(() => {
-    const isDark = document.documentElement.dataset.theme === 'dark';
-    setDark(isDark);
-    const observer=new MutationObserver(()=>setDark(document.documentElement.dataset.theme==='dark'));
-    observer.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
-    return ()=>observer.disconnect();
-  }, []);
+  const dark = useSyncExternalStore(subscribeToTheme, themeSnapshot, serverThemeSnapshot);
 
   function toggle() {
     const next = document.documentElement.dataset.theme !== 'dark';
     document.documentElement.dataset.theme = next ? 'dark' : 'light';
     try{window.localStorage.setItem('arat-theme', next ? 'dark' : 'light');}catch{}
     document.cookie=`arat-theme=${next?'dark':'light'}; Path=/; Max-Age=31536000; SameSite=Lax`;
-    setDark(next);
   }
 
   return (

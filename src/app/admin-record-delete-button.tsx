@@ -1,7 +1,7 @@
 'use client';
 
 import {T,Localized,useI18n} from '@/components/language';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { X, AlertTriangle, Loader2, Trash2 } from 'lucide-react';
@@ -17,12 +17,12 @@ type ConfirmDialogProps = {
   onConfirm: () => void;
 };
 
-function ConfirmDialog({ open, title, description, loading, onCancel, onConfirm }: ConfirmDialogProps) {
-  const [mounted, setMounted] = useState(false);
+const subscribeToHydration = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+function ConfirmDialog({ open, title, description, loading, onCancel, onConfirm }: ConfirmDialogProps) {
+  const mounted = useSyncExternalStore(subscribeToHydration, clientSnapshot, serverSnapshot);
 
   useEffect(() => {
     if (!open || !mounted) return;

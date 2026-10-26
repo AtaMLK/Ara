@@ -77,3 +77,16 @@ export async function requireCustomerInquiryPageAccess(inquiryId:string,returnPa
   try{return await requireCustomerInquiryAccess(inquiryId);}
   catch(error){if(error instanceof ToolError&&(error.code==='AUTHORIZATION'||error.code==='NOT_FOUND'))notFound();throw error;}
 }
+
+export async function requireNewCustomerInquiryPageAccess() {
+  const db = await createSupabaseServerClient();
+  const { data: { user } } = await db.auth.getUser();
+  if (!user) redirect('/login?next=' + encodeURIComponent('/customer/inquiries/new'));
+  const { data: profile } = await db.from('profiles').select('role,status').eq('user_id', user.id).single();
+  if (profile?.role === 'admin' && profile.status === 'active') redirect('/inquiries');
+  try { return await requireCustomerAccess(); }
+  catch (error) {
+    if (error instanceof ToolError && error.code === 'AUTHORIZATION') notFound();
+    throw error;
+  }
+}

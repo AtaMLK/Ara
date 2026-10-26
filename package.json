@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test:supplier-workflow": "node --test tests/supplier-workflow.test.cjs",
     "test:worker-recovery": "node --test tests/request-deadline.test.cjs",
@@ -16,7 +16,11 @@
     "test:supplier-search": "node --test tests/supplier-search-policy.test.cjs",
     "test:supplier-ui": "node tests/supplier-policy-ui.cjs",
     "test:quote-ui": "node tests/quote-ui.cjs",
-    "test:quotation-documents": "node --test tests/quotation-document.test.cjs"
+    "test:quotation-documents": "node --test tests/quotation-document.test.cjs",
+    "test": "node --test tests/*.test.cjs",
+    "check:delivery": "npm run lint && npm run typecheck && npm test && npm run test:inquiry-ui && npm run test:supplier-ui && npm run test:rfq-history-ui && npm run test:quote-ui && npm run build",
+    "test:inquiry-ui": "node tests/inquiry-submission-ui.cjs",
+    "test:production-smoke": "node tests/production-smoke.cjs"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "1.1.1",
@@ -24,16 +28,16 @@
     "@supabase/supabase-js": "latest",
     "imapflow": "latest",
     "lucide-react": "latest",
-    "mailparser": "latest",
-    "next": "latest",
-    "nodemailer": "latest",
+    "mailparser": "3.12.4",
+    "next": "16.4.3",
+    "nodemailer": "10.2.1",
     "pdf-lib": "1.17.1",
     "react": "latest",
     "react-dom": "latest",
     "sonner": "latest",
     "unpdf": "1.8.1",
-    "xlsx": "latest",
-    "zod": "latest"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@fontsource/noto-sans": "5.3.0",
@@ -43,6 +47,8 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "eslint": "10.13.0",
+    "eslint-config-next": "16.4.3",
     "typescript": "latest"
   }
 }
