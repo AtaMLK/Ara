@@ -2,6 +2,7 @@
 
 import {T,Localized,DateText} from '@/components/language';
 import { useState } from 'react';
+import SupplierSenderNotice from './supplier-sender-notice';
 import { Mail, X } from 'lucide-react';
 import {CustomerRequestMessage} from './customer-request-message';
 
@@ -110,6 +111,7 @@ export function RfqConversationModal({
                     </div>
                     <span className="muted"><DateText value={when} format="datetime"/></span>
                   </div>
+                  {message.direction==='incoming' && metaOf(message).type==='supplier_rfq_reply' && <SupplierSenderNotice metadata={message.metadata}/>}
                   {open && <div className="rfq-conversation-content">{bodyText(message.body)}</div>}
                   {!open && <div className="rfq-conversation-preview">{bodyText(message.body).replace(/\s+/g, ' ').slice(0, 180)}</div>}
                 </button>

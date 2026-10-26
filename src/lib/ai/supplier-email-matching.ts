@@ -35,10 +35,20 @@ function extractMessageIds(value: string | string[] | null | undefined) {
     .filter((item): item is string => Boolean(item));
 }
 
+type MatchedRfq = {id:string;inquiry_id:string;supplier_id:string;rfq_code:string|null;subject:string|null;status:string;created_at:string;recipient_email?:string|null};
+function matchedSupplierReply(rfq:MatchedRfq,senderEmail:string,matchMethod='known_supplier_rfq') {
+  const originalRecipientEmail=rfq.recipient_email ? extractEmailAddress(rfq.recipient_email) : null;
+  return {matched:true as const,supplierId:rfq.supplier_id,inquiryId:rfq.inquiry_id,rfq,matchMethod,
+    senderEmail,originalRecipientEmail,senderChanged:Boolean(originalRecipientEmail && originalRecipientEmail!==senderEmail),
+    senderDomainMatch:Boolean(originalRecipientEmail && originalRecipientEmail.split('@')[1]===senderEmail.split('@')[1])};
+}
+
 export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
   const supabase = createSupabaseAdminClient();
   const senderEmail = extractEmailAddress(input.sender);
   const subject = normalizeSubject(input.subject);
+  const references=new Set((input.subject.match(/\bRFQ-\d{8}-[A-Z0-9]{6,12}\b/gi) ?? []).map(value=>value.toLowerCase()));
+  if(references.size>1) return {matched:false as const,reason:'multiple_rfq_references' as const};
 
   const { data: emailRows, error: emailError } = await supabase
     .from('supplier_emails')
@@ -58,23 +68,21 @@ export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
     ...(contactRows ?? []).map((row) => row.supplier_id),
   ])];
 
+  // A unique RFQ/thread identifies the company even when the reply mailbox is
+  // already stored under another supplier record for that same company.
+  const alternateMatch = await matchAlternateSupplierMailbox(input, senderEmail);
+  if (alternateMatch) return alternateMatch;
   if (supplierIds.length === 0) {
-    const alternateMatch = await matchAlternateSupplierMailbox(input, senderEmail);
-    if (alternateMatch) return alternateMatch;
-  }
-  if (supplierIds.length !== 1) {
     return {
       matched: false as const,
-      reason: supplierIds.length === 0 ? 'supplier_not_found' as const : 'multiple_supplier_identities' as const,
+      reason: 'supplier_not_found' as const,
     };
   }
 
-  const supplierId = supplierIds[0];
-
   const { data: rfqs, error: rfqError } = await supabase
     .from('rfqs')
-    .select('id,inquiry_id,supplier_id,rfq_code,subject,status,created_at')
-    .eq('supplier_id', supplierId)
+    .select('id,inquiry_id,supplier_id,rfq_code,subject,status,created_at,recipient_email')
+    .in('supplier_id', supplierIds)
     .in('status', ['sent', 'completed'])
     .order('created_at', { ascending: false })
     .limit(50);
@@ -91,7 +99,7 @@ export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
     const matches = rfqs.filter((rfq) => String(rfq.rfq_code ?? '').toLowerCase() === rfqCodeMatches);
     if (matches.length === 1) {
       const rfq = matches[0];
-      return { matched: true as const, supplierId, inquiryId: rfq.inquiry_id, rfq };
+      return matchedSupplierReply(rfq,senderEmail);
     }
     if (matches.length > 1) {
       return { matched: false as const, reason: 'multiple_rfq_token_matches' as const };
@@ -141,7 +149,7 @@ export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
     if (matchedRfqIds.length === 1) {
       const rfq = rfqs.find((item) => item.id === matchedRfqIds[0]);
       if (rfq) {
-        return { matched: true as const, supplierId, inquiryId: rfq.inquiry_id, rfq };
+        return matchedSupplierReply(rfq,senderEmail);
       }
     }
 
@@ -155,12 +163,15 @@ export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
 
   if (matches.length === 1) {
     const rfq = matches[0];
-    return { matched: true as const, supplierId, inquiryId: rfq.inquiry_id, rfq };
+    return matchedSupplierReply(rfq,senderEmail);
   }
 
   if (matches.length > 1) {
     return { matched: false as const, reason: 'multiple_rfq_subject_matches' as const };
   }
+
+  // A shared mailbox needs a unique reference, thread or exact subject.
+  if (supplierIds.length > 1) return {matched:false as const,reason:'multiple_supplier_identities' as const};
 
   // 4) If the supplier has exactly one recent sent RFQ, safely use it as a fallback.
   // This covers suppliers who reply with a completely rewritten subject while avoiding
@@ -172,7 +183,7 @@ export async function findSupplierRFQForEmail(input: SupplierEmailMatchInput) {
 
   if (recentRfqs.length === 1) {
     const rfq = recentRfqs[0];
-    return { matched: true as const, supplierId, inquiryId: rfq.inquiry_id, rfq };
+    return matchedSupplierReply(rfq,senderEmail);
   }
 
   return { matched: false as const, reason: 'no_unique_rfq_match' as const };
@@ -215,7 +226,7 @@ async function matchAlternateSupplierMailbox(input: SupplierEmailMatchInput, sen
   const knownAddresses = [rfq.recipient_email,...(emails.data ?? []).map(row => row.email),...(contacts.data ?? []).map(row => row.email)];
   const belongsToCompany = knownAddresses.some(address => typeof address === 'string' && extractEmailAddress(address).split('@')[1] === senderDomain);
   if (!belongsToCompany) return null;
-  return { matched: true as const, supplierId: rfq.supplier_id, inquiryId: rfq.inquiry_id, rfq, matchMethod: 'alternate_sender_company_domain_and_rfq_reference' as const };
+  return matchedSupplierReply(rfq,senderEmail,extractEmailAddress(rfq.recipient_email ?? '')===senderEmail ? 'known_supplier_rfq' : 'alternate_sender_company_domain_and_rfq_reference');
 }
 
 export { extractEmailAddress };

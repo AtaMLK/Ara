@@ -953,3 +953,57 @@ test('preferred Siemens routing preserves existing external supplier website and
  await f.load('@/lib/ai/supplier-brand-routes').reuseVerifiedBrandSuppliers(f.load('@/lib/supabase/admin').createSupabaseAdminClient(),f.inquiryId,requirements);
  assert.equal(JSON.stringify({...candidate,match_evidence:{...candidate.match_evidence,preferred_brand_supplier:undefined}}),before);
 });
+
+
+test('shared supplier mailbox uses a unique RFQ reference instead of rejecting duplicate identities',async()=>{
+ const {f,supplierId,rfqId}=supplierReplyFixture();const otherId=randomUUID();
+ f.tables.supplier_emails.push({supplier_id:otherId,email:'info@supplier.example',status:'active'});
+ const matcher=f.load('@/lib/ai/supplier-email-matching');
+ const result=await matcher.findSupplierRFQForEmail({sender:'info@supplier.example',subject:'Re: RFQ-20261014-ABCDEF'});
+ assert.equal(result.matched,true);assert.equal(result.supplierId,supplierId);assert.equal(result.rfq.id,rfqId);
+ assert.equal((await matcher.findSupplierRFQForEmail({sender:'info@supplier.example',subject:'Price offer'})).matched,false);
+ f.tables.rfqs.push({...f.tables.rfqs[0],id:randomUUID(),supplier_id:otherId});
+ assert.equal((await matcher.findSupplierRFQForEmail({sender:'info@supplier.example',subject:'Re: RFQ-20261014-ABCDEF'})).matched,false);
+});
+
+
+test('alternate company mailbox is flagged with original RFQ recipient and leaves contacts unchanged',async()=>{
+ const {f,supplierId,rfqId}=supplierReplyFixture();
+ f.tables.rfqs[0].recipient_email='inof@supplier.example';
+ f.mock('@/lib/ai/workflow',{continueInquiryWorkflow:async()=>({outcome:'queued'})});
+ const input={providerMessageId:'alternate-accounting',from:'Accounts <accountin@supplier.example>',to:['purchase@example.test'],subject:'Re: RFQ-20261014-ABCDEF',text:'Our offer is EUR 100.',provider:'test'};
+ const emailsBefore=JSON.stringify(f.tables.supplier_emails);
+ const inbound=f.load('@/lib/email/inbound');
+ const result=await inbound.processInboundEmail(input);assert.equal(result.matched,true);assert.equal(result.rfqId,rfqId);
+ const row=f.tables.communications.find(row=>row.provider_message_id===input.providerMessageId);
+ assert.equal(row.supplier_id,supplierId);assert.equal(row.metadata.from,'accountin@supplier.example');assert.equal(row.metadata.rfq_recipient_email,'inof@supplier.example');
+ assert.equal(row.metadata.sender_changed,true);assert.equal(row.metadata.sender_domain_match,true);
+ assert.equal(JSON.stringify(f.tables.supplier_emails),emailsBefore);
+ assert.equal(f.tables.ai_alerts.filter(row=>row.alert_type==='SUPPLIER_REPLY_DIFFERENT_MAILBOX').length,1);
+ await inbound.processInboundEmail(input);
+ assert.equal(f.tables.ai_alerts.filter(row=>row.alert_type==='SUPPLIER_REPLY_DIFFERENT_MAILBOX').length,1);
+ assert.equal(f.sendCount(),0);
+});
+
+test('known alternate address on another supplier record still resolves the uniquely referenced company RFQ',async()=>{
+ const {f,supplierId}=supplierReplyFixture();
+ f.tables.supplier_emails.push({supplier_id:randomUUID(),email:'accountin@supplier.example',status:'active'});
+ const match=await f.load('@/lib/ai/supplier-email-matching').findSupplierRFQForEmail({sender:'accountin@supplier.example',subject:'Re: RFQ-20261014-ABCDEF'});
+ assert.equal(match.matched,true);assert.equal(match.supplierId,supplierId);assert.equal(match.senderChanged,true);
+});
+
+test('sender notice distinguishes original sender, another company mailbox, and unrelated domains',()=>{
+ const sender=fixture().load('@/lib/email/supplier-sender').supplierReplySender;
+ assert.equal(sender({from:'sales@example.com',rfq_recipient_email:'sales@example.com'}).changed,false);
+ const changed=sender({from:'accountin@example.com',rfq_recipient_email:'inof@example.com',sender_changed:true});
+ assert.equal(changed.changed,true);assert.equal(changed.sameDomain,true);assert.equal(changed.originalRecipient,'inof@example.com');
+ assert.equal(sender({from:'accountin@example.com.evil.test',rfq_recipient_email:'inof@example.com',sender_changed:true}).sameDomain,false);
+ assert.equal(sender(null).changed,false);
+});
+
+
+test('two conflicting RFQ references cannot select a supplier for a different reply mailbox',async()=>{
+ const {f}=supplierReplyFixture();const matcher=f.load('@/lib/ai/supplier-email-matching');
+ const match=await matcher.findSupplierRFQForEmail({sender:'sales@supplier.example',subject:'RFQ-20261014-ABCDEF and RFQ-20261014-OTHER1'});
+ assert.equal(match.matched,false);assert.equal(match.reason,'multiple_rfq_references');
+});

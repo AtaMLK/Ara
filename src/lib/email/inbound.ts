@@ -652,13 +652,16 @@ export async function processInboundEmail(email: InboundEmail) {
     metadata: {
       provider: email.provider,
       message_id: email.messageId ?? null,
-      from: extractCustomerEmail(email.from),
+      from: supplierMatch.senderEmail,
       type: 'supplier_rfq_reply',
       to: email.to,
       cc: email.cc ?? [],
       in_reply_to: email.inReplyTo ?? null,
       references: email.references ?? [],
-      match_method: 'matchMethod' in supplierMatch ? supplierMatch.matchMethod : 'known_supplier_rfq',
+      match_method: supplierMatch.matchMethod,
+      sender_changed: supplierMatch.senderChanged,
+      rfq_recipient_email: supplierMatch.originalRecipientEmail,
+      sender_domain_match: supplierMatch.senderDomainMatch,
       attachment_count: email.attachments?.length ?? 0,
     },
   };
@@ -671,6 +674,11 @@ export async function processInboundEmail(email: InboundEmail) {
   if (communicationError || !communication) {
     if (communicationError?.code === '23505') return { ok: true, duplicate: true };
     throw new ToolError('CONFLICT', communicationError?.message ?? 'Could not store supplier email');
+  }
+
+  if (supplierMatch.senderChanged) {
+    const {error:senderAlertError}=await supabase.from('ai_alerts').insert({inquiry_id:supplierMatch.inquiryId,record_type:'communication',record_id:communication.id,agent_id:'email_response',alert_type:'SUPPLIER_REPLY_DIFFERENT_MAILBOX',message:`Supplier replied from ${supplierMatch.senderEmail}; RFQ was sent to ${supplierMatch.originalRecipientEmail}. Reply matched to ${supplierMatch.rfq.rfq_code}. The original supplier contact was not replaced.`,priority:'normal'});
+    if(senderAlertError) throw new ToolError('TRANSIENT',senderAlertError.message);
   }
 
   const { data: inquiryContext } = await supabase
@@ -692,7 +700,7 @@ export async function processInboundEmail(email: InboundEmail) {
     inquiryId: supplierMatch.inquiryId,
     rfqId: supplierMatch.rfq.id,
     communicationId: communication!.id,
-    rfqCode: supplierMatch.rfq.rfq_code,
+    rfqCode: supplierMatch.rfq.rfq_code ?? supplierMatch.rfq.id,
     inquiryReference: inquiryContext?.reference ?? 'Inquiry',
     supplierId:supplierMatch.supplierId,
     supplierName: supplierRecord.data?.legal_name ?? 'Supplier',

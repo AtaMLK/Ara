@@ -1,4 +1,5 @@
 import {T,DateText} from '@/components/language';
+import SupplierSenderNotice from '@/components/supplier-sender-notice';
 import {readableRequest} from '@/lib/ui/inquiry-items';
 import AutomationIssues from './automation-issues';
 import AutomationRefresh from '@/components/automation-refresh';
@@ -130,6 +131,7 @@ export default async function InquiryDetailPage({ params }: Props) {
                   </div>
                   <div className="email-center-subject">{email.subject ||<T>{'(No subject)'}</T>}</div>
                   <div className="email-center-meta"><T>{incoming ? 'Received' : 'Sent'}</T> · {email.channel}</div>
+                  {incoming && type==='supplier_rfq_reply' && <SupplierSenderNotice metadata={metadata}/>}
                   <div className="email-center-body">{readableRequest(email.body)||<T>{'No message body recorded.'}</T>}</div>
                   {(() => {
                     const aiAnalysis = metadata.ai_analysis && typeof metadata.ai_analysis === 'object' && !Array.isArray(metadata.ai_analysis)

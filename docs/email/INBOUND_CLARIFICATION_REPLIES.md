@@ -57,3 +57,10 @@ The clarification email explicitly tells the customer they can either:
 - Open the ARAT request and answer in the portal.
 
 The two channels update the same requirement and clarification record.
+
+
+## Supplier replies from another mailbox
+
+An RFQ sent to one company mailbox may receive a reply from another mailbox on the same exact company domain. Match a new mailbox only with a unique RFQ reference or existing conversation headers plus the known company domain. A shared public email domain or a company domain alone is insufficient. Conflicting RFQ references remain unmatched.
+
+Persist the actual sender, original RFQ recipient, match method and sender-change flag with the communication. Show a different-mailbox indicator in the Admin Email Center and RFQ conversation, and record an Admin alert. Do not replace the supplier's primary email or promote the new mailbox into a verified contact automatically. Duplicate processing must not duplicate responses or sender-change alerts.

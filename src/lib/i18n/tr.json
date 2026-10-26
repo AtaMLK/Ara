@@ -748,5 +748,10 @@
   "Describe what you need. Enter items, paste a list, or upload files with quantities.": "İhtiyacınızı açıklayın. Ürünleri girin, liste yapıştırın veya miktarları içeren dosyalar yükleyin.",
   "Paste your request or item list before submitting.": "Göndermeden önce talebinizi veya ürün listenizi yapıştırın.",
   "Upload at least one file containing your request.": "Talebinizi içeren en az bir dosya yükleyin.",
-  "The request is too long. Upload a file or shorten the item descriptions.": "Talep çok uzun. Dosya yükleyin veya ürün açıklamalarını kısaltın."
+  "The request is too long. Upload a file or shorten the item descriptions.": "Talep çok uzun. Dosya yükleyin veya ürün açıklamalarını kısaltın.",
+  "Reply from: ": "Yanıt gönderen: ",
+  "Different supplier mailbox": "Farklı tedarikçi e-posta adresi",
+  "Same company domain": "Aynı şirket alan adı",
+  "RFQ sent to: ": "Teklif talebi gönderilen: ",
+  "Reply linked to this RFQ. Original supplier contact unchanged.": "Yanıt bu teklif talebine bağlandı. Asıl tedarikçi iletişim adresi değiştirilmedi."
 }
