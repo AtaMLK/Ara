@@ -73,7 +73,7 @@ export async function sendSupplierOrderAction(orderId:string,fingerprint:string)
   let result;
   try{
     const html=message.html;
-    result=await getEmailProvider().send({from,to:[order.recipient_email],subject:order.subject,text:order.body,html,generatedAttachments:[{fileName:order.reference+'.pdf',mimeType:'application/pdf',content:pdfBytes}],idempotencyKey:'supplier-order-'+order.id});
+    result=await getEmailProvider().send({from,to:[order.recipient_email],subject:order.subject,text:order.body,html,generatedAttachments:[{fileName:order.reference+'.pdf',mimeType:'application/pdf',content:pdfBytes}],inquiryId:order.inquiry_id,idempotencyKey:'supplier-order-'+order.id});
   }catch{
     // SMTP can fail after accepting a message. Never automatically retry an
     // order, even with the same header: SMTP has no idempotency guarantee.

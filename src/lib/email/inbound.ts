@@ -372,7 +372,7 @@ async function analyzeSupplierEmailAndNotify(input: {
     if(claimError)throw new Error('Supplier requirement reply could not be recorded.');
     if(!claim)return;
     try{
-      const sent=await getEmailProvider().send({from:process.env.EMAIL_FROM||process.env.SMTP_FROM||process.env.SMTP_USER||'',to:[input.supplierEmail],subject:'Re: '+input.subject.replace(/^Re:\s*/i,''),...reply,idempotencyKey:'supplier-requirement-reply:'+input.communicationId});
+      const sent=await getEmailProvider().send({from:process.env.EMAIL_FROM||process.env.SMTP_FROM||process.env.SMTP_USER||'',to:[input.supplierEmail],subject:'Re: '+input.subject.replace(/^Re:\s*/i,''),...reply,inquiryId:input.inquiryId,idempotencyKey:'supplier-requirement-reply:'+input.communicationId});
       const {error:recordError}=await supabase.from('communications').insert({inquiry_id:input.inquiryId,supplier_id:input.supplierId,rfq_id:input.rfqId,direction:'outgoing',channel:'email',subject:'Re: '+input.subject.replace(/^Re:\s*/i,''),body:reply.html,provider_message_id:sent.providerMessageId,thread_id:sent.threadId,sent_at:sent.sentAt,metadata:{type:'supplier_requirement_reply',language:supplierLanguage,source_communication_id:input.communicationId}});
       if(recordError)throw new Error('Supplier reply delivery log could not be saved.');
       await supabase.from('communications').update({metadata:{...metadata,ai_analysis:analysisMetadata,requirement_reply_status:'sent'}}).eq('id',input.communicationId);
@@ -453,7 +453,7 @@ async function analyzeSupplierEmailAndNotify(input: {
       html: customerHtml,
       text: customerHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
-      idempotencyKey: `supplier-clarification:${input.communicationId}`,
+      inquiryId:input.inquiryId,idempotencyKey: `supplier-clarification:${input.communicationId}`,
     });
 
     const {error:questionLogError}=await supabase.from('communications').insert({

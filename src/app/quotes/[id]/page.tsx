@@ -1,4 +1,5 @@
 import {T} from '@/components/language';
+import {EmailDeliveryStatus} from '@/components/email-delivery-status';
 import {SupplierOrders} from './supplier-orders';
 import AutomationRefresh from '@/components/automation-refresh';
 import {createSupabaseAdminClient} from '@/lib/supabase/admin';
@@ -25,6 +26,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
   return (
     <>
       <AutomationRefresh enabled={['draft','pending_approval','sent'].includes(quote.status)}/>
+      <EmailDeliveryStatus idempotencyKey={'customer-quote-'+quote.id+'-r'+quote.revision_number}/>
       <header className="topbar">
         <div>
           <Link className="back-link" href="/quotes"><T>← Quotes</T></Link>

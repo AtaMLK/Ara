@@ -121,6 +121,8 @@ export async function heartbeatExecution(executionId:string,leaseToken:string){
 }
 
 export async function expireStaleExecutions(inquiryId?:string){
+ const {error:emailError}=await createSupabaseAdminClient().rpc('expire_stale_email_dispatches',{p_inquiry_id:inquiryId??null});
+ if(emailError) throw new ToolError('TRANSIENT','Interrupted email deliveries could not be checked');
  const {data,error}=await createSupabaseAdminClient().rpc('expire_stale_ai_executions',{p_inquiry_id:inquiryId??null});
  if(error) throw new ToolError('TRANSIENT','Interrupted workflow executions could not be checked');
  return Number(data);

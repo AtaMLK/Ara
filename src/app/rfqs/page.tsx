@@ -3,6 +3,7 @@ import {readableRequest} from '@/lib/ui/inquiry-items';
 import { listRfqs } from '@/lib/data/admin';
 import { ApproveRfqButton, SendRfqButton } from './approve-button';
 import { RfqActions } from './rfq-actions';
+import {EmailDeliveryStatus} from '@/components/email-delivery-status';
 
 type Props = { searchParams: Promise<{ q?: string; status?: string }> };
 
@@ -23,6 +24,7 @@ export default async function RfqsPage({ searchParams }: Props) {
           <div className="muted"><T>Supplier quotation requests and outgoing email history</T></div>
         </div>
       </header>
+      <EmailDeliveryStatus keyPrefix="rfq-"/>
 
       <form className="filters">
         <Localized as="input" name="q" defaultValue={params.q} placeholder="Search RFQ code or subject…" />

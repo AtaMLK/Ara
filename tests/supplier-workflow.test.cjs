@@ -589,7 +589,7 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
     }
   }
   const database = { from: table => new Query(table),rpc:async name=>{
-    if(name==='expire_stale_ai_executions')return {data:0,error:null};
+    if(name==='expire_stale_ai_executions'||name==='expire_stale_email_dispatches')return {data:0,error:null};
     throw new Error('Unexpected RPC: '+name);
   } };
   const provider = { search: async ({ query }) => {

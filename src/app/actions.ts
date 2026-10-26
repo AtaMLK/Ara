@@ -785,7 +785,7 @@ Request reference: ${inquiry.reference}`;
       subject,
       html,
       text,
-      idempotencyKey: `clarification-${clarification.id}`,
+      idempotencyKey: `clarification-${clarification.id}`, inquiryId:inquiry.id,
     });
 
     const adminSupabase = createSupabaseAdminClient();
@@ -1093,7 +1093,7 @@ export async function sendRfqAction(rfqId: string) {
       subject: rfq.subject,
       html: `<!doctype html><html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#17202a"><p>${escapeHtml(rfq.body).replaceAll('\\n','<br />')}</p></body></html>`,
       text: rfq.body,
-      idempotencyKey: `rfq-${rfq.id}`,
+      idempotencyKey: `rfq-${rfq.id}`, inquiryId:rfq.inquiry_id,
     });
 
     const { error: communicationError } = await adminSupabase.from('communications').insert({
@@ -1986,7 +1986,7 @@ export async function approveCustomerQuoteAction(quoteId: string) {
       subject,
       html,
       text,
-      idempotencyKey,
+      idempotencyKey, inquiryId:quote.inquiry_id,
       generatedAttachments:[{fileName:'Quotation-'+loaded.document.reference+'.pdf',mimeType:'application/pdf',content:pdf}],
     });
 

@@ -1,4 +1,5 @@
 import {T,DateText} from '@/components/language';
+import {EmailDeliveryStatus} from '@/components/email-delivery-status';
 import SupplierSenderNotice from '@/components/supplier-sender-notice';
 import {readableRequest} from '@/lib/ui/inquiry-items';
 import AutomationIssues from './automation-issues';
@@ -93,6 +94,7 @@ export default async function InquiryDetailPage({ params }: Props) {
         </div>
         <div className="topbar-actions"><span className={`badge status-badge status-${inquiry.status}`}>{progress.label}</span><InquiryEditForm inquiryId={inquiry.id} title={inquiry.title} description={inquiry.description ?? ""} version={inquiry.current_version} /></div>
       </header>
+      <EmailDeliveryStatus inquiryId={id}/>
 
       <InquiryProcess steps={progress.steps} eyebrow="PROCUREMENT PROCESS" />
       {!['converted','closed','no_suitable_supplier'].includes(inquiry.status)&&<AutomationIssues inquiryId={id} failures={(executionsResult.data??[]).filter(execution=>execution.status==='failed')}

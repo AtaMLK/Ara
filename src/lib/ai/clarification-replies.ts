@@ -157,7 +157,7 @@ async function resolveSupplierClarificationAnswer(input: {
       to: [supplierEmail], subject, html,
       text,
       from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
-      idempotencyKey: `clarification-answer:${input.clarification.id}`,
+      inquiryId:input.inquiryId,idempotencyKey: `clarification-answer:${input.clarification.id}`,
     });
     await supabase.from('communications').insert({
       inquiry_id: input.inquiryId, supplier_id: rfq.supplier_id, rfq_id: rfq.id,
@@ -436,7 +436,7 @@ export async function applyCustomerClarificationAnswer(input: {
           const provider = getEmailProvider();
           const subject = rfq.subject?.startsWith('Re:') ? rfq.subject : `Re: ${rfq.subject ?? rfq.rfq_code}`;
           const html = `<p>Merhaba,</p><p>${escapeHtml(resolution.supplierReply)}</p><p>İyi çalışmalar,<br/>Arya Automation</p>`;
-          const sent = await provider.send({ to: [supplierEmail], subject, html, text: `Merhaba,\\n\\n${resolution.supplierReply}\\n\\nİyi çalışmalar,\\nArya Automation`, from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com', idempotencyKey: `clarification-answer:${input.clarificationId}` });
+          const sent = await provider.send({ to: [supplierEmail], subject, html, text: `Merhaba,\\n\\n${resolution.supplierReply}\\n\\nİyi çalışmalar,\\nArya Automation`, from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com', inquiryId:input.inquiryId,idempotencyKey: `clarification-answer:${input.clarificationId}` });
           await supabase.from('communications').insert({ inquiry_id: input.inquiryId, supplier_id: rfq.supplier_id, rfq_id: rfq.id, direction: 'outgoing', channel: 'email', provider_message_id: sent.providerMessageId ?? null, thread_id: sent.threadId ?? null, subject, body: html, sent_at: sent.sentAt ?? new Date().toISOString(), metadata: { type: 'customer_clarification_reply_to_supplier', clarification_id: clarification.id, source_communication_id: clarification.source_communication_id, agent: 'ARAT Agent' } });
           const { data: admins } = await supabase.from('profiles').select('user_id').eq('role','admin').eq('status','active');
           if (admins?.length) await supabase.from('notifications').insert(admins.map((admin) => ({ user_id: admin.user_id, category: 'supplier', priority: 'normal', title: 'ARAT Agent replied to supplier', message: `Customer clarification was verified and a clean response was sent to ${rfq.rfq_code}.`, record_type: 'rfq', record_id: rfq.id, action_url: `/inquiries/${input.inquiryId}#email-center` })));
