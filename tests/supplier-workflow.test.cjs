@@ -966,6 +966,22 @@ test('shared supplier receives one reviewed RFQ with every selected item and one
  assert.equal(sent[0].html,previews[0].html);
 });
 
+test('uncertain grouped RFQ preserves its records and cannot be bypassed through a fresh preview',async()=>{
+ const f=fixture({commonSupplier:true});let calls=0;
+ await f.load('@/lib/ai/orchestrator').enqueueWorkflow(f.inquiryId,'document');
+ await f.load('@/lib/ai/workflow').processQueuedWorkflow(6,f.inquiryId);
+ f.mock('@/lib/email/provider',{getEmailProvider:()=>({send:async()=>{calls++;throw Error('SMTP delivery uncertain');}})});
+ const actions=f.load('@/app/inquiries/[id]/supplier-rfq-actions'),candidateIds=f.tables.supplier_candidates.map(row=>row.id);
+ const {previews}=await actions.getSupplierRfqPreviewAction({inquiryId:f.inquiryId,candidateIds});
+ await assert.rejects(actions.sendSupplierRfqAction({inquiryId:f.inquiryId,candidateIds,previews}),/delivery.*needs checking/);
+ assert.equal(f.tables.rfqs[0].status,'approved');assert.equal(f.tables.rfq_items.length,2);
+ assert.equal(f.tables.communications[0].rfq_id,f.tables.rfqs[0].id);
+ assert.ok(f.tables.ai_alerts.some(a=>a.alert_type==='RFQ_DELIVERY_CHECK_REQUIRED'));
+ const fresh=await actions.getSupplierRfqPreviewAction({inquiryId:f.inquiryId,candidateIds});
+ await assert.rejects(actions.sendSupplierRfqAction({inquiryId:f.inquiryId,candidateIds,previews:fresh.previews}),/already exists/);
+ assert.equal(calls,1);assert.equal(f.tables.rfqs.length,1);
+});
+
 test('Show 5 more reviews only the next five companies and finishes without revisiting earlier AI work',async()=>{
  const f=fixture(),productId=randomUUID(),caseId=randomUUID(),reviewed=[];
  f.tables.requirements=[{id:productId,inquiry_id:f.inquiryId,type:'product',value:'Temperature sensor',source_ref:'item:0',status:'confirmed'},{id:randomUUID(),inquiry_id:f.inquiryId,type:'model_part_number',value:'TS-100',source_ref:'item:0',status:'confirmed'},{id:randomUUID(),inquiry_id:f.inquiryId,type:'specification',value:'Brand: Alpha',source_ref:'item:0',status:'confirmed'}];

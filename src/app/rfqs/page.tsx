@@ -57,7 +57,7 @@ export default async function RfqsPage({ searchParams }: Props) {
                 <strong>{item.suppliers?.legal_name ?? '—'}</strong>
                 {item.recipient_email && <div className="muted">{item.recipient_email}</div>}
               </div>
-              <div><span className="badge"><T>{label(item.status)}</T></span></div>
+              <div><span className="badge"><T>{label(item.status)}</T></span>{item.cancellation_reason&&<p className="muted">{item.cancellation_reason}</p>}{item.cancelled_at&&<small><DateText value={item.cancelled_at} format="datetime"/></small>}</div>
               <div className="rfq-date"><span><DateText value={item.created_at} format="date"/></span>{item.sent_at && <small><T>Sent </T><DateText value={item.sent_at} format="date"/></small>}</div>
               <div className="rfq-actions-cell">
                 <RfqActions

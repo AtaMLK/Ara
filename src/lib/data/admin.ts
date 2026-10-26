@@ -137,7 +137,7 @@ export async function listRfqs(search?: string, status?: string) {
 
   let query = supabase
     .from('rfqs')
-    .select('id,rfq_code,status,subject,body,recipient_email,created_at,sent_at,inquiry_id,supplier_id')
+    .select('id,rfq_code,status,subject,body,recipient_email,created_at,sent_at,inquiry_id,supplier_id,cancelled_at,cancellation_reason')
     .order('created_at', { ascending: false })
     .limit(100);
 

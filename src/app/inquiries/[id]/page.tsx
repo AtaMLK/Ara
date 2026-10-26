@@ -40,7 +40,7 @@ export default async function InquiryDetailPage({ params }: Props) {
     supabase.from('clarifications').select('id,requirement_id,question,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('research_cases').select('id,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }).limit(5),
     supabase.from('supplier_candidates').select('id,requirement_id,proposed_name,proposed_country,proposed_website,status,match_evidence,availability_evidence,verification_evidence,created_at,supplier_id,suppliers(id,legal_name,primary_country,supplier_type,verification_status,primary_address_id,primary_phone_id,primary_website_id,primary_email_id,supplier_contacts!supplier_contacts_supplier_id_fkey(id,name,email,phone,job_title,department,professional_profile,status,is_primary),supplier_emails!supplier_emails_supplier_id_fkey(email,is_primary,status),supplier_addresses!supplier_addresses_supplier_id_fkey(id,address,is_primary),supplier_phones!supplier_phones_supplier_id_fkey(id,phone,is_primary,status),supplier_websites!supplier_websites_supplier_id_fkey(id,url,is_primary))').eq('inquiry_id', id).order('created_at', { ascending: true }),
-    supabase.from('rfqs').select('id,status,subject,recipient_email,sender_email,approval_required,created_at,sent_at,suppliers(legal_name)').eq('inquiry_id', id).order('created_at', { ascending: false }),
+    supabase.from('rfqs').select('id,status,subject,recipient_email,sender_email,approval_required,created_at,sent_at,cancellation_reason,cancelled_at,suppliers(legal_name)').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('communications').select('id,direction,channel,subject,body,received_at,sent_at,created_at,supplier_id,customer_id,rfq_id,metadata,suppliers(legal_name)').eq('inquiry_id', id).eq('channel', 'email').order('created_at', { ascending: false }).limit(100),
   ]);
 
@@ -175,16 +175,16 @@ export default async function InquiryDetailPage({ params }: Props) {
           </div>
           <span className="badge">{rfqsResult.data?.filter((rfq) => ['draft', 'pending_approval', 'approved', 'sent'].includes(rfq.status)).length ?? 0}<T> active</T></span>
         </div>
-        {(rfqsResult.data ?? []).filter((rfq) => rfq.status !== 'cancelled').length === 0 ? (
+        {(rfqsResult.data ?? []).length === 0 ? (
           <div className="detail-card"><div className="empty"><T>No RFQ has been sent for this inquiry yet.</T></div></div>
         ) : (
           <div className="table">
             <div className="row header"><div><T>Supplier</T></div><div><T>Recipient</T></div><div><T>Status</T></div><div><T>Created</T></div></div>
-            {(rfqsResult.data ?? []).filter((rfq) => rfq.status !== 'cancelled').map((rfq) => (
+            {(rfqsResult.data ?? []).map((rfq) => (
               <div className="row" key={rfq.id}>
                 <div><strong>{oneRelated(rfq.suppliers)?.legal_name ?? '—'}</strong><div className="muted">{rfq.subject}</div></div>
                 <div>{rfq.recipient_email ||<T>{'No recipient email'}</T>}</div>
-                <div><span className={`badge status-badge status-${rfq.status}`}><T>{label(rfq.status)}</T></span></div>
+                <div><span className={`badge status-badge status-${rfq.status}`}><T>{label(rfq.status)}</T></span>{rfq.cancellation_reason&&<p className="muted">{rfq.cancellation_reason}</p>}</div>
                 <div><DateText value={rfq.created_at} format="datetime"/></div>
               </div>
             ))}

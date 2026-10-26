@@ -1,57 +1,22 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
-import { requireAdmin } from '@/lib/ai/guards';
-import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import {z} from 'zod';
+import {revalidatePath} from 'next/cache';
+import {requireAdmin} from '@/lib/ai/guards';
+import {createSupabaseAdminClient} from '@/lib/supabase/admin';
 
-export async function deleteRfqAction(rfqId: string) {
-  const { user } = await requireAdmin();
-  const admin = createSupabaseAdminClient();
-
-  const { data: rfq, error: rfqError } = await admin
-    .from('rfqs')
-    .select('id,rfq_code,status')
-    .eq('id', rfqId)
-    .single();
-
-  if (rfqError || !rfq) throw new Error('RFQ not found.');
-
-  // Keep the communication history, but detach it from the deleted RFQ.
-  const { error: communicationError } = await admin
-    .from('communications')
-    .update({ rfq_id: null })
-    .eq('rfq_id', rfqId);
-
-  if (communicationError) throw new Error(communicationError.message);
-
-  const { error: itemsError } = await admin
-    .from('rfq_items')
-    .delete()
-    .eq('rfq_id', rfqId);
-
-  if (itemsError) throw new Error(itemsError.message);
-
-  const { error: deleteError } = await admin
-    .from('rfqs')
-    .delete()
-    .eq('id', rfqId);
-
-  if (deleteError) throw new Error(deleteError.message);
-
-  await admin.from('audit_logs').insert({
-    actor_type: 'admin',
-    actor_user_id: user.id,
-    action: 'rfq_deleted',
-    record_type: 'rfq',
-    record_id: rfqId,
-    before_data: {
-      id: rfq.id,
-      rfq_code: rfq.rfq_code,
-      status: rfq.status,
-    },
-    after_data: null,
+export async function cancelRfqAction(rfqId:string,reason:string){
+  const value=z.object({rfqId:z.string().uuid(),reason:z.string().trim().min(3).max(1000)}).parse({rfqId,reason});
+  const {user}=await requireAdmin();
+  const {data,error}=await createSupabaseAdminClient().rpc('cancel_rfq_preserving_history',{
+    p_rfq_id:value.rfqId,p_actor_id:user.id,p_reason:value.reason,
   });
+  if(error||!data)throw new Error(error?.message??'RFQ cancellation could not be recorded.');
+  revalidatePath('/rfqs');revalidatePath('/inquiries/'+data.inquiry_id);
+  return {ok:true,alreadyCancelled:!!data.already_cancelled};
+}
 
-  revalidatePath('/rfqs');
-  return { ok: true };
+// Old browser tabs must also preserve history when calling the former action.
+export async function deleteRfqAction(rfqId:string){
+  return cancelRfqAction(rfqId,'Cancelled by Admin from a legacy RFQ action.');
 }

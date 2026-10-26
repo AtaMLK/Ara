@@ -353,11 +353,26 @@ async function executeSupplierRfq(input: {
     if(previewOnly)continue;
     if(!reviewed||reviewed.fingerprint!==fingerprint)throw new ToolError('CONFLICT','Supplier details or request requirements changed. Open the message preview again before sending.');
 
+    // A partially recorded/uncertain send must not be bypassed by making a new
+    // RFQ ID from another preview for the same supplier and requested product.
+    const {data:priorRfqs,error:priorError}=await admin.from('rfqs').select('id')
+      .eq('inquiry_id',inquiry.id).eq('supplier_id',supplierId)
+      .in('status',['pending_approval','approved','sent','completed']);
+    if(priorError)throw new ToolError('TRANSIENT','RFQ history could not be checked. No email was sent.');
+    if(priorRfqs?.length){
+      const {data:priorItem,error:priorItemError}=await admin.from('rfq_items').select('id')
+        .in('rfq_id',priorRfqs.map(row=>row.id)).in('requirement_id',productLines.map(line=>line.requirementId)).limit(1).maybeSingle();
+      if(priorItemError)throw new ToolError('TRANSIENT','RFQ item history could not be checked. No email was sent.');
+      if(priorItem)throw new ToolError('CONFLICT','An RFQ already exists for this supplier and requested product. Review its delivery history before creating another.');
+    }
+
     const { data: rfq, error: rfqError } = await admin.from('rfqs').insert({
       inquiry_id: inquiry.id,
       supplier_id: supplierId,
       rfq_code: rfqCode,
-      status: 'pending_approval',
+      status: 'approved',
+      approved_by:user.id,
+      approved_at:new Date().toISOString(),
       subject,
       body: email.html,
       sender_email: process.env.SMTP_FROM || process.env.SMTP_USER || null,
@@ -411,7 +426,8 @@ async function executeSupplierRfq(input: {
         html: email.html,
         text: email.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
         from: process.env.SMTP_FROM || process.env.SMTP_USER || 'purchase-dep@aryaautomation.com',
-        idempotencyKey: `rfq:${rfq.id}`,
+        idempotencyKey: `rfq-${rfq.id}`,
+        inquiryId:inquiry.id,
       });
     } catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : String(sendError);
@@ -421,14 +437,16 @@ async function executeSupplierRfq(input: {
           candidate_id: candidate.id,
           requirement_id: firstLine.requirementId,
           contact_id: contact?.id ?? null,
-          send_failed: true,
+          delivery_uncertain: true,
+          candidate_ids:candidateIds,
+          requirement_ids:productLines.map(line=>line.requirementId),
           send_error: message.slice(0, 2000),
         },
       }).eq('id', communication.id);
-      await admin.from('rfqs').update({
-        status: 'cancelled',
-      }).eq('id', rfq.id);
-      throw new Error(`Email was not sent to ${recipient}: ${message}`);
+      await admin.from('ai_alerts').insert({inquiry_id:inquiry.id,record_type:'rfq',record_id:rfq.id,
+        agent_id:'rfq',alert_type:'RFQ_DELIVERY_CHECK_REQUIRED',priority:'urgent',
+        message:`Check delivery to ${recipient} before any resend or cancellation. ${message}`});
+      throw new Error(`RFQ delivery to ${recipient} needs checking. Review the sent mailbox before any resend: ${message}`);
     }
 
     await admin.from('communications').update({

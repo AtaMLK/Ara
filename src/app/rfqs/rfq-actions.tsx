@@ -4,9 +4,9 @@ import {T,Localized,DateText,useI18n} from '@/components/language';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Bell, Eye, Loader2, Mail, Trash2, X } from 'lucide-react';
+import { Bell, Eye, Loader2, Mail, Ban, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { deleteRfqAction } from './actions';
+import { cancelRfqAction } from './actions';
 import { markNotificationReadAction } from '@/app/notifications/actions';
 import { RfqConversationModal, type RfqConversationMessage } from '@/components/rfq-conversation';
 
@@ -44,8 +44,9 @@ export function RfqActions(props: Props) {
   const router = useRouter();
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [conversationOpen, setConversationOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [reason,setReason]=useState('');
 
   async function openSupplierNotification() {
     setNotificationOpen(true);
@@ -59,17 +60,17 @@ export function RfqActions(props: Props) {
     }
   }
 
-  async function remove() {
+  async function cancel() {
     setBusy(true);
     try {
-      await deleteRfqAction(props.rfqId);
-      setDeleteOpen(false);
-      toast.success(t('RFQ deleted'), {
-        description: t(props.rfqCode + ' was removed from the RFQ list. Communication history is preserved.'),
+      await cancelRfqAction(props.rfqId,reason);
+      setCancelOpen(false);
+      toast.success(t('RFQ cancelled'), {
+        description: t(props.rfqCode + ' was cancelled. RFQ items and linked communication history are preserved.'),
       });
       router.refresh();
     } catch (error) {
-      toast.error(t('Could not delete RFQ'), {
+      toast.error(t('Could not cancel RFQ'), {
         description: t(error instanceof Error ? error.message : 'Please try again.'),
       });
     } finally {
@@ -89,8 +90,8 @@ export function RfqActions(props: Props) {
         <Localized as="button" type="button" className="icon-button" onClick={() => setConversationOpen(true)} title="View RFQ conversation" aria-label={'Preview ' + props.rfqCode}>
           <Eye size={16} />
         </Localized>
-        <Localized as="button" type="button" className="icon-button icon-button-danger" onClick={() => setDeleteOpen(true)} title="Delete RFQ" aria-label={'Delete ' + props.rfqCode}>
-          <Trash2 size={16} />
+        <Localized as="button" type="button" disabled={props.status === 'cancelled'} className="icon-button icon-button-danger" onClick={() => setCancelOpen(true)} title="Cancel RFQ" aria-label={'Cancel ' + props.rfqCode}>
+          <Ban size={16} />
         </Localized>
       </div>
 
@@ -143,21 +144,21 @@ export function RfqActions(props: Props) {
         document.body
       )}
 
-      {deleteOpen && typeof document !== 'undefined' && createPortal(
-        <div className="arat-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setDeleteOpen(false); }}>
-          <div className="arat-dialog" role="dialog" aria-modal="true" aria-labelledby="rfq-delete-title">
-            <div className="arat-dialog-icon"><Trash2 size={18} /></div>
-            <Localized as="button" type="button" className="arat-dialog-close" onClick={() => setDeleteOpen(false)} disabled={busy} aria-label="Close"><X size={17} /></Localized>
-            <h2 id="rfq-delete-title"><T>Delete RFQ?</T></h2>
+      {cancelOpen && typeof document !== 'undefined' && createPortal(
+        <div className="arat-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCancelOpen(false); }}>
+          <div className="arat-dialog" role="dialog" aria-modal="true" aria-labelledby="rfq-cancel-title">
+            <div className="arat-dialog-icon"><Ban size={18} /></div>
+            <Localized as="button" type="button" className="arat-dialog-close" onClick={() => setCancelOpen(false)} disabled={busy} aria-label="Close"><X size={17} /></Localized>
+            <h2 id="rfq-cancel-title"><T>Cancel RFQ?</T></h2>
             <p>
-              <strong>{props.rfqCode}</strong><T> will be removed from the RFQ list. Email/communication history will be preserved separately.
+              <strong>{props.rfqCode}</strong><T> will be cancelled. Its items and linked email history remain available.
               </T><T>{props.status === 'sent' ? ' This does not recall an email that was already sent.' : ''}</T>
             </p>
-            <div className="arat-dialog-actions">
-              <button type="button" className="secondary-button" onClick={() => setDeleteOpen(false)} disabled={busy}><T>Cancel</T></button>
-              <button type="button" className="arat-danger-button" onClick={remove} disabled={busy}>
-                {busy ? <Loader2 size={15} className="arat-spin" /> : <Trash2 size={15} />}
-                <T>{busy ? 'Deleting…' : 'Delete RFQ'}</T>
+            <label><T>Cancellation reason</T><textarea className="rfq-cancel-reason" value={reason} onChange={event=>setReason(event.target.value)} minLength={3} maxLength={1000} disabled={busy}/></label><div className="arat-dialog-actions">
+              <button type="button" className="secondary-button" onClick={() => setCancelOpen(false)} disabled={busy}><T>Keep RFQ</T></button>
+              <button type="button" className="arat-danger-button" onClick={cancel} disabled={busy || reason.trim().length < 3}>
+                {busy ? <Loader2 size={15} className="arat-spin" /> : <Ban size={15} />}
+                <T>{busy ? 'Cancelling…' : 'Cancel RFQ'}</T>
               </button>
             </div>
           </div>
