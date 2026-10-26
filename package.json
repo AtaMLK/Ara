@@ -9,6 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:supplier-workflow": "node --test tests/supplier-workflow.test.cjs",
+    "test:worker-recovery": "node --test tests/request-deadline.test.cjs",
     "test:supplier-ui": "node tests/supplier-policy-ui.cjs",
     "test:quote-ui": "node tests/quote-ui.cjs",
     "test:quotation-documents": "node --test tests/quotation-document.test.cjs"

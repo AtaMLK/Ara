@@ -20,8 +20,10 @@ import { supplierCatalogModels } from './research/supplier-catalog';
 import {
   enqueueWorkflow,
   markExecutionRunning,
-  markExecutionSuccess,
-  markExecutionFailure,
+  markExecutionSuccess as completeOwnedExecution,
+  markExecutionFailure as failOwnedExecution,
+  heartbeatExecution,
+  expireStaleExecutions,
   type WorkflowStage,
 } from './orchestrator';
 
@@ -305,6 +307,20 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
   const running = await markExecutionRunning(execution.id);
   if (!running) return { execution, outcome: 'already_running' as const };
   const supabase = createSupabaseAdminClient();
+  let leaseLost=false;
+  let pulse:Promise<void>|null=null;
+  const heartbeat=setInterval(()=>{
+    if(pulse) return;
+    pulse=heartbeatExecution(running.id,running.lease_token).then(active=>{if(!active)leaseLost=true;})
+      .catch(()=>{console.error('Workflow heartbeat could not be saved');})
+      .finally(()=>{pulse=null;});
+  },30_000);
+  heartbeat.unref();
+  const markExecutionSuccess=(id:string,output:unknown={})=>{
+    if(leaseLost) throw new ToolError('CONFLICT','Worker no longer owns this execution');
+    return completeOwnedExecution(id,output,running.lease_token);
+  };
+  const markExecutionFailure=(id:string,code:string,message:string)=>failOwnedExecution(id,code,message,running.lease_token);
 
   try {
     const { data: inquiry, error: inquiryError } = await supabase
@@ -3796,6 +3812,9 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       message,
     );
     throw error;
+  } finally {
+    clearInterval(heartbeat);
+    if(pulse) await pulse;
   }
 }
 
@@ -3906,7 +3925,7 @@ export async function startInquiryWorkflow(
     // queued workflow instead of becoming a no-op.
     const { data: failedDownstream } = await supabase
       .from('ai_executions')
-      .select('id,task_key,status,attempt_count')
+      .select('id,task_key,status,attempt_count,error_code')
       .eq('inquiry_id', inquiryId)
       .eq('status', 'failed')
       .lt('attempt_count', 3)
@@ -3914,7 +3933,7 @@ export async function startInquiryWorkflow(
       .limit(1)
       .maybeSingle();
 
-    if (failedDownstream) {
+    if (failedDownstream && failedDownstream.error_code!=='WORKER_INTERRUPTED') {
       const match = failedDownstream.task_key.match(/^inquiry:[^:]+:stage:(.+)$/);
       const failedStage = match?.[1] as WorkflowStage | undefined;
       if (failedStage && stageAgentExists(failedStage)) {
@@ -4204,7 +4223,7 @@ export async function continueInquiryWorkflow(inquiryId: string) {
         if (discoveryExecution?.status === 'succeeded' && candidateCount === 0) {
           const { data: researchExecution } = await supabase
             .from('ai_executions')
-            .select('id,status,attempt_count')
+            .select('id,status,attempt_count,error_code')
             .eq('inquiry_id', inquiryId)
             .eq('task_key', `inquiry:${inquiryId}:stage:research`)
             .maybeSingle();
@@ -4218,6 +4237,7 @@ export async function continueInquiryWorkflow(inquiryId: string) {
           // stage.
           if (
             researchExecution?.id &&
+            researchExecution.error_code!=='WORKER_INTERRUPTED' &&
             ['failed', 'succeeded'].includes(researchExecution.status)
           ) {
             const { error: requeueError } = await supabase
@@ -4294,6 +4314,7 @@ export async function setClarificationPendingApproval(inquiryId: string, clarifi
 
 export async function processQueuedWorkflow(limit = 5, inquiryId?: string) {
   const supabase = createSupabaseAdminClient();
+  await expireStaleExecutions(inquiryId);
   const maxExecutions = Math.max(1, Math.min(limit, 20));
   const results: Array<{
     executionId: string;

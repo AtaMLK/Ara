@@ -2,6 +2,7 @@ import 'server-only';
 
 import { z } from 'zod';
 import { ToolError } from '@/lib/errors';
+import {withRequestDeadline} from './request-deadline';
 import type { AgentId } from './context';
 
 export type AIMessage = {
@@ -49,7 +50,9 @@ class OpenAICompatibleProvider implements AIModelProvider {
     ];
 
     for (let attempt = 0; attempt < 2; attempt++) {
+      const result=await withRequestDeadline('AI provider',120_000,async signal=>{
       const response = await fetch(`${baseUrl}/chat/completions`, {
+        signal,
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
@@ -87,12 +90,14 @@ class OpenAICompatibleProvider implements AIModelProvider {
             previous_output: output,
             validation_errors: validated.error.issues,
           }) });
-          continue;
+          return null;
         }
         throw new ToolError('AI_PROCESSING', `AI output failed schema validation: ${validated.error.message.slice(0, 800)}`);
       }
 
       return { output: validated.data, provider: 'openai-compatible', model };
+      });
+      if(result) return result;
     }
     throw new ToolError('AI_PROCESSING', 'AI output could not be validated');
   }

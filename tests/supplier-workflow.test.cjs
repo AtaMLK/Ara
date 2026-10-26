@@ -588,7 +588,10 @@ function fixture({ unreadable = false, protectedQuantity = false, noContacts = f
       return { data: this.selectOptions?.head ? null : this.one ? result[0] ?? null : result, count: this.selectOptions?.count ? matches.length : undefined, error: null };
     }
   }
-  const database = { from: table => new Query(table) };
+  const database = { from: table => new Query(table),rpc:async name=>{
+    if(name==='expire_stale_ai_executions')return {data:0,error:null};
+    throw new Error('Unexpected RPC: '+name);
+  } };
   const provider = { search: async ({ query }) => {
     searches++;
     if (researchFailure) throw new Error('Provider temporarily unavailable');
@@ -722,6 +725,27 @@ test('only one competing worker can claim a queued execution', async () => {
   const execution = await queue.enqueueWorkflow(f.inquiryId, 'intake');
   const claims = await Promise.all([queue.markExecutionRunning(execution.id), queue.markExecutionRunning(execution.id)]);
   assert.equal(claims.filter(Boolean).length, 1);
+});
+
+test('worker ownership fences late completion and failure after another attempt claims the stage',async()=>{
+ const f=fixture(),queue=f.load('@/lib/ai/orchestrator');
+ const execution=await queue.enqueueWorkflow(f.inquiryId,'intake');
+ const first=await queue.markExecutionRunning(execution.id);
+ assert.ok(first.lease_token);assert.ok(first.heartbeat_at);
+ assert.equal(await queue.heartbeatExecution(first.id,first.lease_token),true);
+ const row=f.tables.ai_executions.find(r=>r.id===first.id);
+ row.status='failed';row.error_code='WORKER_INTERRUPTED';row.output_ref={partial:'preserved'};
+ assert.equal((await queue.enqueueWorkflow(f.inquiryId,'intake')).status,'failed','Background enqueue must not replay interrupted work');
+ await assert.rejects(queue.markExecutionSuccess(first.id,{},first.lease_token),/cannot be completed/);
+ row.status='queued';row.error_code=null;
+ const second=await queue.markExecutionRunning(first.id);
+ assert.notEqual(first.lease_token,second.lease_token);
+ assert.equal(await queue.heartbeatExecution(first.id,first.lease_token),false);
+ await assert.rejects(queue.markExecutionSuccess(first.id,{old:true},first.lease_token),/no longer owns/);
+ await queue.markExecutionFailure(first.id,'TRANSIENT','Old worker error',first.lease_token);
+ assert.equal(row.status,'running');assert.equal(row.attempt_count,0);
+ await queue.markExecutionSuccess(second.id,{new:true},second.lease_token);
+ assert.equal(row.status,'succeeded');assert.deepEqual(row.output_ref,{new:true});
 });
 
 test('schemas preserve published emails and do not equate manufacturers with exact model matches', () => {

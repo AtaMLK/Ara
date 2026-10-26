@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { ToolError } from '@/lib/errors';
+import {withRequestDeadline} from '../request-deadline';
 
 export type ResearchQuery = {
   inquiryId: string;
@@ -37,7 +38,9 @@ class SerperResearchProvider implements ResearchProvider {
       ...(input.country ? { location: input.country } : {}),
     };
 
+    return withRequestDeadline('Serper search',30_000,async signal=>{
     const response = await fetch('https://google.serper.dev/search', {
+      signal,
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
       body: JSON.stringify(params),
@@ -110,6 +113,7 @@ class SerperResearchProvider implements ResearchProvider {
           snippet: item.snippet,
         },
       }));
+    });
   }
 }
 

@@ -10,8 +10,8 @@ export async function enqueueWorkflow(inquiryId:string,stage:WorkflowStage){
  const supabase=createSupabaseAdminClient(); const taskKey=`inquiry:${inquiryId}:stage:${stage}`;
  const {data:existing,error:readError}=await supabase.from('ai_executions').select('*').eq('task_key',taskKey).maybeSingle();
  if(readError) throw new ToolError('TRANSIENT',readError.message);
- if(existing && existing.status !== 'failed') return existing;
- const payload={task_key:taskKey,agent_id:stageAgent[stage],inquiry_id:inquiryId,status:'queued',attempt_count:0,error_code:null,error_message:null,started_at:null,completed_at:null,output_ref:{}};
+ if(existing && (existing.status !== 'failed' || existing.error_code==='WORKER_INTERRUPTED')) return existing;
+ const payload={task_key:taskKey,agent_id:stageAgent[stage],inquiry_id:inquiryId,status:'queued',attempt_count:0,error_code:null,error_message:null,started_at:null,completed_at:null,heartbeat_at:null,lease_token:null,output_ref:{}};
  const query=existing
    ? supabase.from('ai_executions').update(payload).eq('id',existing.id).eq('status','failed')
    : supabase.from('ai_executions').upsert(payload,{onConflict:'task_key',ignoreDuplicates:true});
@@ -38,7 +38,7 @@ export async function markExecutionRunning(executionId:string){
 
  const {data,error}=await supabase
    .from('ai_executions')
-   .update({status:'running',started_at:new Date().toISOString()})
+   .update({status:'running',started_at:new Date().toISOString(),heartbeat_at:new Date().toISOString(),lease_token:crypto.randomUUID()})
    .eq('id',executionId)
    .eq('status','queued')
    .select('*')
@@ -71,37 +71,57 @@ export async function enqueueSupplierQuoteExtraction(inquiryId:string,options:{r
  if(reloadError || !data) throw new ToolError('TRANSIENT',reloadError?.message ?? 'Quote extraction execution could not be loaded');
  return data;
 }
-export async function markExecutionSuccess(executionId:string,outputRef:unknown={}){
+export async function markExecutionSuccess(executionId:string,outputRef:unknown={},leaseToken?:string){
  const supabase=createSupabaseAdminClient();
  const {data:current,error:readError}=await supabase.from('ai_executions').select('*').eq('id',executionId).single();
  if(readError || !current) throw new ToolError('NOT_FOUND','Execution not found');
+ if(leaseToken && current.lease_token!==leaseToken) throw new ToolError('CONFLICT','Worker no longer owns this execution');
  // A second worker/action may finish the same execution after the first worker.
  // Treat an already-succeeded execution as idempotent instead of a false conflict.
  if(current.status === 'succeeded') return current;
  if(current.status !== 'running') {
    throw new ToolError('CONFLICT',`Execution cannot be completed from ${current.status}`);
  }
- const {data,error}=await supabase
+ let completion=supabase
    .from('ai_executions')
    .update({status:'succeeded',output_ref:outputRef,completed_at:new Date().toISOString()})
    .eq('id',executionId)
-   .eq('status','running')
+   .eq('status','running');
+ if(leaseToken) completion=completion.eq('lease_token',leaseToken);
+ const {data,error}=await completion
    .select('*')
    .single();
  if(error||!data) {
    const {data:after}=await supabase.from('ai_executions').select('*').eq('id',executionId).maybeSingle();
-   if(after?.status === 'succeeded') return after;
+   if(after?.status === 'succeeded' && (!leaseToken || after.lease_token===leaseToken)) return after;
    throw new ToolError('CONFLICT','Execution cannot be completed');
  }
  return data;
 }
-export async function markExecutionFailure(executionId:string,errorCode:string,errorMessage:string){
+export async function markExecutionFailure(executionId:string,errorCode:string,errorMessage:string,leaseToken?:string){
  const supabase=createSupabaseAdminClient(); const {data:current}=await supabase.from('ai_executions').select('*').eq('id',executionId).single();
  if(!current) throw new ToolError('NOT_FOUND','Execution not found');
+ if(leaseToken && current.lease_token!==leaseToken) return current;
  if(current.status !== 'running') return current;
  const terminal=current.attempt_count+1>=3;
- const {data,error}=await supabase.from('ai_executions').update({status:terminal?'failed':'queued',attempt_count:current.attempt_count+1,error_code:errorCode,error_message:errorMessage,completed_at:terminal?new Date().toISOString():null}).eq('id',executionId).eq('status','running').select('*').single();
+ let failure=supabase.from('ai_executions').update({status:terminal?'failed':'queued',attempt_count:current.attempt_count+1,error_code:errorCode,error_message:errorMessage,completed_at:terminal?new Date().toISOString():null}).eq('id',executionId).eq('status','running');
+ if(leaseToken) failure=failure.eq('lease_token',leaseToken);
+ const {data,error}=await failure.select('*').maybeSingle();
  if(error) throw new ToolError('TRANSIENT',error.message);
+ if(!data) return null;
  if(terminal) await supabase.from('ai_alerts').insert({inquiry_id:current.inquiry_id,agent_id:current.agent_id,alert_type:'AI_PROCESSING_FAILED',message:errorMessage,priority:'urgent'});
  return data;
+}
+
+export async function heartbeatExecution(executionId:string,leaseToken:string){
+ const {data,error}=await createSupabaseAdminClient().from('ai_executions')
+   .update({heartbeat_at:new Date().toISOString()}).eq('id',executionId).eq('status','running').eq('lease_token',leaseToken).select('id').maybeSingle();
+ if(error) throw new ToolError('TRANSIENT','Worker heartbeat could not be saved');
+ return !!data;
+}
+
+export async function expireStaleExecutions(inquiryId?:string){
+ const {data,error}=await createSupabaseAdminClient().rpc('expire_stale_ai_executions',{p_inquiry_id:inquiryId??null});
+ if(error) throw new ToolError('TRANSIENT','Interrupted workflow executions could not be checked');
+ return Number(data);
 }
