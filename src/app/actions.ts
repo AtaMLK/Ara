@@ -449,7 +449,7 @@ export async function sendClarificationAction(input: { inquiryId: string; clarif
     if (!customer?.email) throw new ToolError('VALIDATION', 'Customer email is not configured');
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-    const from = process.env.EMAIL_FROM;
+    const from = process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER;
     if (!appUrl || !from) {
       throw new ToolError('VALIDATION', 'Email sending is not configured for this environment. Configure the sender address and email service before sending.');
     }
@@ -1240,7 +1240,7 @@ export async function approveCustomerQuoteAction(quoteId: string) {
     }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-    const from = process.env.EMAIL_FROM;
+    const from = process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER;
     if (!appUrl || !from) {
       throw new ToolError('VALIDATION', 'Email sending is not configured for this environment. Configure the sender address and email service before sending.');
     }

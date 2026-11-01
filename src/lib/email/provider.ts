@@ -1,4 +1,5 @@
 import 'server-only';
+import {getSmtpEmailProvider} from './smtp-provider';
 import {createHash} from 'node:crypto';
 import {createSupabaseAdminClient} from '@/lib/supabase/admin';
 import {dispatchEmailOnce,type DispatchStore,type EmailDispatch} from './dispatch';
@@ -66,6 +67,7 @@ class ResendEmailProvider implements EmailProvider {
 }
 export function getEmailProvider():EmailProvider {
  const provider=process.env.EMAIL_PROVIDER??'resend';
+ if(provider==='smtp')return getSmtpEmailProvider();
  if(provider!=='resend')throw new ToolError('VALIDATION',`Unsupported email provider: ${provider}`);
  return new ResendEmailProvider();
 }
