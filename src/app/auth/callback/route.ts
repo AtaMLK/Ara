@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { localRedirectUrl } from '@/lib/validation';
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
@@ -17,5 +18,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL('/login?error=invalid_reset_link', request.url));
   }
 
-  return NextResponse.redirect(new URL(next.startsWith('/') ? next : '/', request.url));
+  return NextResponse.redirect(localRedirectUrl(next, request.url));
 }

@@ -1,3 +1,4 @@
+import { oneRelated } from '@/lib/data/relations';
 import Link from 'next/link';
 import AdminActivityTimeline from './admin-activity-timeline';
 import AdminFilePreview from './admin-file-preview';
@@ -35,7 +36,7 @@ export default async function InquiryDetailPage({ params }: Props) {
   if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error || candidatesResult.error) throw new Error('Failed to load inquiry details');
 
   const inquiry = inquiryResult.data;
-  const customer = inquiry.customers;
+  const customer = oneRelated(inquiry.customers);
   const customerName = customer?.company_name || customer?.name || 'Customer';
   const displayReference = getInquiryDisplayReference(inquiry.reference, customerName, inquiry.created_at, inquiry.current_version, inquiry.updated_at);
 

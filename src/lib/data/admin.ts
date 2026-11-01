@@ -88,14 +88,18 @@ export async function listInquiries(search?: string, status?: string) {
   return data ?? [];
 }
 
-export async function listSuppliers(search?: string, status?: string) {
+export async function listSuppliers(search?: string, status?: string, quality = 'primary') {
   const { supabase } = await requireAdminPage();
   let query = supabase
     .from('suppliers')
-    .select('id,legal_name,primary_country,status,supplier_type,verification_status,updated_at')
+    .select('id,legal_name,primary_country,status,supplier_type,verification_status,updated_at,canonical_supplier_id,identity_needs_review,identity_review_reason')
+    .is('deleted_at', null)
     .order('updated_at', { ascending: false })
     .limit(100);
 
+  if (quality === 'review') query = query.is('canonical_supplier_id', null).eq('identity_needs_review', true);
+  else if (quality === 'duplicates') query = query.not('canonical_supplier_id', 'is', null);
+  else if (quality !== 'all') query = query.is('canonical_supplier_id', null).eq('identity_needs_review', false);
   if (status && status !== 'all') query = query.eq('status', status);
   if (search?.trim()) {
     query = query.ilike('legal_name', `%${search.trim()}%`);

@@ -21,6 +21,11 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       <body>
         {isAdmin ? (
           <div className="admin-layout">
+            <details className="admin-mobile-navigation">
+              <summary>ARAT · Admin menu</summary>
+              <nav className="nav" aria-label="Admin navigation">{links.map(([href,label]) => <Link key={href} href={href}>{label}</Link>)}</nav>
+              <div className="sidebar-footer"><ThemeToggle /><SignOutButton /></div>
+            </details>
             <aside className="sidebar"><div className="brand-row"><div><div className="brand">ARAT</div><div className="eyebrow">ADMIN</div></div></div><nav className="nav">{links.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav><div className="sidebar-footer"><ThemeToggle /><SignOutButton /></div></aside>
             <main className="main">{children}</main>
           </div>

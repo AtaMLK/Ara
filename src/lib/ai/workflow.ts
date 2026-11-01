@@ -1,3 +1,4 @@
+import { supplierNameIssue } from '@/lib/suppliers/identity';
 import 'server-only';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
@@ -488,7 +489,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
             requirements.push({
               type: 'product',
-              value: item.product.trim(),
+              value: (item.product || item.requestedText).trim(),
               source: 'customer_text',
               sourceRef,
             });
@@ -919,8 +920,11 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           ...((candidate.verification_evidence ?? {}) as Record<string, unknown>),
         };
 
-        const hasIdentity = Boolean(candidate.proposed_name?.trim());
-        const hasCountry = Boolean(candidate.proposed_country?.trim());
+        const { data: identity } = await supabase.from('suppliers')
+          .select('status,canonical_supplier_id,identity_needs_review').eq('id',candidate.supplier_id).single();
+        const hasIdentity = Boolean(candidate.proposed_name?.trim()) && !supplierNameIssue(candidate.proposed_name || '')
+          && identity?.status === 'active' && !identity.canonical_supplier_id && !identity.identity_needs_review;
+        const hasCountry = Boolean(candidate.proposed_country?.trim()) && !/^(unknown|n\/a)$/i.test(candidate.proposed_country?.trim() || '');
         const hasWebsite = Boolean(candidate.proposed_website?.trim());
 
         if (hasIdentity && hasCountry && hasWebsite) {
@@ -996,7 +1000,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       }, 'supplier_verification');
 
       if (pending === 0 && verified > 0) {
-        await enqueueStage(inquiryId, 'rfq');
+        await enqueueWorkflow(inquiryId, 'rfq');
       }
 
       return { execution: running, outcome };
@@ -1816,7 +1820,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
       const { data: suppliers } = await supabase
         .from('suppliers')
-        .select('id,legal_name,verification_status')
+        .select('id,legal_name,verification_status').eq('status','active').is('deleted_at',null).is('canonical_supplier_id',null).eq('identity_needs_review',false)
         .in('id', supplierIds);
 
       // Verification is informational at this stage. The RFQ is still a draft
@@ -1962,7 +1966,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       if (process.env.OPENAI_API_KEY && results?.length) {
         const confirmedRequirements = await supabase
           .from('requirements')
-          .select('type,value')
+          .select('type,value,source_ref')
           .eq('inquiry_id', inquiryId)
           .eq('status', 'confirmed');
 
@@ -1971,10 +1975,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           {
             requirements: confirmedRequirements.data ?? [],
             research_results: results.map((item) => ({
-              source_name: item.sourceName,
-              source_url: item.sourceUrl,
+              source_name: item.source_name,
+              source_url: item.source_url,
               finding: item.finding,
-              structured_data: item.structuredData,
+              structured_data: item.structured_data,
               relevance: item.relevance,
               confidence: item.confidence,
               evidence: item.evidence,
@@ -1994,7 +1998,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           supplierDiscoveryOutputSchema,
         );
 
-        const allowedUrls = new Set(results.map((item) => item.sourceUrl));
+        const allowedUrls = new Set(results.map((item) => item.source_url));
         for (const candidate of discoveryAi.output.candidates) {
           if (!allowedUrls.has(candidate.sourceUrl)) continue;
           discoveryCandidates.set(candidate.sourceUrl, {
@@ -2028,10 +2032,10 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               {
                 requirements: confirmedRequirements.data ?? [],
                 research_results: strongResults.map((item) => ({
-                  source_name: item.sourceName,
-                  source_url: item.sourceUrl,
+                  source_name: item.source_name,
+                  source_url: item.source_url,
                   finding: item.finding,
-                  structured_data: item.structuredData,
+                  structured_data: item.structured_data,
                   confidence: item.confidence,
                   evidence: item.evidence,
                 })),
@@ -2113,15 +2117,15 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
             const name = companyNameFromFinding(result.finding ?? '', matchedBrand);
             if (!name) continue;
 
-            discoveryCandidates.set(result.sourceUrl, {
+            discoveryCandidates.set(result.source_url, {
               name,
-              website: /^https?:\/\//i.test(result.sourceUrl) ? result.sourceUrl : undefined,
+              website: /^https?:\/\//i.test(result.source_url) ? result.source_url : undefined,
               evidence: [result.finding].filter(Boolean),
             });
           }
         }
 
-        selectedResults = results.filter((item) => discoveryCandidates.has(item.sourceUrl));
+        selectedResults = results.filter((item) => discoveryCandidates.has(item.source_url));
       }
 
       for (const result of selectedResults) {
@@ -2134,7 +2138,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
           continue;
         }
 
-        const text = `${result.source_name ?? ''} ${result.finding ?? ''} ${result.structuredData?.title ?? ''}`.toLowerCase();
+        const text = `${result.source_name ?? ''} ${result.finding ?? ''} ${result.structured_data?.title ?? ''}`.toLowerCase();
         const blockedSource = /(scribd|manualslib|manualmachine|pdfcoffee|researchgate|academia\\.edu|merriam-webster|newyorkfed|irs|sba|developer\\.android|arenasolutions)/i.test(hostname);
         const supplierSignal = /(manufacturer|supplier|distributor|fabricat|official dealer|official distributor|industrial|machinery|components?|electronics|sensor|instrumentation)/i.test(text);
         const commercialSignal = /(sales|contact|products?|catalog|quote|quotation|rfq|buy|stock|inventory|dealer|distributor|manufacturer)/i.test(text);
@@ -2151,46 +2155,20 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
 
         const website = aiCandidate.website || `https://${hostname}`;
         const country = aiCandidate.country ||
-          (result.structuredData?.country as string | undefined)?.trim() ||
+          (result.structured_data?.country as string | undefined)?.trim() ||
           null;
 
-        // Supplier discovery is an AI preparation step, not an Admin approval
-        // gate. Create the supplier record immediately so it is available in
-        // the Suppliers section. Admin approval is reserved for the RFQ/email
-        // send action.
-        let supplierId: string | null = null;
-        const { data: existingSupplier, error: supplierLookupError } = await supabase
-          .from('suppliers')
-          .select('id')
-          .ilike('legal_name', proposedName.slice(0, 240))
-          .limit(1)
-          .maybeSingle();
-
-        if (supplierLookupError) throw new ToolError('TRANSIENT', supplierLookupError.message);
-
-        if (existingSupplier?.id) {
-          supplierId = existingSupplier.id;
-        } else {
-          const { data: createdSupplier, error: supplierError } = await supabase
-            .from('suppliers')
-            .insert({
-              legal_name: proposedName.slice(0, 240),
-              primary_country: country ?? 'Unknown',
-              supplier_type: 'unknown',
-              verification_status: 'pending',
-              description: [
-              result.finding?.slice(0, 1600) || '',
-              aiCandidate.evidence.join(' ').slice(0, 400),
-            ].filter(Boolean).join(' ').slice(0, 2000) || null,
-            })
-            .select('id')
-            .single();
-
-          if (supplierError || !createdSupplier) {
-            throw new ToolError('CONFLICT', supplierError?.message ?? 'Failed to create supplier record');
-          }
-
-          supplierId = createdSupplier.id;
+        const identityIssue = supplierNameIssue(proposedName);
+        if (identityIssue) {
+          await createAlert(inquiryId, 'supplier_discovery', 'SUPPLIER_IDENTITY_REVIEW', identityIssue + ' Candidate: ' + proposedName);
+          continue;
+        }
+        const { data: supplierId, error: supplierError } = await supabase.rpc('arat_resolve_discovered_supplier', {
+          p_name: proposedName, p_country: country, p_website: website,
+          p_description: [result.finding?.slice(0,1600) || '', aiCandidate.evidence.join(' ').slice(0,400)].filter(Boolean).join(' ').slice(0,2000),
+        });
+        if (supplierError || typeof supplierId !== 'string') {
+          throw new ToolError('CONFLICT', supplierError?.message ?? 'Supplier identity could not be resolved');
         }
 
         const { data: existingWebsite, error: websiteLookupError } = await supabase
@@ -2485,7 +2463,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       if (provider) {
         const { data: requirements } = await supabase
           .from('requirements')
-          .select('type,value')
+          .select('type,value,source_ref')
           .eq('inquiry_id', inquiryId)
           .eq('status', 'confirmed')
           .order('created_at', { ascending: true });
