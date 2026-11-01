@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { confirmCustomerQuoteItemPriceAction, updateCustomerQuoteItemQuantityAction } from '@/app/actions';
 
 type Item = {
@@ -22,17 +23,23 @@ type Item = {
 };
 
 export function QuoteItemEditor({ item, currency, editable }: { item: Item; currency: string; editable: boolean }) {
+  const router=useRouter();
+  const [savedQuantity,setSavedQuantity]=useState(Number(item.quantity));
+  const [savedPrice,setSavedPrice]=useState(item.unit_price);
+  const [priceStatus,setPriceStatus]=useState(item.price_status);
+  const [success,setSuccess]=useState('');
   const [price, setPrice] = useState(item.unit_price==null?'':String(item.unit_price));
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState<'quantity'|'price'|null>(null);
   const [quantity, setQuantity] = useState(String(item.quantity));
   const [error, setError] = useState('');
 
   async function confirmQuantity() {
     const value = Number(quantity);
     if (!Number.isFinite(value) || value <= 0) { setError('Enter a valid positive quantity.'); return; }
-    setSaving(true); setError('');
-    try { await updateCustomerQuoteItemQuantityAction(item.id, value); window.location.reload(); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not save quantity.'); setSaving(false); }
+    setSaving('quantity'); setError('');setSuccess('');
+    try {const result=await updateCustomerQuoteItemQuantityAction(item.id,value);setSavedQuantity(result.quantity);setQuantity(String(result.quantity));setPriceStatus(result.priceStatus);setSuccess('Quantity saved.');router.refresh();}
+    catch(e){setError(e instanceof Error?e.message:'Could not save quantity.');}
+    finally{setSaving(null);}
   }
 
   async function confirmPrice() {
@@ -42,15 +49,15 @@ export function QuoteItemEditor({ item, currency, editable }: { item: Item; curr
       setError('Enter a valid non-negative price.');
       return;
     }
-    setSaving(true);
+    setSaving('price');setSuccess('');
     setError('');
     try {
       await confirmCustomerQuoteItemPriceAction(item.id, value);
-      window.location.reload();
+      setSavedPrice(value);setPriceStatus('admin_confirmed');setSuccess('Price saved.');router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save price.');
-      setSaving(false);
-    }
+
+    } finally {setSaving(null);}
   }
 
   const calc = item.price_calculation || {};
@@ -63,25 +70,27 @@ export function QuoteItemEditor({ item, currency, editable }: { item: Item; curr
         <div>
           <div className="eyebrow">LINE ITEM</div>
           <h3>{item.description || item.supplier_products?.product_name || item.model || item.supplier_products?.model_part_number || 'Quoted item'}</h3>
-          <div className="muted">{item.model || item.supplier_products?.model_part_number}</div><div className="muted">Qty {item.quantity} · Supplier quote {item.supplier_quote_id || '—'}</div>
+          <div className="muted">{item.model || item.supplier_products?.model_part_number}</div><div className="muted">Qty {savedQuantity}</div>
         </div>
-        <span className="badge">{item.price_status === 'admin_confirmed' ? 'Admin confirmed' : 'Suggested'}</span>
+        <span className="badge">{priceStatus === 'admin_confirmed' ? 'Admin confirmed' : 'Suggested'}</span>
       </div>
 
       <div className="quote-item-grid">
-        <div><span className="field-label">Quantity</span><div className="price-edit"><input type="number" min="0.0001" step="1" value={quantity} disabled={!editable || saving} onChange={(e) => setQuantity(e.target.value)} /></div></div>
+        <div><span className="field-label">Quantity</span><div className="price-edit"><input type="number" min="0.0001" step="1" aria-label="Quantity" value={quantity} disabled={!editable || saving!==null} onChange={(e) => {setQuantity(e.target.value);setSuccess('');}} /></div></div>
         <div><span className="field-label">Supplier cost</span><strong>{item.supplier_cost ?? '—'} {item.supplier_currency || ''}</strong></div>
-        <div><span className="field-label">Exchange rate</span><strong>{rate ?? 'Same currency'}</strong></div>
-        <div><span className="field-label">Markup rule</span><strong>{markup == null ? '—' : markup + '%'}</strong></div>
-        <div><span className="field-label">Suggested / customer price</span><div className="price-edit"><input type="number" min="0" step="0.01" value={price} disabled={!editable || saving} onChange={(e) => setPrice(e.target.value)} /><span>{currency}</span></div></div>
-        <div><span className="field-label">Line total</span><strong>{item.unit_price==null?'To be confirmed':(Number(item.quantity) * Number(item.unit_price)).toFixed(2)} {currency}</strong></div>
+
+
+        <div><span className="field-label">Suggested / customer price</span><div className="price-edit"><input type="number" min="0" step="0.01" aria-label="Customer price" value={price} disabled={!editable || saving!==null} onChange={(e) => {setPrice(e.target.value);setSuccess('');}} /><span>{currency}</span></div></div>
+        <div><span className="field-label">Line total</span><strong>{savedPrice==null?'To be confirmed':(savedQuantity * Number(savedPrice)).toFixed(2)} {currency}</strong></div>
       </div>
 
+      <details className="quote-price-breakdown"><summary>Pricing details</summary><p>Exchange rate: {rate ?? 'Same currency'} · Markup: {markup == null ? '—' : markup+'%'}</p></details>
       {editable && (
         <div className="quote-item-actions">
-          <button className="secondary-button" disabled={saving} onClick={confirmQuantity}>Save quantity</button>
-          <button className="primary-button" disabled={saving} onClick={confirmPrice}>{saving ? 'Saving…' : item.price_status==='admin_confirmed'?'Save & confirm price':'Confirm price'}</button>
-          {error && <span className="error-inline">{error}</span>}
+          <button className="secondary-button" disabled={saving!==null} onClick={confirmQuantity}>{saving==='quantity'?'Saving…':'Save quantity'}</button>
+          <button className="primary-button" disabled={saving!==null} onClick={confirmPrice}>{saving==='price' ? 'Saving…' : priceStatus==='admin_confirmed'?'Save & confirm price':'Confirm price'}</button>
+          {success&&<span className="save-feedback" role="status">{success}</span>}
+          {error && <span className="error-inline" role="alert">{error}</span>}
         </div>
       )}
     </article>

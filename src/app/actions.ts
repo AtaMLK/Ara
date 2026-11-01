@@ -451,7 +451,7 @@ export async function sendClarificationAction(input: { inquiryId: string; clarif
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     const from = process.env.EMAIL_FROM;
     if (!appUrl || !from) {
-      throw new ToolError('VALIDATION', 'NEXT_PUBLIC_APP_URL and EMAIL_FROM must be configured');
+      throw new ToolError('VALIDATION', 'Email sending is not configured for this environment. Configure the sender address and email service before sending.');
     }
 
     const customerName = customer.company_name || customer.name;
@@ -1073,14 +1073,15 @@ export async function updateCustomerQuoteItemQuantityAction(itemId: string, quan
   try {
     const parsed = z.object({ itemId: idSchema, quantity: z.number().positive().finite() }).parse({ itemId, quantity });
     const { supabase } = await requireAdmin();
-    const { data: item, error } = await supabase.from('customer_quote_items').select('id,customer_quote_id').eq('id',parsed.itemId).single();
+    const { data: item, error } = await supabase.from('customer_quote_items').select('id,customer_quote_id,quantity,price_status').eq('id',parsed.itemId).single();
     if (error || !item) throw new ToolError('NOT_FOUND','Quote item not found');
     const { data: quote } = await supabase.from('customer_quotes').select('id,status').eq('id',item.customer_quote_id).single();
     if (!quote || !['draft','pending_approval'].includes(quote.status)) throw new ToolError('CONFLICT','Only editable quotes can be changed');
-    const { error:updateError } = await supabase.from('customer_quote_items').update({ quantity: parsed.quantity, price_status:'suggested' }).eq('id',item.id);
-    if (updateError) throw new ToolError('CONFLICT','Quantity could not be updated');
+    if(Number(item.quantity)===parsed.quantity)return {ok:true,quantity:Number(item.quantity),priceStatus:String(item.price_status)};
+    const { data:updated,error:updateError } = await supabase.from('customer_quote_items').update({ quantity: parsed.quantity, price_status:'suggested' }).eq('id',item.id).select('quantity,price_status').single();
+    if (updateError||!updated) throw new ToolError('CONFLICT','Quantity could not be updated');
     revalidatePath('/quotes'); revalidatePath('/quotes/'+quote.id);
-    return {ok:true};
+    return {ok:true,quantity:Number(updated.quantity),priceStatus:String(updated.price_status)};
   } catch(error) { fail(error); }
 }
 
@@ -1241,7 +1242,7 @@ export async function approveCustomerQuoteAction(quoteId: string) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     const from = process.env.EMAIL_FROM;
     if (!appUrl || !from) {
-      throw new ToolError('VALIDATION', 'NEXT_PUBLIC_APP_URL and EMAIL_FROM must be configured');
+      throw new ToolError('VALIDATION', 'Email sending is not configured for this environment. Configure the sender address and email service before sending.');
     }
 
     const adminSupabase = createSupabaseAdminClient();

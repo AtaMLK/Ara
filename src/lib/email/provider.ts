@@ -8,7 +8,7 @@ import {ToolError} from '@/lib/errors';
 class ResendEmailProvider implements EmailProvider {
  async send(input:SendEmailInput):Promise<SendEmailResult> {
   const apiKey=process.env.RESEND_API_KEY;
-  if(!apiKey)throw new ToolError('TRANSIENT','RESEND_API_KEY is not configured');
+  if(!apiKey)throw new ToolError('TRANSIENT','Email sending is not configured for this environment.');
   if(!input.idempotencyKey?.trim())throw new ToolError('VALIDATION','A durable email key is required');
   const db=createSupabaseAdminClient();
   const attachments=[];

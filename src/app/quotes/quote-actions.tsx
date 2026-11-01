@@ -1,17 +1,19 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { approveCustomerQuoteAction, requestQuoteApprovalAction } from '@/app/actions';
 
 export function QuoteActions({ id, status }: { id: string; status: string }) {
+  const router=useRouter();
   const [error,setError]=useState('');
   const [loading, setLoading] = useState(false);
 
   async function run(action: () => Promise<unknown>, message: string) {
     if (!window.confirm(message)) return;
     setLoading(true);setError('');
-    try { await action(); window.location.reload(); }
-    catch(error) {setError(error instanceof Error?error.message:'Could not complete this action.');setLoading(false);}
+    try { await action(); router.refresh(); }
+    catch(error) {setError(error instanceof Error?error.message:'Could not complete this action.');} finally {setLoading(false);}
   }
 
   if (status === 'draft') {

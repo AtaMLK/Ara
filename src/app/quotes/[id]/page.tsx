@@ -28,7 +28,6 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         </div>
       </header>
 
-      {['draft','pending_approval'].includes(quote.status)&&<section className="quote-next-step"><strong>{quote.status==='draft'?'Next: edit the quotation and confirm every price':'Next: review and send to the customer'}</strong><p>{quote.status==='draft'?'Update quantities, confirm customer prices and save the message below. Then request approval.':'Every price must be confirmed before sending. Any failure will be shown beside the send button.'}</p></section>}
       <section className="detail-grid">
         <div className="detail-card">
           <div className="section-head"><h2>Quote details</h2></div>
@@ -42,7 +41,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         </div>
         <div className="detail-card">
           <div className="section-head"><h2>Commercial control</h2></div>
-          <p className="muted">Suggested prices come from an approved pricing rule. Every customer price must be explicitly confirmed by Admin before approval.</p>
+          <p className="muted">Confirm all prices before sending.</p>
           <div className="quote-control-note">
             <strong>{quote.confirmedItemCount}/{quote.items.length}</strong> prices confirmed
           </div>

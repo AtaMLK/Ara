@@ -1,18 +1,21 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { updateCustomerQuoteDetailsAction } from '@/app/actions';
 
 export default function QuoteDetailsEditor({ quote }: { quote: { id:string; subject:string|null; body:string|null; valid_until:string|null } }) {
+  const router=useRouter();
   const [subject,setSubject]=useState(quote.subject||'');
   const [body,setBody]=useState(quote.body||'');
   const [validUntil,setValidUntil]=useState(quote.valid_until||'');
   const [saving,setSaving]=useState(false);
   const [error,setError]=useState('');
+  const [saved,setSaved]=useState(false);
   async function save(){
-    setSaving(true); setError('');
-    try { await updateCustomerQuoteDetailsAction({quoteId:quote.id,subject,body,validUntil}); window.location.reload(); }
-    catch(e){ setError(e instanceof Error?e.message:'Could not save quote details.'); setSaving(false); }
+    setSaving(true); setError('');setSaved(false);
+    try { await updateCustomerQuoteDetailsAction({quoteId:quote.id,subject,body,validUntil}); setSaved(true);router.refresh(); }
+    catch(e){ setError(e instanceof Error?e.message:'Could not save quote details.'); } finally {setSaving(false);}
   }
   return <div className="detail-card">
     <div className="section-head"><h2>Edit customer quote</h2></div>
@@ -21,6 +24,7 @@ export default function QuoteDetailsEditor({ quote }: { quote: { id:string; subj
       <label>Valid until<input type="date" value={validUntil} onChange={e=>setValidUntil(e.target.value)} /></label>
       <label>Customer message<textarea value={body} maxLength={10000} onChange={e=>setBody(e.target.value)} /></label>
       <button className="primary-button" disabled={saving} onClick={save}>{saving?'Saving…':'Save quote details'}</button>
+      {saved&&<p className="save-feedback" role="status">Quotation details saved.</p>}
       {error && <div className="error-box">{error}</div>}
     </div>
   </div>;

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import AdminAttention from '@/components/AdminAttention';
 import { notificationHref } from '@/lib/notifications';
 import { listNotifications,listAttentionRecords } from '@/lib/data/admin';
 
@@ -16,6 +17,7 @@ export default async function NotificationsPage({searchParams}:{searchParams:Pro
         <div><div className="eyebrow">ADMIN</div><h1 className="title">Notifications</h1><div className="muted">Approvals, tasks and AI alerts</div></div>
       </header>
 
+      <AdminAttention mode="center" />
       <nav className="notification-tabs"><Link href="/notifications">Notifications</Link><Link href="/notifications?view=alerts">Open AI alerts</Link><Link href="/notifications?view=tasks">Open tasks</Link></nav>
       <section className="section">
         <div className="table">

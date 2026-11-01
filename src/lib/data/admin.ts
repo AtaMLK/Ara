@@ -34,7 +34,6 @@ export async function getDashboardData(): Promise<DashboardData> {
     rfqs,
     quotes,
     tasks,
-    alerts,
     activity,
     revisions,
   ] = await Promise.all([
@@ -46,19 +45,18 @@ export async function getDashboardData(): Promise<DashboardData> {
       .eq('status', 'pending_approval'),
     supabase.from('tasks').select('id', { count: 'exact', head: true })
       .in('status', ['open', 'in_progress']),
-    supabase.from('ai_alerts').select('id', { count: 'exact', head: true })
-      .eq('status', 'open'),
     supabase.from('timeline_events')
       .select('id,event_type,actor_type,created_at,inquiry_id')
+      .neq('actor_type','ai')
       .order('created_at', { ascending: false })
       .limit(8),
     supabase.from('quote_revision_requests').select('id',{count:'exact',head:true}).eq('status','pending_approval'),
   ]);
 
-  for(const result of [inquiries,rfqs,quotes,tasks,alerts,activity,revisions]) if(result.error) throw result.error;
+  for(const result of [inquiries,rfqs,quotes,tasks,activity,revisions]) if(result.error) throw result.error;
 
   return {
-    needsAttention: (revisions.count ?? 0) + (tasks.count ?? 0) + (alerts.count ?? 0) + (rfqs.count ?? 0) + (quotes.count ?? 0),
+    needsAttention: (revisions.count ?? 0) + (tasks.count ?? 0) + (rfqs.count ?? 0) + (quotes.count ?? 0),
     openInquiries: inquiries.count ?? 0,
     pendingRfqs: rfqs.count ?? 0,
     quotesAwaitingApproval: quotes.count ?? 0,
