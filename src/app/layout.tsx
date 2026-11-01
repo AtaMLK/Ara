@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import './globals.css';
 import Link from 'next/link';
+import PageBackButton from '@/components/PageBackButton';
 import AdminAttention from '@/components/AdminAttention';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
@@ -21,7 +22,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         {isAdmin ? (
           <div className="admin-layout">
             <details className="admin-mobile-nav"><summary>ARAT · Admin menu</summary><nav className="nav">{links.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav></details><aside className="sidebar"><div className="brand">ARAT</div><div className="eyebrow">ADMIN</div><nav className="nav">{links.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav></aside>
-            <main className="main"><AdminAttention />{children}</main>
+            <main className="main"><AdminAttention /><PageBackButton />{children}</main>
           </div>
         ) : children}
       </body>

@@ -1,3 +1,4 @@
+import InquiryFileActions from '@/components/InquiryFileActions';
 import Link from 'next/link';
 import {notFound} from 'next/navigation';
 import {requireAdminPage} from '@/lib/data/admin';
@@ -14,7 +15,7 @@ export default async function InquiryDetailPage({params}:{params:Promise<{id:str
  const [request,requirements,files,quotes]=await Promise.all([
   supabase.from('inquiries').select('id,reference,title,description,original_customer_text,normalized_information,status,priority,current_version,created_at,updated_at,customers(name,company_name,email,country)').eq('id',id).single(),
   supabase.from('requirements').select('id,type,value,status,source_ref,admin_edited').eq('inquiry_id',id).order('created_at'),
-  supabase.from('inquiry_files').select('id,original_name,file_size,status').eq('inquiry_id',id).order('uploaded_at'),
+  supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status').eq('inquiry_id',id).order('uploaded_at'),
   supabase.from('customer_quotes').select('id,reference,display_reference,status,currency').eq('inquiry_id',id).order('created_at',{ascending:false}),
  ]);
  if(request.error||!request.data)notFound();
@@ -32,6 +33,7 @@ export default async function InquiryDetailPage({params}:{params:Promise<{id:str
    <section className="detail-card"><div className="section-head"><h2>Customer</h2></div><dl className="details"><div><dt>Name</dt><dd>{customer?.company_name||customer?.name||'—'}</dd></div><div><dt>Email</dt><dd>{customer?.email||'—'}</dd></div><div><dt>Country</dt><dd>{customer?.country||'—'}</dd></div></dl></section>
    <section className="detail-card"><div className="section-head"><h2>Quotations</h2></div>{quotes.data?.length?quotes.data.map(quote=><Link className="inquiry-quote-link" key={quote.id} href={'/quotes/'+quote.id}><strong>{quoteDisplayReference(quote.reference,quote.display_reference)}</strong><span className="badge">{label(quote.status)}</span></Link>):<p className="muted">No quotations yet.</p>}</section>
   </div>
-  {(original||files.data?.length>0)&&<details className="inquiry-source"><summary>Original request & attachments{files.data?.length?` (${files.data.length})`:''}</summary>{original&&<p className="detail-text">{displayText(original)}</p>}{files.data?.map(file=><div className="list-item" key={file.id}><strong>{displayText(file.original_name)}</strong><span className="muted">{Math.round(file.file_size/1024)} KB</span></div>)}</details>}
+  {!!files.data?.length&&<section className="detail-card inquiry-attachments"><div className="section-head"><h2>Customer attachments</h2><span className="muted">{files.data.length} file{files.data.length===1?'':'s'}</span></div>{files.data.map(file=><div className="inquiry-attachment-row" key={file.id}><div><strong>{displayText(file.original_name)}</strong><small>{Math.round(file.file_size/1024)} KB</small></div><InquiryFileActions inquiryId={id} file={file}/></div>)}</section>}
+  {original&&<details className="inquiry-source"><summary>Original customer message</summary><p className="detail-text">{displayText(original)}</p></details>}
  </div>;
 }

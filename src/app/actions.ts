@@ -205,6 +205,18 @@ export async function uploadInquiryFilesAction(input: {
   }
 }
 
+export async function getAdminInquiryFileUrlAction(input:{inquiryId:string;fileId:string;download?:boolean}) {
+ try {
+  const parsed=z.object({inquiryId:idSchema,fileId:idSchema,download:z.boolean().optional()}).parse(input);
+  const {supabase}=await requireAdmin();
+  const {data:file,error}=await supabase.from('inquiry_files').select('id,storage_path,original_name,mime_type').eq('id',parsed.fileId).eq('inquiry_id',parsed.inquiryId).single();
+  if(error||!file)throw new ToolError('NOT_FOUND','File not found for this request.');
+  const {data,error:signedError}=await supabase.storage.from('inquiry-files').createSignedUrl(file.storage_path,300,parsed.download?{download:file.original_name}:undefined);
+  if(signedError||!data?.signedUrl)throw new ToolError('TRANSIENT','Unable to open this file. Please try again.');
+  return {url:data.signedUrl,fileName:file.original_name,mimeType:file.mime_type};
+ }catch(error){fail(error);}
+}
+
 export async function getCustomerInquiryFileUrlAction(input: { inquiryId: string; fileId: string }) {
   try {
     const parsed = z.object({ inquiryId: idSchema, fileId: idSchema }).parse(input);

@@ -196,13 +196,23 @@ export async function listNotifications() {
   return (data??[]).map(row=>({...row,title:displayText(row.title,labels),message:displayText(row.message,labels)}));
 }
 
-export async function listQuoteRevisionRequests() {
+export async function listQuoteRevisionRequests(status='all') {
  const {supabase}=await requireAdminPage();
- const {data,error}=await supabase.from('quote_revision_requests')
-  .select('id,quote_id,reason,free_text,created_at,customer_quotes!quote_revision_requests_quote_id_fkey(reference,display_reference,revision_number,customers(name,company_name))')
-  .eq('status','pending_approval').order('created_at',{ascending:true});
+ let query=supabase.from('quote_revision_requests')
+  .select('id,quote_id,reason,free_text,status,created_at,reviewed_at,result_quote_id,customer_quotes!quote_revision_requests_quote_id_fkey(reference,display_reference,revision_number,customers(name,company_name))')
+  .order('created_at',{ascending:false});
+ if(status==='pending')query=query.eq('status','pending_approval');
+ if(status==='reviewed')query=query.in('status',['approved','rejected','cancelled']);
+ const {data,error}=await query;
  if(error)throw error;
- return (data??[]).map(row=>{const quote=oneRelated(row.customer_quotes);return {...row,customer_quotes:quote?{...quote,reference:quoteDisplayReference(quote.reference,quote.display_reference),customers:oneRelated(quote.customers)}:null};});
+ const parentIds=[...new Set((data??[]).filter(row=>row.status==='approved'&&!row.result_quote_id).map(row=>row.quote_id))];
+ const {data:children,error:childError}=parentIds.length?await supabase.from('customer_quotes').select('id,parent_quote_id').in('parent_quote_id',parentIds):{data:[],error:null};
+ if(childError)throw childError;
+ return (data??[]).map(row=>{
+  const quote=oneRelated(row.customer_quotes);
+  const matches=(children??[]).filter(child=>child.parent_quote_id===row.quote_id);
+  return {...row,free_text:displayText(row.free_text),revisedQuoteId:row.result_quote_id||(matches.length===1?matches[0].id:null),customer_quotes:quote?{...quote,reference:quoteDisplayReference(quote.reference,quote.display_reference),customers:oneRelated(quote.customers)}:null};
+ });
 }
 
 export async function listAttentionRecords(view:'alerts'|'tasks',inquiryId?:string) {
