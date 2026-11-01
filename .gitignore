@@ -4,3 +4,10 @@ node_modules/
 .env.local
 .env.*.local
 !.env.example
+
+*.tsbuildinfo
+supabase/.temp/
+# Local audit artifacts
+ARAT*.png
+ARAT_FIXES.patch
+AUDIT.md

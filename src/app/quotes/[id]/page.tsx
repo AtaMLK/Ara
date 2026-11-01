@@ -1,3 +1,4 @@
+import { oneRelated } from '@/lib/data/relations';
 import Link from 'next/link';
 import { getCustomerQuote } from '@/lib/data/admin';
 import { QuoteItemEditor } from './quote-item-editor';
@@ -19,7 +20,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
           <Link className="back-link" href="/quotes">← Quotes</Link>
           <div className="eyebrow">CUSTOMER QUOTE</div>
           <h1 className="title">{quote.reference}</h1>
-          <div className="muted">{quote.customers?.company_name || quote.customers?.name || 'Customer'} · {quote.currency}</div>
+          <div className="muted">{oneRelated(quote.customers)?.company_name || oneRelated(quote.customers)?.name || 'Customer'} · {quote.currency}</div>
         </div>
         <div className="topbar-actions">
           <span className="badge">{label(quote.status)}</span>
@@ -32,7 +33,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
           <div className="section-head"><h2>Quote details</h2></div>
           <dl className="details">
             <div><dt>Reference</dt><dd>{quote.reference}</dd></div>
-            <div><dt>Customer</dt><dd>{quote.customers?.company_name || quote.customers?.name || '—'}</dd></div>
+            <div><dt>Customer</dt><dd>{oneRelated(quote.customers)?.company_name || oneRelated(quote.customers)?.name || '—'}</dd></div>
             <div><dt>Currency</dt><dd>{quote.currency}</dd></div>
             <div><dt>Validity</dt><dd>{quote.valid_until ? new Date(quote.valid_until).toLocaleDateString('en-GB') : 'No expiry'}</dd></div>
             <div><dt>Revision</dt><dd>R{quote.revision_number}</dd></div>

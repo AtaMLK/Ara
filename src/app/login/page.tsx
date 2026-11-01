@@ -14,47 +14,53 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
 
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    );
-
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (authError || !authData.session?.access_token) {
-      setError(authError?.message ?? 'Sign-in succeeded but no session was returned.');
-      setLoading(false);
-      return;
-    }
-
-    const roleCheck = await fetch('/api/auth/role', {
-      cache: 'no-store',
-      credentials: 'same-origin',
-      headers: {
-        Authorization: `Bearer ${authData.session.access_token}`,
-        'Cache-Control': 'no-cache',
-      },
-    });
-
-    const roleResult = await roleCheck.json().catch(() => null);
-
-    if (!roleCheck.ok || !roleResult?.destination || roleResult.destination === '/login') {
-      await supabase.auth.signOut();
-      setError(
-        roleResult?.detail
-          ? `Account routing failed: ${roleResult.reason ?? 'unknown_error'} — ${roleResult.detail}`
-          : roleResult?.reason
-            ? `Account routing failed: ${roleResult.reason}`
-            : 'Account routing failed. Please try signing in again.',
+    try {
+      const supabase = createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       );
-      setLoading(false);
-      return;
-    }
 
-    window.location.assign(roleResult.destination);
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError || !authData.session?.access_token) {
+        setError(authError?.message ?? 'Sign-in succeeded but no session was returned.');
+        setLoading(false);
+        return;
+      }
+
+      const roleCheck = await fetch('/api/auth/role', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: {
+          Authorization: `Bearer ${authData.session.access_token}`,
+          'Cache-Control': 'no-cache',
+        },
+      });
+
+      const roleResult = await roleCheck.json().catch(() => null);
+
+      if (!roleCheck.ok || !roleResult?.destination || roleResult.destination === '/login') {
+        await supabase.auth.signOut();
+        setError(
+          roleResult?.detail
+            ? `Account routing failed: ${roleResult.reason ?? 'unknown_error'} — ${roleResult.detail}`
+            : roleResult?.reason
+              ? `Account routing failed: ${roleResult.reason}`
+              : 'Account routing failed. Please try signing in again.',
+        );
+        setLoading(false);
+        return;
+      }
+
+      window.location.assign(roleResult.destination);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Sign in failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (

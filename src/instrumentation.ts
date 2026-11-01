@@ -8,6 +8,10 @@ type GlobalWithWorker = typeof globalThis & {
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
   if (process.env.NODE_ENV !== 'development') return;
+  // Frontend-only development should not repeatedly start a worker that
+  // cannot authenticate. Do not process jobs until server credentials exist.
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      !(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)) return;
 
   const globalState = globalThis as GlobalWithWorker;
   if (globalState[WORKER_STATE_KEY]) return;

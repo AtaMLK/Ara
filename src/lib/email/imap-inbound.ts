@@ -16,7 +16,7 @@ function required(name: string) {
 
 function toAddressList(value: ParsedMail['to']) {
   if (!value) return [];
-  return value.value.map((item) => item.address || item.name || '').filter(Boolean);
+  return (Array.isArray(value) ? value : [value]).flatMap(group => group.value).map(item => item.address || item.name || '').filter(Boolean);
 }
 
 function toSingleAddress(value: ParsedMail['from']) {
@@ -77,7 +77,7 @@ export async function pollImapInbox() {
           const parsed = await simpleParser(message.source);
           const messageId =
             parsed.messageId?.trim() ||
-            `imap:${mailbox}:${message.uid}:${message.internalDate?.toISOString() ?? 'unknown'}`;
+            `imap:${mailbox}:${message.uid}:${(message.internalDate ? new Date(message.internalDate).toISOString() : undefined) ?? 'unknown'}`;
 
           const attachments: InboundEmailAttachment[] = [];
           let totalAttachmentSize = 0;
@@ -117,7 +117,7 @@ export async function pollImapInbox() {
             subject: parsed.subject || '',
             text: parsed.text || null,
             html: parsed.html || null,
-            receivedAt: parsed.date?.toISOString() || message.internalDate?.toISOString() || new Date().toISOString(),
+            receivedAt: parsed.date?.toISOString() || (message.internalDate ? new Date(message.internalDate).toISOString() : undefined) || new Date().toISOString(),
             provider: 'imap',
             attachments,
           });

@@ -3,9 +3,9 @@
 import { useState, useTransition } from 'react';
 import { acceptCustomerQuoteAction, rejectCustomerQuoteAction, requestCustomerQuoteRevisionAction } from '@/app/actions';
 
-export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
+export default function CustomerQuoteActions({ quoteId, canAccept = true }: { quoteId: string; canAccept?: boolean }) {
   const [mode, setMode] = useState<'idle' | 'revision' | 'reject'>('idle');
-  const [reason, setReason] = useState('price');
+  const [reason, setReason] = useState<Parameters<typeof requestCustomerQuoteRevisionAction>[0]['reason']>('price');
   const [text, setText] = useState('');
   const [error, setError] = useState('');
   const [pending, startTransition] = useTransition();
@@ -22,7 +22,7 @@ export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
     <div className="customer-quote-actions">
       {mode === 'idle' ? (
         <>
-          <button className="primary-button" disabled={pending} onClick={() => run(() => acceptCustomerQuoteAction(quoteId))}>Accept quotation</button>
+          <button className="primary-button" disabled={pending || !canAccept} onClick={() => run(() => acceptCustomerQuoteAction(quoteId))}>Accept quotation</button>
           <button className="secondary-button" disabled={pending} onClick={() => setMode('revision')}>Request revision</button>
           <button className="text-button" disabled={pending} onClick={() => setMode('reject')}>Reject quotation</button>
         </>
@@ -39,7 +39,7 @@ export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
       ) : (
         <div className="revision-form">
           <label>What needs to change?
-            <select value={reason} onChange={(e) => setReason(e.target.value)}>
+            <select value={reason} onChange={(e) => setReason(e.target.value as typeof reason)}>
               <option value="price">Price</option>
               <option value="quantity">Quantity</option>
               <option value="delivery_time">Delivery time</option>

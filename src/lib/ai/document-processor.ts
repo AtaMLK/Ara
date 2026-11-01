@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { extractText, getDocumentProxy } from 'unpdf';
-import * as XLSX from 'xlsx';
+import { parseSpreadsheet } from '@/lib/documents/spreadsheet';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
 
@@ -10,27 +10,6 @@ export type ParsedDocument = {
   extractedData: Record<string, unknown>;
   qualityFlags: string[];
 };
-
-function csvOrSheetText(bytes: Uint8Array): ParsedDocument {
-  const workbook = XLSX.read(bytes, { type: 'array', cellDates: true });
-  const sheets = workbook.SheetNames.map((name) => {
-    const sheet = workbook.Sheets[name];
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' });
-    return { name, rows };
-  });
-  const extractedText = sheets.map((sheet) =>
-    [
-      `SHEET: ${sheet.name}`,
-      ...sheet.rows.map((row) => row.map((cell) => String(cell ?? '')).join(' | ')),
-    ].join('\n'),
-  ).join('\n\n');
-
-  return {
-    extractedText: extractedText.slice(0, 120000),
-    extractedData: { sheets },
-    qualityFlags: [],
-  };
-}
 
 export async function downloadInquiryFile(storagePath: string): Promise<Uint8Array> {
   const supabase = createSupabaseAdminClient();
@@ -143,7 +122,7 @@ export async function parseInquiryFile(
     mimeType === 'text/csv' ||
     /\.(xlsx?|csv)$/i.test(originalName)
   ) {
-    return csvOrSheetText(bytes);
+    return parseSpreadsheet(bytes);
   }
 
   if (mimeType.startsWith('image/')) {

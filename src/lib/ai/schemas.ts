@@ -1,5 +1,21 @@
 import {z} from 'zod';
 export const uuidSchema=z.string().uuid();
+export const notificationSchema = z.object({
+  userId: uuidSchema,
+  category: z.enum(['approval', 'task', 'ai_alert', 'customer', 'supplier', 'email', 'system']),
+  priority: z.enum(['normal', 'urgent']).default('normal'),
+  title: z.string().trim().min(1).max(200),
+  message: z.string().trim().min(1).max(10000),
+  recordType: z.string().optional(),
+  recordId: uuidSchema.optional(),
+  actionUrl: z.string().startsWith('/').refine(value => !value.startsWith('//')).optional(),
+});
+export const timelineEventSchema = z.object({
+  inquiryId: uuidSchema,
+  eventType: z.string().trim().min(1).max(200),
+  visibility: z.enum(['admin', 'customer']),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
 export const requirementTypeSchema=z.enum(['product','model_part_number','quantity','specification','delivery','other']);
 export const requirementStatusSchema=z.enum(['open','clarification_required','confirmed','rejected']);
 export const requirementSourceSchema=z.enum(['customer_text','pdf','excel','image','clarification']);

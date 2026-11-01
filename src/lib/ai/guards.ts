@@ -11,6 +11,17 @@ export async function requireAdmin(){
   return {supabase,user};
 }
 
+export async function requireSendableSupplier(supplierId: string) {
+  const { supabase } = await requireAdmin();
+  const { data, error } = await supabase.from('suppliers')
+    .select('status,deleted_at,canonical_supplier_id,identity_needs_review')
+    .eq('id', supplierId).single();
+  if (error || !data || data.status !== 'active' || data.deleted_at ||
+      data.canonical_supplier_id || data.identity_needs_review) {
+    throw new ToolError('CONFLICT', 'Resolve the supplier identity before sending an RFQ.');
+  }
+}
+
 export async function requireInquiryAccess(ctx:AIContext,inquiryId:string){
   const {supabase}=await requireAdmin();
   const {data:inquiry,error}=await supabase.from('inquiries').select('id,customer_id,status,current_version').eq('id',inquiryId).single();
