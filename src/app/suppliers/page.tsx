@@ -1,6 +1,10 @@
+import Link from 'next/link';
+import {CandidatePanel} from '../inquiries/[id]/candidate-panel';
+import {requireAdminPage} from '@/lib/data/admin';
+import {displayText} from '@/lib/ui/display-text';
 import { listSuppliers } from '@/lib/data/admin';
 
-type Props = { searchParams: Promise<{ q?: string; status?: string }> };
+type Props = { searchParams: Promise<{ q?: string; status?: string;view?:string }> };
 
 function label(value: string) {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
@@ -8,7 +12,10 @@ function label(value: string) {
 
 export default async function SuppliersPage({ searchParams }: Props) {
   const params = await searchParams;
-  const items = await listSuppliers(params.q, params.status);
+  const items = params.view==='candidates'?[]:await listSuppliers(params.q, params.status);
+  const {supabase}=await requireAdminPage();
+  const candidates=params.view==='candidates'?await supabase.from('supplier_candidates').select('id,inquiry_id,proposed_name,proposed_country,proposed_website,status,match_evidence,availability_evidence,verification_evidence').eq('status','proposed').order('created_at',{ascending:false}):null;
+  if(candidates?.error)throw candidates.error;
 
   return (
     <>
@@ -16,6 +23,8 @@ export default async function SuppliersPage({ searchParams }: Props) {
         <div><div className="eyebrow">ADMIN</div><h1 className="title">Suppliers</h1><div className="muted">Supplier database and verification</div></div>
       </header>
 
+      <nav className="notification-tabs"><Link href="/suppliers">Supplier directory</Link><Link href="/suppliers?view=candidates">Candidates to review</Link></nav>
+      {params.view==='candidates'?<CandidatePanel candidates={(candidates?.data??[]).map(row=>({...row,proposed_name:displayText(row.proposed_name)}))}/>:<>
       <form className="filters">
         <input name="q" defaultValue={params.q} placeholder="Search supplier…" />
         <select name="status" defaultValue={params.status ?? 'all'}>
@@ -36,7 +45,7 @@ export default async function SuppliersPage({ searchParams }: Props) {
             </div>
           ))}
         </div>
-      </section>
+      </section></>}
     </>
   );
 }

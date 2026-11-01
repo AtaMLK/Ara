@@ -7,9 +7,9 @@ function label(value: string) {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export default async function NotificationsPage({searchParams}:{searchParams:Promise<{view?:string}>}) {
-  const {view}=await searchParams;
-  const items = view==='alerts'||view==='tasks'?await listAttentionRecords(view):await listNotifications();
+export default async function NotificationsPage({searchParams}:{searchParams:Promise<{view?:string;inquiry?:string}>}) {
+  const {view,inquiry}=await searchParams;
+  const items = view==='alerts'||view==='tasks'?await listAttentionRecords(view,inquiry):await listNotifications();
 
   return (
     <>

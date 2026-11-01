@@ -1,4 +1,5 @@
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -25,7 +26,7 @@ export default function QuoteDetailsEditor({ quote }: { quote: { id:string; subj
       <label>Customer message<textarea value={body} maxLength={10000} onChange={e=>setBody(e.target.value)} /></label>
       <button className="primary-button" disabled={saving} onClick={save}>{saving?'Saving…':'Save quote details'}</button>
       {saved&&<p className="save-feedback" role="status">Quotation details saved.</p>}
-      {error && <div className="error-box">{error}</div>}
+      {error && <div className="error-box">{displayText(error)}</div>}
     </div>
   </div>;
 }

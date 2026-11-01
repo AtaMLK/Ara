@@ -1,4 +1,5 @@
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { useState,useTransition } from 'react';
 import { useRouter } from 'next/navigation';
@@ -24,6 +25,6 @@ export default function RevisionRequestActions({ requestId }: { requestId: strin
     <div className="revision-review-actions"><div className="action-cell">
       <button className="primary-button" disabled={pending} onClick={() => review('approve')}>Approve & create revision</button>
       <button className="secondary-button" disabled={pending} onClick={() => review('reject')}>Reject</button>
-    </div>{error&&<p className="error-box" role="alert">{error}</p>}</div>
+    </div>{error&&<p className="error-box" role="alert">{displayText(error)}</p>}</div>
   );
 }

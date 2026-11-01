@@ -1,4 +1,5 @@
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { FormEvent, useState } from 'react';
 import { answerClarificationAction } from '@/app/actions';
@@ -29,7 +30,7 @@ export default function AnswerClarificationForm({ inquiryId, clarificationId }: 
   return (
     <form className="stack" onSubmit={submit}>
       <textarea value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Type your answer…" rows={4} required />
-      {error && <div className="error-box">{error}</div>}
+      {error && <div className="error-box">{displayText(error)}</div>}
       <button className="primary-button" disabled={loading || !answer.trim()}>{loading ? 'Submitting…' : 'Submit answer'}</button>
     </form>
   );

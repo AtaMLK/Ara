@@ -1,3 +1,4 @@
+import {quoteDisplayReference,displayText} from '@/lib/ui/display-text';
 import { customerQuoteItemsSchema } from '@/lib/data/customer-quote-schema';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -13,7 +14,7 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
 
   const { data: quotes, error } = await supabase
     .from('customer_quotes')
-    .select('id,inquiry_id,reference,revision_number,status,currency,valid_until,subject,body,sent_at,decision_reason,decision_text,decided_at')
+    .select('id,inquiry_id,reference,display_reference,revision_number,status,currency,valid_until,subject,body,sent_at,decision_reason,decision_text,decided_at')
     .eq('inquiry_id', id)
     .in('status', ['sent','accepted','rejected','revision_requested','superseded'])
     .order('revision_number', { ascending: false });
@@ -53,7 +54,7 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
       </header>
 
       <div className="cq-meta" aria-label="Quotation information">
-        <div className="cq-meta-reference"><span>Quotation reference</span><strong>{quote.reference}</strong></div>
+        <div className="cq-meta-reference"><span>Quotation reference</span><strong>{quoteDisplayReference(quote.reference,quote.display_reference)}</strong></div>
         <div><span>Version</span><strong>Revision {quote.revision_number}</strong></div>
         <div><span>Currency</span><strong>{quote.currency}</strong></div>
         <div><span>Valid until</span><strong>{dateLabel}</strong></div>
@@ -68,8 +69,8 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
         <div className="cq-content">
           <section className="cq-card cq-message">
             <div className="cq-section-heading"><h2>Quotation details</h2><span>From ARAT</span></div>
-            {quote.subject && <h3>{quote.subject}</h3>}
-            {quote.body && <p>{quote.body}</p>}
+            {quote.subject && <h3>{displayText(quote.subject)}</h3>}
+            {quote.body && <p>{displayText(quote.body)}</p>}
           </section>
 
           <section className="cq-card cq-items">
@@ -80,9 +81,9 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
                 {items.map((item, index) => <article className="cq-item" key={item.id}>
                   <div className="cq-product">
                     <span className="cq-item-number">{String(index + 1).padStart(2, '0')}</span>
-                    <div><h3>{item.description}</h3>
-                      {(item.model || item.brand) && <div className="cq-product-meta">{item.model && <span>{item.model}</span>}{item.brand && <span>{item.brand}</span>}</div>}
-                      {item.delivery_text && <div className="cq-delivery"><span>Delivery</span><p>{item.delivery_text}</p></div>}
+                    <div><h3>{displayText(item.description)}</h3>
+                      {(item.model || item.brand) && <div className="cq-product-meta">{item.model && <span>{displayText(item.model)}</span>}{item.brand && <span>{item.brand}</span>}</div>}
+                      {item.delivery_text && <div className="cq-delivery"><span>Delivery</span><p>{displayText(item.delivery_text)}</p></div>}
                     </div>
                   </div>
                   <div className="cq-number"><span className="cq-mobile-label">Quantity</span><strong>{item.quantity.toLocaleString('en-GB')}</strong></div>
@@ -99,7 +100,7 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
               className={`cq-history-link ${historyQuote.id === quote.id ? 'is-current' : ''}`}
               aria-current={historyQuote.id === quote.id ? 'page' : undefined}
               key={historyQuote.id} href={`/customer/quotes/${id}?revision=${historyQuote.id}`}>
-              <div><strong>Revision {historyQuote.revision_number}</strong><small>{historyQuote.reference}</small></div>
+              <div><strong>Revision {historyQuote.revision_number}</strong><small>{quoteDisplayReference(historyQuote.reference,historyQuote.display_reference)}</small></div>
               <span>{historyQuote.id === quote.id ? 'Viewing' : statusLabel(historyQuote.status)}</span>
             </Link>)}</div>
           </details>

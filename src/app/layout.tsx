@@ -4,7 +4,7 @@ import Link from 'next/link';
 import AdminAttention from '@/components/AdminAttention';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
-const links=[['/','Dashboard'],['/inquiries','Inquiries'],['/suppliers','Suppliers'],['/rfqs','RFQs'],['/quotes','Quotes'],['/quotes/revisions','Quote Revisions'],['/notifications','Notifications'],['/settings','Settings']];
+const links=[['/','Dashboard'],['/inquiries','Inquiries'],['/suppliers','Suppliers'],['/rfqs','RFQs'],['/quotes','Quotes'],['/quotes/revisions','Quote Revisions'],['/notifications','Notifications'],['/processing','Processing'],['/settings','Settings']];
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const supabase = await createSupabaseServerClient();

@@ -1,3 +1,4 @@
+import {displayText,quoteDisplayReference} from '@/lib/ui/display-text';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/ai/guards';
@@ -11,17 +12,17 @@ export async function GET() {
   const [unread,notifications,revisions,drafts,approvals,rfqs,alerts,tasks]=await Promise.all([
     supabase.from('notifications').select('id',{count:'exact',head:true}).eq('user_id',user.id).is('read_at',null),
     supabase.from('notifications').select('id,title,message,action_url,created_at').eq('user_id',user.id).is('read_at',null).order('created_at',{ascending:false}).limit(6),
-    supabase.from('quote_revision_requests').select('id,quote_id,reason,free_text,customer_quotes!quote_revision_requests_quote_id_fkey(reference)',{count:'exact'}).eq('status','pending_approval').order('created_at',{ascending:false}).limit(4),
-    supabase.from('customer_quotes').select('id,reference,status',{count:'exact'}).in('status',['draft','pending_approval']).not('parent_quote_id','is',null).order('updated_at',{ascending:false}).limit(4),
+    supabase.from('quote_revision_requests').select('id,quote_id,reason,free_text,customer_quotes!quote_revision_requests_quote_id_fkey(reference,display_reference)',{count:'exact'}).eq('status','pending_approval').order('created_at',{ascending:false}).limit(4),
+    supabase.from('customer_quotes').select('id,reference,display_reference,status',{count:'exact'}).in('status',['draft','pending_approval']).not('parent_quote_id','is',null).order('updated_at',{ascending:false}).limit(4),
     supabase.from('customer_quotes').select('id',{count:'exact',head:true}).eq('status','pending_approval'),
     supabase.from('rfqs').select('id',{count:'exact',head:true}).in('status',['draft','pending_approval']),
     supabase.from('ai_alerts').select('id',{count:'exact',head:true}).eq('status','open'),
     supabase.from('tasks').select('id',{count:'exact',head:true}).in('status',['open','in_progress']),
   ]);
   if([unread,notifications,revisions,drafts,approvals,rfqs,alerts,tasks].some(result=>result.error)) return NextResponse.json({error:'Could not refresh notifications'},{status:503});
-  return NextResponse.json({unreadCount:unread.count??0,notifications:notifications.data??[],revisionCount:revisions.count??0,
-    revisions:(revisions.data??[]).map(row=>({id:row.id,quoteId:row.quote_id,reference:oneRelated(row.customer_quotes)?.reference??'Quotation',reason:row.reason,message:row.free_text})),
-    approvals:approvals.count??0,rfqs:rfqs.count??0,alerts:alerts.count??0,tasks:tasks.count??0,draftCount:drafts.count??0,drafts:drafts.data??[]},{headers:{'Cache-Control':'private, no-store'}});
+  return NextResponse.json({unreadCount:unread.count??0,notifications:(notifications.data??[]).map(row=>({...row,title:displayText(row.title),message:displayText(row.message)})),revisionCount:revisions.count??0,
+    revisions:(revisions.data??[]).map(row=>({id:row.id,quoteId:row.quote_id,reference:quoteDisplayReference(oneRelated(row.customer_quotes)?.reference??'Quotation',oneRelated(row.customer_quotes)?.display_reference),reason:row.reason,message:displayText(row.free_text)})),
+    approvals:approvals.count??0,rfqs:rfqs.count??0,alerts:alerts.count??0,tasks:tasks.count??0,draftCount:drafts.count??0,drafts:(drafts.data??[]).map(row=>({...row,reference:quoteDisplayReference(row.reference,row.display_reference)}))},{headers:{'Cache-Control':'private, no-store'}});
 }
 
 export async function POST(request:Request) {

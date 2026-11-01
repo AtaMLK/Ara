@@ -1,3 +1,5 @@
+import {getInquiryDisplayReference} from '@/lib/ui/inquiry-reference';
+import {displayText} from '@/lib/ui/display-text';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
@@ -12,7 +14,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
   const { supabase } = await requireCustomerInquiryAccess(id);
 
   const [inquiryResult, requirementsResult, clarificationsResult, filesResult, timelineResult] = await Promise.all([
-    supabase.from('inquiries').select('id,reference,title,description,original_customer_text,status,updated_at').eq('id', id).single(),
+    supabase.from('inquiries').select('id,reference,title,description,original_customer_text,status,created_at,current_version,updated_at').eq('id', id).single(),
     supabase.from('requirements').select('id,type,value,status,source,source_ref').eq('inquiry_id', id).order('created_at'),
     supabase.from('clarifications').select('id,requirement_id,question,answer,status,created_at').eq('inquiry_id', id).order('created_at', { ascending: false }),
     supabase.from('inquiry_files').select('id,original_name,mime_type,file_size,status,uploaded_at,processed_at').eq('inquiry_id', id).order('uploaded_at'),
@@ -38,7 +40,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
         <div>
           <Link className="back-link" href="/customer">← My Requests</Link>
           <div className="eyebrow">CUSTOMER PORTAL</div>
-          <h1 className="title">{inquiryResult.data.reference}</h1>
+          <h1 className="title">{getInquiryDisplayReference(inquiryResult.data.reference,null,inquiryResult.data.created_at,inquiryResult.data.current_version,inquiryResult.data.updated_at)}</h1>
           <div className="muted">{inquiryResult.data.title}</div>
         </div>
         <span className="badge">{inquiryResult.data.status.replaceAll('_',' ')}</span>
@@ -80,7 +82,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
           {(requirementsResult.data ?? []).map((item) => (
             <div className="list-item" key={item.id}>
               <strong>{item.type.replaceAll('_',' ')}</strong>
-              <span>{item.value}</span>
+              <span>{displayText(item.value)}</span>
               <span className="badge">{item.status.replaceAll('_',' ')}</span>
               <span className="muted requirement-source">
                 {item.source === 'customer_text' ? 'From your request' : item.source === 'clarification' ? 'From your answer' : 'From attachment'}
@@ -158,7 +160,7 @@ export default async function CustomerInquiryPage({ params }: Props) {
           clarifications.map((item) => (
             <div className="detail-card" key={item.id}>
               <div className="eyebrow">CLARIFICATION</div>
-              <h3>{item.question}</h3>
+              <h3>{displayText(item.question)}</h3>
               <AnswerClarificationForm inquiryId={id} clarificationId={item.id} />
             </div>
           ))

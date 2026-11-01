@@ -1,4 +1,5 @@
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { FormEvent, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
@@ -45,7 +46,7 @@ export default function LoginPage() {
         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" /></label>
         <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" /></label>
 
-        {error && <div className="error-box">{error}</div>}
+        {error && <div className="error-box">{displayText(error)}</div>}
         <button className="primary-button" disabled={loading}>{loading ? 'Signing in…' : 'Sign in'}</button>
       </form>
     </main>

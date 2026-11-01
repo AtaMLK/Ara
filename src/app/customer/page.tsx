@@ -1,3 +1,5 @@
+import {getInquiryDisplayReference} from '@/lib/ui/inquiry-reference';
+import {displayText} from '@/lib/ui/display-text';
 import Link from 'next/link';
 import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
@@ -12,7 +14,7 @@ export default async function CustomerPortalPage() {
 
   const { data: inquiries } = await supabase
     .from('inquiries')
-    .select('id,reference,title,status,updated_at')
+    .select('id,reference,title,status,created_at,current_version,updated_at')
     .eq('customer_id', customer.id)
     .order('updated_at', { ascending: false });
 
@@ -27,7 +29,7 @@ export default async function CustomerPortalPage() {
           <div className="row header"><div>Reference</div><div>Request</div><div>Status</div><div>Updated</div></div>
           {(inquiries ?? []).length === 0 ? <div className="empty">No procurement requests yet.</div> : (inquiries ?? []).map((item) => (
             <Link className="row row-link" href={`/customer/inquiries/${item.id}`} key={item.id}>
-              <div><strong>{item.reference}</strong></div><div>{item.title}</div><div><span className="badge">{item.status.replaceAll('_',' ')}</span></div><div>{new Date(item.updated_at).toLocaleDateString('en-GB')}</div>
+              <div><strong>{getInquiryDisplayReference(item.reference,null,item.created_at,item.current_version,item.updated_at)}</strong></div><div>{item.title}</div><div><span className="badge">{item.status.replaceAll('_',' ')}</span></div><div>{new Date(item.updated_at).toLocaleDateString('en-GB')}</div>
             </Link>
           ))}
         </div>

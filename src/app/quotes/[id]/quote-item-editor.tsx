@@ -1,4 +1,5 @@
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -90,7 +91,7 @@ export function QuoteItemEditor({ item, currency, editable }: { item: Item; curr
           <button className="secondary-button" disabled={saving!==null} onClick={confirmQuantity}>{saving==='quantity'?'Saving…':'Save quantity'}</button>
           <button className="primary-button" disabled={saving!==null} onClick={confirmPrice}>{saving==='price' ? 'Saving…' : priceStatus==='admin_confirmed'?'Save & confirm price':'Confirm price'}</button>
           {success&&<span className="save-feedback" role="status">{success}</span>}
-          {error && <span className="error-inline" role="alert">{error}</span>}
+          {error && <span className="error-inline" role="alert">{displayText(error)}</span>}
         </div>
       )}
     </article>

@@ -1,12 +1,15 @@
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { useState } from 'react';
+import {useRouter} from 'next/navigation';
 import { updateRequirementAction } from '@/app/actions';
 
 export function RequirementEdit({ inquiryId, requirement }: {
   inquiryId: string;
   requirement: { id: string; value: string; status: 'open'|'clarification_required'|'confirmed'|'rejected' };
 }) {
+  const router=useRouter();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -23,7 +26,7 @@ export function RequirementEdit({ inquiryId, requirement }: {
         value: String(formData.get('value') ?? ''),
         status: String(formData.get('status')) as 'open'|'clarification_required'|'confirmed'|'rejected',
       });
-      window.location.reload();
+      setEditing(false);setSaving(false);router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save');
       setSaving(false);
@@ -40,6 +43,6 @@ export function RequirementEdit({ inquiryId, requirement }: {
     </select>
     <button className="inline-button" disabled={saving}>{saving ? '…' : 'Save'}</button>
     <button type="button" className="inline-button" onClick={() => setEditing(false)}>Cancel</button>
-    {error && <span className="error-inline">{error}</span>}
+    {error && <span className="error-inline">{displayText(error)}</span>}
   </form>;
 }

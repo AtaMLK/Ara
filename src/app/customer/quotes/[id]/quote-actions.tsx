@@ -1,4 +1,5 @@
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { useState, useTransition } from 'react';
 import { acceptCustomerQuoteAction, requestCustomerQuoteRevisionAction } from '@/app/actions';
@@ -46,7 +47,7 @@ export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
           </div>
         </div>
       )}
-      {error && <div className="error-box">{error}</div>}
+      {error && <div className="error-box">{displayText(error)}</div>}
     </div>
   );
 }
