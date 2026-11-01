@@ -5,11 +5,14 @@ import { confirmCustomerQuoteItemPriceAction, updateCustomerQuoteItemQuantityAct
 
 type Item = {
   id: string;
+  description?:string|null;
+  model?:string|null;
+  delivery_text?:string|null;
   product_id: string | null;
   supplier_quote_id: string | null;
   quantity: number;
-  unit_price: number;
-  total: number;
+  unit_price: number | null;
+  total: number | null;
   supplier_cost: number | null;
   supplier_currency: string | null;
   price_status: string;
@@ -19,7 +22,7 @@ type Item = {
 };
 
 export function QuoteItemEditor({ item, currency, editable }: { item: Item; currency: string; editable: boolean }) {
-  const [price, setPrice] = useState(String(item.unit_price));
+  const [price, setPrice] = useState(item.unit_price==null?'':String(item.unit_price));
   const [saving, setSaving] = useState(false);
   const [quantity, setQuantity] = useState(String(item.quantity));
   const [error, setError] = useState('');
@@ -33,6 +36,7 @@ export function QuoteItemEditor({ item, currency, editable }: { item: Item; curr
   }
 
   async function confirmPrice() {
+    if(!price.trim()){setError('Enter a customer price.');return;}
     const value = Number(price);
     if (!Number.isFinite(value) || value < 0) {
       setError('Enter a valid non-negative price.');
@@ -58,8 +62,8 @@ export function QuoteItemEditor({ item, currency, editable }: { item: Item; curr
       <div className="quote-item-main">
         <div>
           <div className="eyebrow">LINE ITEM</div>
-          <h3>{item.supplier_products?.product_name || item.supplier_products?.model_part_number || item.product_id || 'Product not linked'}</h3>
-          <div className="muted">Qty {item.quantity} · Supplier quote {item.supplier_quote_id || '—'}</div>
+          <h3>{item.description || item.supplier_products?.product_name || item.model || item.supplier_products?.model_part_number || 'Quoted item'}</h3>
+          <div className="muted">{item.model || item.supplier_products?.model_part_number}</div><div className="muted">Qty {item.quantity} · Supplier quote {item.supplier_quote_id || '—'}</div>
         </div>
         <span className="badge">{item.price_status === 'admin_confirmed' ? 'Admin confirmed' : 'Suggested'}</span>
       </div>
@@ -70,13 +74,13 @@ export function QuoteItemEditor({ item, currency, editable }: { item: Item; curr
         <div><span className="field-label">Exchange rate</span><strong>{rate ?? 'Same currency'}</strong></div>
         <div><span className="field-label">Markup rule</span><strong>{markup == null ? '—' : markup + '%'}</strong></div>
         <div><span className="field-label">Suggested / customer price</span><div className="price-edit"><input type="number" min="0" step="0.01" value={price} disabled={!editable || saving} onChange={(e) => setPrice(e.target.value)} /><span>{currency}</span></div></div>
-        <div><span className="field-label">Line total</span><strong>{(Number(item.quantity) * Number(item.unit_price)).toFixed(2)} {currency}</strong></div>
+        <div><span className="field-label">Line total</span><strong>{item.unit_price==null?'To be confirmed':(Number(item.quantity) * Number(item.unit_price)).toFixed(2)} {currency}</strong></div>
       </div>
 
       {editable && (
         <div className="quote-item-actions">
           <button className="secondary-button" disabled={saving} onClick={confirmQuantity}>Save quantity</button>
-          {item.price_status !== 'admin_confirmed' && <button className="primary-button" disabled={saving} onClick={confirmPrice}>{saving ? 'Confirming…' : 'Confirm price'}</button>}
+          <button className="primary-button" disabled={saving} onClick={confirmPrice}>{saving ? 'Saving…' : item.price_status==='admin_confirmed'?'Save & confirm price':'Confirm price'}</button>
           {error && <span className="error-inline">{error}</span>}
         </div>
       )}

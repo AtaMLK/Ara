@@ -5,7 +5,7 @@ import { acceptCustomerQuoteAction, requestCustomerQuoteRevisionAction } from '@
 
 export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
   const [mode, setMode] = useState<'idle' | 'revision'>('idle');
-  const [reason, setReason] = useState('price');
+  const [reason, setReason] = useState<'price'|'quantity'|'delivery_time'|'product_specification'|'payment_terms'|'other'>('price');
   const [text, setText] = useState('');
   const [error, setError] = useState('');
   const [pending, startTransition] = useTransition();
@@ -28,7 +28,7 @@ export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
       ) : (
         <div className="revision-form">
           <label>What needs to change?
-            <select value={reason} onChange={(e) => setReason(e.target.value)}>
+            <select value={reason} onChange={(e) => setReason(e.target.value as typeof reason)}>
               <option value="price">Price</option>
               <option value="quantity">Quantity</option>
               <option value="delivery_time">Delivery time</option>

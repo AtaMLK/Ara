@@ -23,6 +23,11 @@ type RequirementRow = {
   status: 'open' | 'clarification_required' | 'confirmed' | 'rejected';
 };
 
+async function createAlert(inquiryId:string,agentId:string,alertType:string,message:string,priority:'normal'|'urgent') {
+  const {error}=await createSupabaseAdminClient().from('ai_alerts').insert({inquiry_id:inquiryId,agent_id:agentId,alert_type:alertType,message,priority});
+  if(error) throw new ToolError('TRANSIENT',error.message);
+}
+
 async function timeline(
   inquiryId: string,
   eventType: string,
@@ -437,9 +442,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
               provider: ai.provider,
               model: ai.model,
             }, 'intake');
-          }
         }
-      }
 
       // Re-read after extraction so the existing clarification gate handles
       // newly extracted requirements in the same workflow execution.
@@ -684,7 +687,7 @@ async function runStage(inquiryId: string, stage: WorkflowStage) {
       }, 'supplier_verification');
 
       if (pending === 0 && verified > 0) {
-        await enqueueStage(inquiryId, 'rfq');
+        await enqueueWorkflow(inquiryId, 'rfq');
       }
 
       return { execution: running, outcome };
@@ -1985,6 +1988,7 @@ function stageAgentExists(stage: WorkflowStage) {
     'comparison',
     'customer_quote',
     'customer_response',
+    'email_response',
     'reporting',
     'completed',
   ].includes(stage);

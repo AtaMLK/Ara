@@ -1,3 +1,4 @@
+import { customerQuoteItemsSchema } from '@/lib/data/customer-quote-schema';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireCustomerInquiryAccess } from '@/lib/ai/guards';
@@ -21,22 +22,8 @@ export default async function CustomerQuotePage({ params, searchParams }: Props)
   const quote = (revision && quotes?.find((item) => item.id === revision)) || quotes?.[0];
   if (!quote) notFound();
 
-  const { data: itemRows, error: itemError } = await supabase
-    .from('customer_quote_items')
-    .select('id,quantity,unit_price,total,supplier_products(product_name,model_part_number)')
-    .eq('customer_quote_id', quote.id)
-    .order('created_at', { ascending: true });
-
-
-
-  // Keep this branch's existing query and action contracts unchanged.
-  const items = (itemRows ?? []).map(item => {
-    const product = Array.isArray(item.supplier_products) ? item.supplier_products[0] : item.supplier_products;
-    return { id: item.id, description: product?.product_name || product?.model_part_number || 'Quoted item',
-      model: product?.model_part_number, brand: null, delivery_text: null,
-      quantity: Number(item.quantity), unit_price: item.unit_price == null ? null : Number(item.unit_price),
-      total: item.total == null ? null : Number(item.total) };
-  });
+  const {data:itemData,error:itemError}=await supabase.rpc('arat_customer_quote_items',{p_quote_id:quote.id});
+  const items = itemError ? [] : customerQuoteItemsSchema.parse(itemData);
   const total = (items ?? []).reduce((sum, item) => sum + Number(item.total || 0), 0);
   const hasItems = (items ?? []).length > 0;
   const hasPrices = hasItems && items.every(item => item.unit_price !== null && item.total !== null);

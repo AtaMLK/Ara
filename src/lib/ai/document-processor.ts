@@ -1,6 +1,6 @@
 import 'server-only';
 
-import pdfParse from 'pdf-parse';
+import { extractText } from 'unpdf';
 import * as XLSX from 'xlsx';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { ToolError } from '@/lib/errors';
@@ -109,11 +109,11 @@ export async function parseInquiryFile(
   originalName: string,
 ): Promise<ParsedDocument> {
   if (mimeType === 'application/pdf' || originalName.toLowerCase().endsWith('.pdf')) {
-    const result = await pdfParse(Buffer.from(bytes));
+    const result = await extractText(new Uint8Array(bytes), { mergePages: true });
     if (result.text.trim()) {
       return {
         extractedText: result.text.slice(0, 120000),
-        extractedData: { pages: result.numpages },
+        extractedData: { pages: result.totalPages },
         qualityFlags: [],
       };
     }
@@ -121,7 +121,7 @@ export async function parseInquiryFile(
     const ocr = await runVisionOcr(bytes, 'application/pdf', originalName);
     return {
       extractedText: ocr.extractedText,
-      extractedData: { pages: result.numpages, ocr: true },
+      extractedData: { pages: result.totalPages, ocr: true },
       qualityFlags: ['OCR_USED', ...ocr.qualityFlags],
     };
   }

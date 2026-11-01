@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import RevisionRequestActions from '../revisions/revision-actions';
 import { getCustomerQuote } from '@/lib/data/admin';
 import { QuoteItemEditor } from './quote-item-editor';
 import { QuoteActions } from '../quote-actions';
@@ -27,6 +28,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         </div>
       </header>
 
+      {['draft','pending_approval'].includes(quote.status)&&<section className="quote-next-step"><strong>{quote.status==='draft'?'Next: edit the quotation and confirm every price':'Next: review and send to the customer'}</strong><p>{quote.status==='draft'?'Update quantities, confirm customer prices and save the message below. Then request approval.':'Every price must be confirmed before sending. Any failure will be shown beside the send button.'}</p></section>}
       <section className="detail-grid">
         <div className="detail-card">
           <div className="section-head"><h2>Quote details</h2></div>
@@ -55,6 +57,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
               <div><dt>Reason</dt><dd>{label(quote.revisionRequest.reason)}</dd></div>
               <div><dt>Customer message</dt><dd>{quote.revisionRequest.free_text || 'No additional details.'}</dd></div>
             </dl>
+            {quote.revisionRequest.status==='pending_approval'&&<RevisionRequestActions requestId={quote.revisionRequest.id} />}
           </div>
         </section>
       )}

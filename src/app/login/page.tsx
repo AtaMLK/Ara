@@ -14,6 +14,7 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
 
+    try {
     const supabase = createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -29,15 +30,17 @@ export default function LoginPage() {
     const roleCheck = await fetch('/api/auth/role', { cache: 'no-store' });
     const destination = roleCheck.ok ? await roleCheck.json() : { destination: '/' };
     window.location.href = destination.destination;
+    } catch(error) {setError(error instanceof Error?error.message:'Could not sign in. Please try again.');}
+    finally {setLoading(false);}
   }
 
   return (
     <main className="auth-page">
       <form className="auth-card" onSubmit={submit}>
         <div className="brand">ARAT</div>
-        <div className="eyebrow">ADMIN PORTAL</div>
+        <div className="eyebrow">ARAT PORTAL</div>
         <h1 className="title">Sign in</h1>
-        <p className="muted">Use your authorized ARAT admin account.</p>
+        <p className="muted">Use your authorized ARAT customer or admin account.</p>
 
         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" /></label>
         <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" /></label>

@@ -1,3 +1,4 @@
+import { oneRelated } from '@/lib/data/relations';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireAdminPage } from '@/lib/data/admin';
@@ -32,7 +33,7 @@ export default async function InquiryDetailPage({ params }: Props) {
   if (requirementsResult.error || filesResult.error || timelineResult.error || executionsResult.error || alertsResult.error || clarificationsResult.error || researchResult.error || candidatesResult.error) throw new Error('Failed to load inquiry details');
 
   const inquiry = inquiryResult.data;
-  const customer = inquiry.customers;
+  const customer = oneRelated(inquiry.customers);
 
   return (
     <>

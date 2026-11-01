@@ -1,4 +1,5 @@
 import 'server-only';
+import { oneRelated } from './relations';
 
 import { redirect } from 'next/navigation';
 import { requireAdmin } from '@/lib/ai/guards';
@@ -35,6 +36,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     tasks,
     alerts,
     activity,
+    revisions,
   ] = await Promise.all([
     supabase.from('inquiries').select('id', { count: 'exact', head: true })
       .in('status', ['processing', 'open', 'clarification_required', 'researching', 'rfq', 'quoting']),
@@ -50,12 +52,13 @@ export async function getDashboardData(): Promise<DashboardData> {
       .select('id,event_type,actor_type,created_at,inquiry_id')
       .order('created_at', { ascending: false })
       .limit(8),
+    supabase.from('quote_revision_requests').select('id',{count:'exact',head:true}).eq('status','pending_approval'),
   ]);
 
-  if (activity.error) throw activity.error;
+  for(const result of [inquiries,rfqs,quotes,tasks,alerts,activity,revisions]) if(result.error) throw result.error;
 
   return {
-    needsAttention: (tasks.count ?? 0) + (alerts.count ?? 0) + (rfqs.count ?? 0) + (quotes.count ?? 0),
+    needsAttention: (revisions.count ?? 0) + (tasks.count ?? 0) + (alerts.count ?? 0) + (rfqs.count ?? 0) + (quotes.count ?? 0),
     openInquiries: inquiries.count ?? 0,
     pendingRfqs: rfqs.count ?? 0,
     quotesAwaitingApproval: quotes.count ?? 0,
@@ -119,7 +122,7 @@ export async function listRfqs(search?: string, status?: string) {
 
   const { data, error } = await query;
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []).map(row=>({...row,inquiries:oneRelated(row.inquiries),suppliers:oneRelated(row.suppliers)}));
 }
 
 export async function listCustomerQuotes(search?: string, status?: string) {
@@ -135,7 +138,7 @@ export async function listCustomerQuotes(search?: string, status?: string) {
 
   const { data, error } = await query;
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []).map(row=>({...row,customers:oneRelated(row.customers)}));
 }
 
 export async function getCustomerQuote(id: string) {
@@ -150,7 +153,7 @@ export async function getCustomerQuote(id: string) {
 
   const { data: items, error: itemError } = await supabase
     .from('customer_quote_items')
-    .select('id,product_id,supplier_quote_id,quantity,unit_price,total,supplier_cost,supplier_currency,price_status,pricing_rule_id,exchange_rate_id,price_calculation,supplier_products(product_name,model_part_number)')
+    .select('id,description,model,brand,delivery_text,product_id,supplier_quote_id,quantity,unit_price,total,supplier_cost,supplier_currency,price_status,pricing_rule_id,exchange_rate_id,price_calculation,supplier_products(product_name,model_part_number)')
     .eq('customer_quote_id', id)
     .order('created_at', { ascending: true });
 
@@ -160,14 +163,15 @@ export async function getCustomerQuote(id: string) {
   const { data: revisionRequest } = await supabase
     .from('quote_revision_requests')
     .select('id,quote_id,reason,free_text,status,requested_by,created_at')
-    .eq('quote_id', id)
+    .eq('quote_id', quote.parent_quote_id || id)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
   return {
     ...quote,
-    items: rows,
+    customers: oneRelated(quote.customers),
+    items: rows.map(item=>({...item,supplier_products:oneRelated(item.supplier_products)})),
     confirmedItemCount: rows.filter((item) => item.price_status === 'admin_confirmed').length,
     revisionRequest,
   };
@@ -184,4 +188,23 @@ export async function listNotifications() {
 
   if (error) throw error;
   return data ?? [];
+}
+
+export async function listQuoteRevisionRequests() {
+ const {supabase}=await requireAdminPage();
+ const {data,error}=await supabase.from('quote_revision_requests')
+  .select('id,quote_id,reason,free_text,created_at,customer_quotes!quote_revision_requests_quote_id_fkey(reference,revision_number,customers(name,company_name))')
+  .eq('status','pending_approval').order('created_at',{ascending:true});
+ if(error)throw error;
+ return (data??[]).map(row=>{const quote=oneRelated(row.customer_quotes);return {...row,customer_quotes:quote?{...quote,customers:oneRelated(quote.customers)}:null};});
+}
+
+export async function listAttentionRecords(view:'alerts'|'tasks') {
+ const {supabase}=await requireAdminPage();
+ if(view==='alerts'){
+  const {data,error}=await supabase.from('ai_alerts').select('id,alert_type,message,priority,inquiry_id,created_at').eq('status','open').order('created_at',{ascending:false}).limit(100);
+  if(error)throw error;return (data??[]).map(row=>({id:row.id,title:row.alert_type.replaceAll('_',' '),message:row.message,priority:row.priority,action_url:row.inquiry_id?'/inquiries/'+row.inquiry_id:'/',created_at:row.created_at,category:'ai alert',read_at:null}));
+ }
+ const {data,error}=await supabase.from('tasks').select('id,title,description,priority,inquiry_id,created_at').in('status',['open','in_progress']).order('created_at',{ascending:false}).limit(100);
+ if(error)throw error;return (data??[]).map(row=>({id:row.id,title:row.title,message:row.description,priority:row.priority,action_url:row.inquiry_id?'/inquiries/'+row.inquiry_id:'/',created_at:row.created_at,category:'task',read_at:null}));
 }
