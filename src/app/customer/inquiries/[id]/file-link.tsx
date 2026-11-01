@@ -1,4 +1,5 @@
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { useState } from 'react';
 import { getCustomerInquiryFileUrlAction } from '@/app/actions';
@@ -25,7 +26,7 @@ export default function CustomerFileLink({ inquiryId, fileId }: { inquiryId: str
       <button className="inline-button" type="button" onClick={openFile} disabled={loading}>
         {loading ? 'Opening…' : 'Open'}
       </button>
-      {error && <div className="error-inline">{error}</div>}
+      {error && <div className="error-inline">{displayText(error)}</div>}
     </div>
   );
 }

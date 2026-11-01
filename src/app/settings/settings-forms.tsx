@@ -1,4 +1,5 @@
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { useState, useTransition } from 'react';
 import {
@@ -54,7 +55,7 @@ export default function SettingsForms({
             Reject
           </button>
         </div>
-        {error && <div className="error-inline">{error}</div>}
+        {error && <div className="error-inline">{displayText(error)}</div>}
       </div>
     );
   }
@@ -102,7 +103,7 @@ export default function SettingsForms({
         ))}
       </div>
 
-      {error && <div className="error-box">{error}</div>}
+      {error && <div className="error-box">{displayText(error)}</div>}
       <div className="settings-divider" />
       <form className="settings-form" action={(formData) => run(() => createExchangeRateAction({
         fromCurrency: String(formData.get('fromCurrency') || ''),

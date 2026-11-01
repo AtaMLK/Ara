@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import RevisionRequestActions from '../revisions/revision-actions';
 import { getCustomerQuote } from '@/lib/data/admin';
 import { QuoteItemEditor } from './quote-item-editor';
 import { QuoteActions } from '../quote-actions';
@@ -40,7 +41,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         </div>
         <div className="detail-card">
           <div className="section-head"><h2>Commercial control</h2></div>
-          <p className="muted">Suggested prices come from an approved pricing rule. Every customer price must be explicitly confirmed by Admin before approval.</p>
+          <p className="muted">Confirm all prices before sending.</p>
           <div className="quote-control-note">
             <strong>{quote.confirmedItemCount}/{quote.items.length}</strong> prices confirmed
           </div>
@@ -55,6 +56,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
               <div><dt>Reason</dt><dd>{label(quote.revisionRequest.reason)}</dd></div>
               <div><dt>Customer message</dt><dd>{quote.revisionRequest.free_text || 'No additional details.'}</dd></div>
             </dl>
+            {quote.revisionRequest.status==='pending_approval'&&<RevisionRequestActions requestId={quote.revisionRequest.id} />}
           </div>
         </section>
       )}

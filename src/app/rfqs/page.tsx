@@ -30,7 +30,7 @@ export default async function RfqsPage({ searchParams }: Props) {
           <div className="row header"><div>RFQ</div><div>Supplier</div><div>Status</div><div>Created</div></div>
           {items.length === 0 ? <div className="empty">No RFQs found.</div> : items.map((item) => (
             <div className="row" key={item.id}>
-              <div><strong>{item.subject || 'Untitled RFQ'}</strong><div className="muted">{item.inquiries?.reference ?? '—'}</div></div>
+              <div><strong>{item.rfq_code || 'Supplier quotation request'}</strong><div>{item.subject || 'Untitled RFQ'}</div><div className="muted">{item.inquiries?.reference ?? '—'}</div></div>
               <div>{item.suppliers?.legal_name ?? '—'}</div>
               <div><span className="badge">{label(item.status)}</span></div>
               <div className="action-cell">{new Date(item.created_at).toLocaleDateString('en-GB')}{item.status === 'pending_approval' && <ApproveRfqButton id={item.id} />}</div>

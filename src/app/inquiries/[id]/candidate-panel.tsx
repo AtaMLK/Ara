@@ -1,4 +1,5 @@
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { useState } from 'react';
 import { finalizeSupplierCandidateAction } from '@/app/actions';
@@ -8,9 +9,10 @@ function label(value: string) {
 }
 
 export function CandidatePanel({ inquiryId, candidates }: {
-  inquiryId: string;
+  inquiryId?: string;
   candidates: Array<{
     id: string;
+    inquiry_id?:string;
     proposed_name: string;
     proposed_country: string | null;
     proposed_website: string | null;
@@ -27,7 +29,9 @@ export function CandidatePanel({ inquiryId, candidates }: {
     setBusy(id);
     setError('');
     try {
-      await finalizeSupplierCandidateAction({ inquiryId, candidateId: id });
+      const requestId=inquiryId||candidates.find(row=>row.id===id)?.inquiry_id;
+      if(!requestId)throw new Error('Select the related request first.');
+      await finalizeSupplierCandidateAction({ inquiryId:requestId, candidateId: id });
       window.location.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not finalize candidate');
@@ -42,7 +46,7 @@ export function CandidatePanel({ inquiryId, candidates }: {
         <div><div className="eyebrow">SUPPLIER DISCOVERY</div><h2>Supplier Candidates</h2></div>
         <span className="badge">{candidates.length} candidate{candidates.length === 1 ? '' : 's'}</span>
       </div>
-      {error && <div className="error-inline">{error}</div>}
+      {error && <div className="error-inline">{displayText(error)}</div>}
       {candidates.length === 0 ? (
         <div className="detail-card"><div className="empty">No supplier candidates yet. Research must produce evidence before candidates can be added.</div></div>
       ) : (

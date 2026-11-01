@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { getDashboardData } from '@/lib/data/admin';
 
 function formatDate(value: string) {
@@ -51,7 +52,7 @@ export default async function Dashboard() {
               <div>{label(item.eventType)}</div>
               <div><span className="badge">{label(item.actorType)}</span></div>
               <div>{formatDate(item.createdAt)}</div>
-              <div className="muted">{item.inquiryId.slice(0, 8)}…</div>
+              <Link href={'/inquiries/'+item.inquiryId}>{item.inquiryReference}</Link>
             </div>
           ))}
         </div>

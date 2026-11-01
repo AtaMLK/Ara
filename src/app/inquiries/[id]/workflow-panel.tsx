@@ -1,11 +1,13 @@
 
 'use client';
+import {displayText} from '@/lib/ui/display-text';
 
 import { useState } from 'react';
+import {useRouter} from 'next/navigation';
 import { approveClarificationAction, sendClarificationAction, continueInquiryWorkflowAction, startInquiryWorkflowAction } from '@/app/actions';
 
 function label(value: string) {
-  return value.replaceAll('_', ' ').replace(/\\b\\w/g, (c) => c.toUpperCase());
+  return value.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifications, researchCases }: {
@@ -16,6 +18,7 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
   clarifications: Array<{ id: string; requirement_id: string | null; question: string; status: string; created_at: string }>;
   researchCases: Array<{ id: string; status: string; created_at: string }>;
 }) {
+  const router=useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -28,7 +31,7 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
     setError('');
     try {
       await approveClarificationAction({ inquiryId, clarificationId: id });
-      window.location.reload();
+      router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Approval failed');
     } finally {
@@ -41,7 +44,7 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
     setError('');
     try {
       await sendClarificationAction({ inquiryId, clarificationId: id });
-      window.location.reload();
+      router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Send failed');
     } finally {
@@ -55,7 +58,7 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
     try {
       if (status === 'processing') await startInquiryWorkflowAction(inquiryId);
       else await continueInquiryWorkflowAction(inquiryId);
-      window.location.reload();
+      router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Workflow action failed');
     } finally {
@@ -88,7 +91,7 @@ export function WorkflowPanel({ inquiryId, status, executions, alerts, clarifica
         </div>
       </div>
 
-      {error && <div className="error-inline">{error}</div>}
+      {error && <div className="error-inline">{displayText(error)}</div>}
 
       {clarifications.length > 0 && <div className="detail-card">
         <strong>Clarifications</strong>
